@@ -34,6 +34,7 @@
 #include "sdcard.h"
 #include "i2s.h"
 #include "gbcolors.h"
+#include "lvgl.h"
 
 /* Main Modularization */
 #include "global.h"

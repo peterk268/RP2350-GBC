@@ -189,3 +189,181 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
     multicore_fifo_push_blocking(cmd.full);
 }
 #endif
+
+
+
+#define IPS_LCD_WIDTH  320
+#define IPS_LCD_HEIGHT 320
+#define IMAGE_HEIGHT 288
+#define IMAGE_WIDTH 320
+#define DOTCLOCK_FREQ 15000000 // 15 MHz typical
+
+static void lcd_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);
+
+// MARK: - NEW LCD
+static const uint16_t dpi_pins[] = {
+    GPIO_DPI_B0, GPIO_DPI_B1, GPIO_DPI_B2, GPIO_DPI_B3, GPIO_DPI_B4,
+    GPIO_DPI_G0, GPIO_DPI_G1, GPIO_DPI_G2, GPIO_DPI_G3, GPIO_DPI_G4, GPIO_DPI_G5,
+    GPIO_DPI_R0, GPIO_DPI_R1, GPIO_DPI_R2, GPIO_DPI_R3, GPIO_DPI_R4,
+    GPIO_DPI_VSYNC, GPIO_DPI_HSYNC, GPIO_DPI_PCLK, GPIO_DPI_DEN
+};
+
+static void init_dpi_pins(void) {
+    for (size_t i = 0; i < sizeof(dpi_pins) / sizeof(dpi_pins[0]); i++) {
+        gpio_init(dpi_pins[i]);
+        gpio_set_dir(dpi_pins[i], GPIO_OUT);
+    }
+}
+
+
+static void lv_port_disp_init(void);
+
+static void dpi_set_pixel_clock(uint32_t frequency) {
+    uint32_t div = clock_get_hz(clk_sys) / frequency;
+    pwm_config config = pwm_get_default_config();
+    pwm_config_set_wrap(&config, div - 1);
+    pwm_config_set_clkdiv_mode(&config, PWM_DIV_FREE_RUNNING);
+
+    pwm_init(pwm_gpio_to_slice_num(GPIO_DPI_PCLK), &config, true);
+    gpio_set_function(GPIO_DPI_PCLK, GPIO_FUNC_PWM);
+}
+
+void lv_port_disp_init(void) {
+    static lv_disp_draw_buf_t draw_buf;
+    static lv_color_t buf1[IPS_LCD_WIDTH * 10]; // 10 lines buffer
+    static lv_color_t buf2[IPS_LCD_WIDTH * 10];
+
+    lv_disp_draw_buf_init(&draw_buf, buf1, buf2, IPS_LCD_WIDTH * 10);
+
+    static lv_disp_drv_t disp_drv;
+    lv_disp_drv_init(&disp_drv);
+    
+    disp_drv.hor_res = IPS_LCD_WIDTH;
+    disp_drv.ver_res = IPS_LCD_HEIGHT;
+    disp_drv.flush_cb = lcd_flush_cb;
+    disp_drv.draw_buf = &draw_buf;
+
+    lv_disp_drv_register(&disp_drv);
+}
+
+void drive_rgb_pins(uint16_t pixel) {
+	uint8_t r = (pixel >> 11) & 0x1F; // Red 5 bits
+	uint8_t g = (pixel >> 5) & 0x3F;  // Green 6 bits
+	uint8_t b = pixel & 0x1F;         // Blue 5 bits
+
+	gpio_put_masked64((uint64_t)0b11111 << GPIO_DPI_R0, (uint64_t)r << GPIO_DPI_R0);
+	gpio_put_masked64((uint64_t)0b111111 << GPIO_DPI_G0, (uint64_t)g << GPIO_DPI_G0);
+	gpio_put_masked64((uint64_t)0b11111 << GPIO_DPI_B0, (uint64_t)b << GPIO_DPI_B0);
+}
+
+static void lcd_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) {
+    for (int y = area->y1; y <= area->y2; y++) {
+        gpio_write(GPIO_DPI_HSYNC, 0); // Start of line
+        for (int x = area->x1; x <= area->x2; x++) {
+            // Extract RGB values from the LVGL color buffer
+            drive_rgb_pins(color_p->full);
+
+            // Toggle pixel clock
+            gpio_write(GPIO_DPI_PCLK, 1);
+            gpio_write(GPIO_DPI_PCLK, 0);
+
+            color_p++;
+        }
+        gpio_write(GPIO_DPI_HSYNC, 1); // End of line
+    }
+
+    gpio_write(GPIO_DPI_VSYNC, 1); // Frame ready
+    gpio_write(GPIO_DPI_DEN, 1);   // Data enable
+
+    lv_disp_flush_ready(drv); // Notify LVGL that flush is complete
+}
+
+// static void dpi_display_draw()
+
+static void new_frame() {
+	gpio_put(GPIO_DPI_VSYNC, 0); // Start of Vsync
+    sleep_us(1);                 // Short pulse width for Vsync
+    gpio_put(GPIO_DPI_VSYNC, 1); // End of Vsync
+}
+static void new_line() {
+	gpio_put(GPIO_DPI_HSYNC, 0); // Hsync pulse for each line
+    sleep_us(1);                 // Short pulse width for Hsync
+    gpio_put(GPIO_DPI_HSYNC, 1); // End of Hsync
+}
+static void dpi_set_y(uint_fast8_t y) {
+    // Trigger Vsync for a specific Y position
+	new_frame();
+
+    // Wait until the display reaches the target line
+    for (int i = 0; i < y; i++) {
+        new_line();
+    }
+}
+
+#warning "Implement this function in when we are reading for the ips lcd"
+static void dpi_draw_line(const uint_fast8_t line) {
+	static uint16_t fb[LCD_WIDTH];
+
+#if PEANUT_FULL_GBC_SUPPORT
+ 	if (gbc->cgb.cgbMode) {
+ 		for(unsigned int x = 0; x < LCD_WIDTH; x++){
+			fb[x] = gbc->cgb.fixPalette[pixels_buffer[x]];
+		}
+ 	}
+ 	else {
+#endif
+ 		for(unsigned int x = 0; x < LCD_WIDTH; x++){
+			fb[x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
+					[pixels_buffer[x] & 3];
+		}
+#if PEANUT_FULL_GBC_SUPPORT
+	}
+#endif	
+
+    // Copy pixel data into the framebuffer, centered vertically
+    size_t vertical_offset = (IPS_LCD_HEIGHT - IMAGE_HEIGHT) / 2;
+    // Calculate the actual line position for centering
+    uint_fast8_t centered_line = vertical_offset + line;
+
+	// Start the display at the offset if this is the first line == 0
+	if (line == 0) {
+		dpi_set_y(centered_line);
+	} 
+	if (line == LCD_HEIGHT) {
+		new_frame();
+	}
+
+	// Scaling 2x vertically
+	// Line outputted once with the 2x horizontal, then again on a new line for 2x vertical.
+	for (int h = 0; h < DISPLAY_SCALE; h++) {
+		// Output the line to the display
+		for (int i = 0; i < LCD_WIDTH; i++) {
+			// Scaling 2x horizontally
+			for (int j = 0; j < DISPLAY_SCALE; j++) {
+				drive_rgb_pins(fb[i]);
+
+				// Simulate pixel clock pulse
+				gpio_put(GPIO_DPI_PCLK, 1);
+				gpio_put(GPIO_DPI_PCLK, 0);
+			}
+		}
+		new_line();
+	}
+
+
+	__atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
+}
+
+// int main() {
+//     stdio_init_all();
+//     init_dpi_pins();
+//     dpi_set_pixel_clock(DOTCLOCK_FREQ);
+
+//     lv_init();
+//     lv_port_disp_init();
+
+//     while (1) {
+//         lv_task_handler();
+//         sleep_ms(5);
+//     }
+// }

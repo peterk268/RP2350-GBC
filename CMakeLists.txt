@@ -33,7 +33,8 @@ project(RP2350_GBC C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
-add_subdirectory(ext/FatFs_SPI build)
+add_subdirectory(ext/FatFs_SPI)
+add_subdirectory(ext/lvgl)
 
 # Add executable. Default name is the project name, version 0.1
 
@@ -60,9 +61,10 @@ target_include_directories(RP2350_GBC PRIVATE inc ext/minigb_apu ext/i2s)
 # Add the standard library to the build
 target_link_libraries(RP2350_GBC
         FatFs_SPI
+        lvgl
         pico_stdlib pico_stdio pico_bootrom pico_multicore pico_stdio  pico_multicore
         hardware_clocks hardware_pio hardware_vreg hardware_pio hardware_pwm
-        hardware_sync hardware_pll hardware_spi hardware_irq hardware_dma hardware_flash hardware_i2c pico_aon_timer hardware_powman lvgl
+        hardware_sync hardware_pll hardware_spi hardware_irq hardware_dma hardware_flash hardware_i2c pico_aon_timer hardware_powman
         pico_binary_info)
 
 target_compile_definitions(RP2350_GBC PRIVATE

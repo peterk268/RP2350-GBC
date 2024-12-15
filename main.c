@@ -20,8 +20,11 @@
 #include <sys/unistd.h>
 #include <hardware/irq.h>
 #include "hardware/pwm.h"
+#include "hardware/powman.h"
 
+// Essential headers
 #include "settings.h"
+#include "gpio.h"
 
 /* Project headers */
 #include "hedley.h"
@@ -34,10 +37,11 @@
 
 /* Main Modularization */
 #include "global.h"
-#include "gpio.h"
 #include "gpu.h"
 #include "gb.h"
 #include "sd.h"
+#include "audio.h"
+#include "battery.h"
 
 
 int main(void)
@@ -62,59 +66,40 @@ int main(void)
 	putstdio("INIT: ");
 
     // MARK: - Initialise GPIO
-	gpio_set_function(GPIO_UP, GPIO_FUNC_SIO);
-	gpio_set_function(GPIO_DOWN, GPIO_FUNC_SIO);
-	gpio_set_function(GPIO_LEFT, GPIO_FUNC_SIO);
-	gpio_set_function(GPIO_RIGHT, GPIO_FUNC_SIO);
-	gpio_set_function(GPIO_A, GPIO_FUNC_SIO);
-	gpio_set_function(GPIO_B, GPIO_FUNC_SIO);
-	gpio_set_function(GPIO_SELECT, GPIO_FUNC_SIO);
-	gpio_set_function(GPIO_START, GPIO_FUNC_SIO);
-	gpio_set_function(GPIO_CS, GPIO_FUNC_SIO);
-	gpio_set_function(GPIO_CLK, GPIO_FUNC_SPI);
-	gpio_set_function(GPIO_SDA, GPIO_FUNC_SPI);
-	gpio_set_function(GPIO_RS, GPIO_FUNC_SIO);
-	gpio_set_function(GPIO_RST, GPIO_FUNC_SIO);
-	gpio_set_function(GPIO_LED, GPIO_FUNC_PWM);
+	config_iox_ports();
+	// Set up sleep interrupt asap.
+	setup_switch_sleep();
 
-	gpio_set_dir(GPIO_UP, false);
-	gpio_set_dir(GPIO_DOWN, false);
-	gpio_set_dir(GPIO_LEFT, false);
-	gpio_set_dir(GPIO_RIGHT, false);
-	gpio_set_dir(GPIO_A, false);
-	gpio_set_dir(GPIO_B, false);
-	gpio_set_dir(GPIO_SELECT, false);
-	gpio_set_dir(GPIO_START, false);
-	gpio_set_dir(GPIO_CS, true);
-	gpio_set_dir(GPIO_RS, true);
-	gpio_set_dir(GPIO_RST, true);
+	gpio_set_function(GPIO_B_SELECT, GPIO_FUNC_SIO);
+
+	gpio_set_function(GPIO_LCD_SCK, GPIO_FUNC_SPI);
+	gpio_set_function(GPIO_LCD_MOSI, GPIO_FUNC_SPI);
+	gpio_set_function(GPIO_LCD_MISO, GPIO_FUNC_SIO);
+
+	gpio_set_function(GPIO_LCD_LED, GPIO_FUNC_PWM);
+
+	gpio_set_dir(GPIO_B_SELECT, false);
+	gpio_set_dir(GPIO_LCD_MISO, true);
 
     // MARK: - PWM Set up
-	uint slice_num = pwm_gpio_to_slice_num(GPIO_LED);
+	uint slice_num = pwm_gpio_to_slice_num(GPIO_LCD_LED);
 	uint8_t led_pwm_duty_cycle = 64; // set to 6/8 brightness level, 0 highest, 255 lowest
 	pwm_set_wrap(slice_num, 255); // Set PWM period
     pwm_set_chan_level(slice_num, PWM_CHAN_A, led_pwm_duty_cycle); // Set PWM duty cycle
 	pwm_set_enabled(slice_num, true); // Enable PWM
 
-	gpio_set_slew_rate(GPIO_CLK, GPIO_SLEW_RATE_FAST);
-	gpio_set_slew_rate(GPIO_SDA, GPIO_SLEW_RATE_FAST);
+	gpio_set_slew_rate(GPIO_LCD_SCK, GPIO_SLEW_RATE_FAST);
+	gpio_set_slew_rate(GPIO_LCD_MOSI, GPIO_SLEW_RATE_FAST);
 	
-	gpio_pull_up(GPIO_UP);
-	gpio_pull_up(GPIO_DOWN);
-	gpio_pull_up(GPIO_LEFT);
-	gpio_pull_up(GPIO_RIGHT);
-	gpio_pull_up(GPIO_A);
-	gpio_pull_up(GPIO_B);
-	gpio_pull_up(GPIO_SELECT);
-	gpio_pull_up(GPIO_START);
+	gpio_pull_up(GPIO_B_SELECT);
 
     // MARK: - LCD SPI Config
 	/* Set SPI clock to use high frequency. */
 	clock_configure(clk_peri, 0,
 			CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS,
 			125 * 1000 * 1000, 125 * 1000 * 1000);
-	spi_init(spi0, 30*1000*1000);
-	spi_set_format(spi0, 16, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+	spi_init(spi1, 30*1000*1000);
+	spi_set_format(spi1, 16, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
 
     // MARK: - I2S Config
 #if ENABLE_SOUND
@@ -139,7 +124,7 @@ while(true)
 	// MARK: - ROM File selector
 	mk_ili9225_init();
 	mk_ili9225_fill(0x0000);
-	// multicore_launch_core1(play_wav_default);
+
 	rom_file_selector();
 #endif
 #endif
@@ -208,22 +193,27 @@ while(true)
 #endif
 
 		// MARK: - Update buttons state
-		prev_joypad_bits.up=gb.direct.joypad_bits.up;
-		prev_joypad_bits.down=gb.direct.joypad_bits.down;
-		prev_joypad_bits.left=gb.direct.joypad_bits.left;
-		prev_joypad_bits.right=gb.direct.joypad_bits.right;
-		prev_joypad_bits.a=gb.direct.joypad_bits.a;
-		prev_joypad_bits.b=gb.direct.joypad_bits.b;
-		prev_joypad_bits.select=gb.direct.joypad_bits.select;
-		prev_joypad_bits.start=gb.direct.joypad_bits.start;
-		gb.direct.joypad_bits.up=gpio_get(GPIO_UP);
-		gb.direct.joypad_bits.down=gpio_get(GPIO_DOWN);
-		gb.direct.joypad_bits.left=gpio_get(GPIO_LEFT);
-		gb.direct.joypad_bits.right=gpio_get(GPIO_RIGHT);
-		gb.direct.joypad_bits.a=gpio_get(GPIO_A);
-		gb.direct.joypad_bits.b=gpio_get(GPIO_B);
-		gb.direct.joypad_bits.select=gpio_get(GPIO_SELECT);
-		gb.direct.joypad_bits.start=gpio_get(GPIO_START);
+		// Read IOX port 0
+		read_io_expander_states(0);
+		// Store previous joypad states
+		prev_joypad_bits.up      = gb.direct.joypad_bits.up;
+		prev_joypad_bits.down    = gb.direct.joypad_bits.down;
+		prev_joypad_bits.left    = gb.direct.joypad_bits.left;
+		prev_joypad_bits.right   = gb.direct.joypad_bits.right;
+		prev_joypad_bits.a       = gb.direct.joypad_bits.a;
+		prev_joypad_bits.b       = gb.direct.joypad_bits.b;
+		prev_joypad_bits.select  = gb.direct.joypad_bits.select;
+		prev_joypad_bits.start   = gb.direct.joypad_bits.start;
+
+		// Update joypad states with values from IOX
+		gb.direct.joypad_bits.up      = gpio_read(IOX_B_UP);
+		gb.direct.joypad_bits.down    = gpio_read(IOX_B_DOWN);
+		gb.direct.joypad_bits.left    = gpio_read(IOX_B_LEFT);
+		gb.direct.joypad_bits.right   = gpio_read(IOX_B_RIGHT);
+		gb.direct.joypad_bits.a       = gpio_read(IOX_B_A);
+		gb.direct.joypad_bits.b       = gpio_read(IOX_B_B);
+		gb.direct.joypad_bits.select  = gpio_read(GPIO_B_SELECT);
+		gb.direct.joypad_bits.start   = gpio_read(IOX_B_START);
 
 		// MARK: - Hotkeys
         // (select + * combo)
@@ -292,134 +282,3 @@ while(true)
     }
 
 }
-
-// #include <stdio.h>
-// #include "pico/stdlib.h"
-// #include "hardware/spi.h"
-// #include "hardware/i2c.h"
-// #include "hardware/dma.h"
-// #include "hardware/pio.h"
-// #include "hardware/timer.h"
-// #include "hardware/clocks.h"
-
-// // SPI Defines
-// // We are going to use SPI 0, and allocate it to the following GPIO pins
-// // Pins can be changed, see the GPIO function select table in the datasheet for information on GPIO assignments
-// #define SPI_PORT spi0
-// #define PIN_MISO 16
-// #define PIN_CS   17
-// #define PIN_SCK  18
-// #define PIN_MOSI 19
-
-// // I2C defines
-// // This example will use I2C0 on GPIO8 (SDA) and GPIO9 (SCL) running at 400KHz.
-// // Pins can be changed, see the GPIO function select table in the datasheet for information on GPIO assignments
-// #define I2C_PORT i2c0
-// #define I2C_SDA 8
-// #define I2C_SCL 9
-
-// // Data will be copied from src to dst
-// const char src[] = "Hello, world! (from DMA)";
-// char dst[count_of(src)];
-
-// #include "blink.pio.h"
-
-// void blink_pin_forever(PIO pio, uint sm, uint offset, uint pin, uint freq) {
-//     blink_program_init(pio, sm, offset, pin);
-//     pio_sm_set_enabled(pio, sm, true);
-
-//     printf("Blinking pin %d at %d Hz\n", pin, freq);
-
-//     // PIO counter program takes 3 more cycles in total than we pass as
-//     // input (wait for n + 1; mov; jmp)
-//     pio->txf[sm] = (125000000 / (2 * freq)) - 3;
-// }
-
-// int64_t alarm_callback(alarm_id_t id, void *user_data) {
-//     // Put your timeout handler code in here
-//     return 0;
-// }
-
-
-
-
-// int main()
-// {
-//     stdio_init_all();
-
-//     // SPI initialisation. This example will use SPI at 1MHz.
-//     spi_init(SPI_PORT, 1000*1000);
-//     gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
-//     gpio_set_function(PIN_CS,   GPIO_FUNC_SIO);
-//     gpio_set_function(PIN_SCK,  GPIO_FUNC_SPI);
-//     gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
-    
-//     // Chip select is active-low, so we'll initialise it to a driven-high state
-//     gpio_set_dir(PIN_CS, GPIO_OUT);
-//     gpio_put(PIN_CS, 1);
-//     // For more examples of SPI use see https://github.com/raspberrypi/pico-examples/tree/master/spi
-
-//     // I2C Initialisation. Using it at 400Khz.
-//     i2c_init(I2C_PORT, 400*1000);
-    
-//     gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
-//     gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
-//     gpio_pull_up(I2C_SDA);
-//     gpio_pull_up(I2C_SCL);
-//     // For more examples of I2C use see https://github.com/raspberrypi/pico-examples/tree/master/i2c
-
-//     // Get a free channel, panic() if there are none
-//     int chan = dma_claim_unused_channel(true);
-    
-//     // 8 bit transfers. Both read and write address increment after each
-//     // transfer (each pointing to a location in src or dst respectively).
-//     // No DREQ is selected, so the DMA transfers as fast as it can.
-    
-//     dma_channel_config c = dma_channel_get_default_config(chan);
-//     channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
-//     channel_config_set_read_increment(&c, true);
-//     channel_config_set_write_increment(&c, true);
-    
-//     dma_channel_configure(
-//         chan,          // Channel to be configured
-//         &c,            // The configuration we just created
-//         dst,           // The initial write address
-//         src,           // The initial read address
-//         count_of(src), // Number of transfers; in this case each is 1 byte.
-//         true           // Start immediately.
-//     );
-    
-//     // We could choose to go and do something else whilst the DMA is doing its
-//     // thing. In this case the processor has nothing else to do, so we just
-//     // wait for the DMA to finish.
-//     dma_channel_wait_for_finish_blocking(chan);
-    
-//     // The DMA has now copied our text from the transmit buffer (src) to the
-//     // receive buffer (dst), so we can print it out from there.
-//     puts(dst);
-
-//     // PIO Blinking example
-//     PIO pio = pio0;
-//     uint offset = pio_add_program(pio, &blink_program);
-//     printf("Loaded program at %d\n", offset);
-    
-//     #ifdef PICO_DEFAULT_LED_PIN
-//     blink_pin_forever(pio, 0, offset, PICO_DEFAULT_LED_PIN, 3);
-//     #else
-//     blink_pin_forever(pio, 0, offset, 6, 3);
-//     #endif
-//     // For more pio examples see https://github.com/raspberrypi/pico-examples/tree/master/pio
-
-//     // Timer example code - This example fires off the callback after 2000ms
-//     add_alarm_in_ms(2000, alarm_callback, NULL, false);
-//     // For more examples of timer use see https://github.com/raspberrypi/pico-examples/tree/master/timer
-
-//     printf("System Clock Frequency is %d Hz\n", clock_get_hz(clk_sys));
-//     printf("USB Clock Frequency is %d Hz\n", clock_get_hz(clk_usb));
-//     // For more examples of clocks use see https://github.com/raspberrypi/pico-examples/tree/master/clocks
-
-//     while (true) {
-//         printf("Hello, world!\n");
-//         sleep_ms(1000);
-//     }
-// }

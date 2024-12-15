@@ -1,27 +1,27 @@
 /* Functions required for communication with the ILI9225. */
 void mk_ili9225_set_rst(bool state)
 {
-	gpio_put(GPIO_RST, state);
+	gpio_write(IOX_LCD_RST, state);
 }
 
 void mk_ili9225_set_rs(bool state)
 {
-	gpio_put(GPIO_RS, state);
+	gpio_write(GPIO_LCD_MISO, state);
 }
 
 void mk_ili9225_set_cs(bool state)
 {
-	gpio_put(GPIO_CS, state);
+	gpio_write(IOX_TFT_nCS, state);
 }
 
 void mk_ili9225_set_led(bool state)
 {
-	gpio_put(GPIO_LED, state);
+	gpio_write(GPIO_LCD_LED, state);
 }
 
 void mk_ili9225_spi_write16(const uint16_t *halfwords, size_t len)
 {
-	spi_write16_blocking(spi0, halfwords, len);
+	spi_write16_blocking(spi1, halfwords, len);
 }
 
 void mk_ili9225_delay_ms(unsigned ms)

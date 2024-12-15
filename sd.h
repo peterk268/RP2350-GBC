@@ -198,14 +198,18 @@ void rom_file_selector() {
 	/* get user's input */
 	bool up,down,left,right,a,b,select,start;
 	while(true) {
-		up=gpio_get(GPIO_UP);
-		down=gpio_get(GPIO_DOWN);
-		left=gpio_get(GPIO_LEFT);
-		right=gpio_get(GPIO_RIGHT);
-		a=gpio_get(GPIO_A);
-		b=gpio_get(GPIO_B);
-		select=gpio_get(GPIO_SELECT);
-		start=gpio_get(GPIO_START);
+		
+		// Read GPIO states for joypad buttons
+		read_io_expander_states(0);
+		up      = gpio_read(IOX_B_UP);
+		down    = gpio_read(IOX_B_DOWN);
+		left    = gpio_read(IOX_B_LEFT);
+		right   = gpio_read(IOX_B_RIGHT);
+		a       = gpio_read(IOX_B_A);
+		b       = gpio_read(IOX_B_B);
+		select  = gpio_read(GPIO_B_SELECT);
+		start   = gpio_read(IOX_B_START);
+
 		if(!start) {
 			/* re-start the last game (no need to reprogram flash) */
 			break;

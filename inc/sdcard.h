@@ -30,7 +30,7 @@ void spi_dma_isr();
 
 static spi_t spis[]={
     {
-        .hw_inst=spi1,
+        .hw_inst=spi0,
         .miso_gpio=12,
         .mosi_gpio=15,
         .sck_gpio=14,
@@ -43,7 +43,7 @@ static sd_card_t sd_cards[]={
     {
         .pcName="0:",
         .spi=&spis[0],
-        .ss_gpio=13,
+        .ss_gpio=IOX_SD_nCS,
         .use_card_detect=false,
         .m_Status=STA_NOINIT
     }

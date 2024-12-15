@@ -62,7 +62,7 @@ target_link_libraries(RP2350_GBC
         FatFs_SPI
         pico_stdlib pico_stdio pico_bootrom pico_multicore pico_stdio  pico_multicore
         hardware_clocks hardware_pio hardware_vreg hardware_pio hardware_pwm
-        hardware_sync hardware_pll hardware_spi hardware_irq hardware_dma hardware_flash hardware_i2c pico_aon_timer
+        hardware_sync hardware_pll hardware_spi hardware_irq hardware_dma hardware_flash hardware_i2c pico_aon_timer hardware_powman lvgl
         pico_binary_info)
 
 target_compile_definitions(RP2350_GBC PRIVATE

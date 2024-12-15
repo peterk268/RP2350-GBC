@@ -1,19 +1,3 @@
-/* GPIO Connections. */
-#define GPIO_UP		2
-#define GPIO_DOWN	3
-#define GPIO_LEFT	4
-#define GPIO_RIGHT	5
-#define GPIO_A		6
-#define GPIO_B		7
-#define GPIO_SELECT	8
-#define GPIO_START	9
-#define GPIO_CS		17
-#define GPIO_CLK	18
-#define GPIO_SDA	19
-#define GPIO_RS		20
-#define GPIO_RST	21
-#define GPIO_LED	22
-
 //MARK: - GPIO Pin Definitions
 
 // Misc.
@@ -57,22 +41,22 @@
 #define GPIO_LCD_LED      24
 
 // DPI
-#define GPIO_DPI_B0       26
-#define GPIO_DPI_B1       27
-#define GPIO_DPI_B2       28
-#define GPIO_DPI_B3       29
-#define GPIO_DPI_B4       30
-#define GPIO_DPI_G0       31
-#define GPIO_DPI_G1       32
-#define GPIO_DPI_G2       33
-#define GPIO_DPI_G3       34
-#define GPIO_DPI_G4       35
-#define GPIO_DPI_G5       36
-#define GPIO_DPI_R0       37
-#define GPIO_DPI_R1       38
-#define GPIO_DPI_R2       39
-#define GPIO_DPI_R3       40
-#define GPIO_DPI_R4       41
+#define GPIO_DPI_B0       25
+#define GPIO_DPI_B1       26
+#define GPIO_DPI_B2       27
+#define GPIO_DPI_B3       28
+#define GPIO_DPI_B4       29
+#define GPIO_DPI_G0       30
+#define GPIO_DPI_G1       31
+#define GPIO_DPI_G2       32
+#define GPIO_DPI_G3       33
+#define GPIO_DPI_G4       34
+#define GPIO_DPI_G5       35
+#define GPIO_DPI_R0       36
+#define GPIO_DPI_R1       37
+#define GPIO_DPI_R2       38
+#define GPIO_DPI_R3       39
+#define GPIO_DPI_R4       40
 #define GPIO_DPI_VSYNC    41
 #define GPIO_DPI_HSYNC    42
 #define GPIO_DPI_PCLK     43
@@ -137,14 +121,23 @@ const uint8_t IOX_CONFIG_0_REG = 0x06;
 const uint8_t IOX_CONFIG_1_REG = 0x07;
 
 
-// MARK: - Functions definitions
+// MARK: - Functions declarations
 void config_iox_port(bool port, uint8_t config_data);
 void config_iox_ports();
 void read_io_expander_states(int8_t port);
-void write_io_expander_states(int8_t port, uint8_t data);
-bool gpio_read(int gpio_num);
-bool iox_state_lookup(int gpio_num);
-uint8_t get_iox_port_states(uint8_t port);
+void write_io_expander_states(bool port, uint8_t data);
+void write_iox_port1(int8_t new_nbt_pair_state, 
+                     int8_t new_nbt_audio_state, 
+                     int8_t new_ncc_detect_state, 
+                     int8_t new_n3v3_mcu_en_state, 
+                     int8_t new_lcd_rst_state, 
+                     int8_t new_ips_ncs_state, 
+                     int8_t new_tft_ncs_state, 
+                     int8_t new_sd_ncs_state);
+bool gpio_read(uint8_t gpio_num);
+bool iox_state_lookup(uint8_t gpio_num);
+void iox_state_set(uint8_t gpio_num, bool value);
+uint8_t get_iox_port_states(bool port);
 
 
 void config_iox_port(bool port, uint8_t config_data) {
@@ -154,6 +147,7 @@ void config_iox_port(bool port, uint8_t config_data) {
     i2c_write_blocking(IOX_I2C_PORT, IOX_I2C_ADDR, write_buffer, 2, false);
 }
 
+// Configures pins as I/O and sets default values.
 void config_iox_ports() {
     // 1 input, 0 output
     // Port 0 has all inputs.
@@ -161,6 +155,9 @@ void config_iox_ports() {
     #warning "Change cc detect config to output when changed to speaker control"
     // Port 1 has all outputs except nCC_DETECT
     config_iox_port(1, 0b00100000);
+
+    // Set up IOX outputs with default values.
+    write_iox_port1(1, 1, 0, 1, 0, 1, 1, 1);
 }
 
 // Ports 0 & 1
@@ -207,7 +204,7 @@ void read_io_expander_states(int8_t port) {
 
 }
 
-void write_io_expander_states(int8_t port, uint8_t data) {
+void write_io_expander_states(bool port, uint8_t data) {
     const uint8_t reg = (port == 0) ? IOX_OUTPUT_0_REG : IOX_OUTPUT_1_REG;
     uint8_t write_buffer[2] = {reg, data};
 
@@ -290,7 +287,7 @@ void write_iox_port1(int8_t new_nbt_pair_state,
     write_io_expander_states(1, states);    // Write the states to the IO expander
 }
 
-bool gpio_read(int gpio_num) {
+bool gpio_read(uint8_t gpio_num) {
     bool state;
     if (gpio_num <= 47) {
         state = gpio_get(gpio_num);
@@ -301,7 +298,27 @@ bool gpio_read(int gpio_num) {
     return state;
 }
 
-bool iox_state_lookup(int gpio_num) {
+void gpio_write(uint8_t gpio_num, bool value) {
+    if (gpio_num <= 47) {
+        gpio_put(gpio_num, value);
+    } else {
+        // Calculate the pin number relative to the IOX port (pins 48 to 55 for Port 0, pins 58 to 65 for Port 1)
+        uint8_t pin = gpio_num - 48;
+        
+        // Determine the port: Port 0 for pins 48-55, Port 1 for pins 58-65
+        bool port = (pin >= 10) ? 1 : 0;  // Port 0 for pins 48-55, Port 1 for pins 58-65
+
+        iox_state_set(gpio_num, value);
+
+        // Get the current state of the specified port
+        uint8_t states = get_iox_port_states(port);
+
+        // Write the updated states to the IO expander for the correct port
+        write_io_expander_states(port, states);
+    }
+}
+
+bool iox_state_lookup(uint8_t gpio_num) {
     switch (gpio_num) {
         case IOX_B_A:
             return b_a_state;
@@ -343,7 +360,63 @@ bool iox_state_lookup(int gpio_num) {
     }
 }
 
-uint8_t get_iox_port_states(uint8_t port) {
+void iox_state_set(uint8_t gpio_num, bool value) {
+    switch (gpio_num) {
+        case IOX_B_A:
+            b_a_state = value;
+            break;
+        case IOX_B_B:
+            b_b_state = value;
+            break;
+        case IOX_B_UP:
+            b_up_state = value;
+            break;
+        case IOX_B_DOWN:
+            b_down_state = value;
+            break;
+        case IOX_B_LEFT:
+            b_left_state = value;
+            break;
+        case IOX_B_RIGHT:
+            b_right_state = value;
+            break;
+        case IOX_B_START:
+            b_start_state = value;
+            break;
+        case IOX_DVI_DETECT:
+            dvi_detect_state = value;
+            break;
+        case IOX_SD_nCS:
+            sd_ncs_state = value;
+            break;
+        case IOX_TFT_nCS:
+            tft_ncs_state = value;
+            break;
+        case IOX_IPS_nCS:
+            ips_ncs_state = value;
+            break;
+        case IOX_LCD_RST:
+            lcd_rst_state = value;
+            break;
+        case IOX_n3V3_MCU_EN:
+            n3v3_mcu_en_state = value;
+            break;
+        case IOX_nCC_DETECT:
+            ncc_detect_state = value;
+            break;
+        case IOX_nBT_AUDIO:
+            nbt_audio_state = value;
+            break;
+        case IOX_nBT_PAIR:
+            nbt_pair_state = value;
+            break;
+        default:
+            printf("Invalid GPIO pin\n");
+            break;
+    }
+}
+
+uint8_t get_iox_port_states(bool port) {
     if (port == 0) {
         return (dvi_detect_state << 7) | 
                (b_start_state << 6) | 

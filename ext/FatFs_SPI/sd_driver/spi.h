@@ -72,7 +72,7 @@ void set_spi_dma_irq_channel(bool useChannel1, bool shared);
 #endif
 
 #ifndef NO_PICO_LED
-#  define USE_LED 1
+#  define USE_LED 0
 #endif
 
 #if USE_LED

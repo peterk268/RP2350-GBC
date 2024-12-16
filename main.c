@@ -66,6 +66,16 @@ int main(void)
 	// sleep_ms(5000);
 	putstdio("INIT: ");
 
+	// MARK: - I2C INIT
+	i2c_init(IOX_I2C_PORT, 400 * 1000); // 400 kHz
+    gpio_set_function(GPIO_I2C_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(GPIO_I2C_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(GPIO_I2C_SDA);
+    gpio_pull_up(GPIO_I2C_SCL);
+
+	// MARK: - Battery Monitor Config
+	config_battery_monitor();
+
     // MARK: - Initialise GPIO
 	config_iox_ports();
 	// Set up sleep interrupt asap.
@@ -99,8 +109,8 @@ int main(void)
 	clock_configure(clk_peri, 0,
 			CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS,
 			125 * 1000 * 1000, 125 * 1000 * 1000);
-	spi_init(spi1, 30*1000*1000);
-	spi_set_format(spi1, 16, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+	spi_init(LCD_SPI, 30*1000*1000);
+	spi_set_format(LCD_SPI, 16, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
 
     // MARK: - I2S Config
 #if ENABLE_SOUND

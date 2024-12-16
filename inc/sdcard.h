@@ -30,7 +30,7 @@ void spi_dma_isr();
 
 static spi_t spis[]={
     {
-        .hw_inst=spi0,
+        .hw_inst=SD_SPI,
         .miso_gpio=12,
         .mosi_gpio=15,
         .sck_gpio=14,

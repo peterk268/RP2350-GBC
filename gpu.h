@@ -21,7 +21,7 @@ void mk_ili9225_set_led(bool state)
 
 void mk_ili9225_spi_write16(const uint16_t *halfwords, size_t len)
 {
-	spi_write16_blocking(spi1, halfwords, len);
+	spi_write16_blocking(LCD_SPI, halfwords, len);
 }
 
 void mk_ili9225_delay_ms(unsigned ms)

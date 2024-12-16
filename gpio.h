@@ -1,3 +1,11 @@
+// MARK: - Ports
+#define SD_SPI spi0
+#define LCD_SPI spi1
+
+#define IOX_I2C_PORT i2c1
+#define BAT_MONITOR_I2C_PORT IOX_I2C_PORT
+
+
 //MARK: - GPIO Pin Definitions
 
 // Misc.
@@ -111,7 +119,6 @@ bool nbt_audio_state = 0;
 bool nbt_pair_state = 0;
 
 // MARK: - IOX REGS
-#define IOX_I2C_PORT i2c1
 #define IOX_I2C_ADDR 0x20
 const uint8_t IOX_INPUT_0_REG = 0x00;
 const uint8_t IOX_INPUT_1_REG = 0x01;

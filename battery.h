@@ -1,7 +1,68 @@
+// MARK: - Monitor
+
 #define BAT_MONITOR_I2C_ADDR 0b1010101
 
-// chem id 1202
+// Function to read a 16-bit register
+uint16_t read_register(uint8_t reg) {
+    uint8_t buffer[2] = {0};
+    
+    // Write the register address
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, &reg, 1, true);
+    
+    // Read 2 bytes from the register
+    i2c_read_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, buffer, 2, false);
+    
+    // Combine high and low bytes into a 16-bit value
+    return (buffer[0] << 8) | buffer[1];
+}
 
+uint16_t read_voltage_mV() {
+    return read_register(0x04);
+}
+
+uint16_t get_remaining_bat_capacity_mAh() {
+    return read_register(0x0C);
+}
+
+uint16_t get_full_bat_capacity_mAh() {
+    return read_register(0x0E);
+}
+
+uint16_t get_average_current_mA() {
+    return read_register(0x10);
+}
+
+uint16_t get_bat_charge_percent() {
+    return read_register(0x1C);
+}
+
+void subcommand_control(uint16_t subcommand) {
+    // Control command register 0x00 & 0x01 but incremental write used so only 0x00
+    // plus 0xXXXX subcommand.
+    uint8_t data[3] = {0x00, (uint8_t)(subcommand >> 8), (uint8_t)(subcommand & 0x00FF)};
+    // Write the register address
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, data, 3, false);
+}
+
+void enable_bat_monitor_shutdown() {
+    subcommand_control(0x001B);
+}
+
+void change_bat_chem_to_lipo() {
+    // Chem B = 4.2V, ID = 1202
+    // Control Data = 0x0031
+    subcommand_control(0x0031);
+
+    // Soft reset to update
+    subcommand_control(0x0042);
+}
+
+void config_battery_monitor() {
+    change_bat_chem_to_lipo();
+    enable_bat_monitor_shutdown();
+}
+
+// MARK: - Sleep
 static powman_power_state off_state;
 static powman_power_state on_state;
 

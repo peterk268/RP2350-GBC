@@ -17,7 +17,7 @@ i2s_config_t i2s_config;
  * Game Boy DMG ROM size ranges from 32768 bytes (e.g. Tetris) to 2,097,152 bytes (e.g. Pokemon Silver)
  */
 #define FLASH_TARGET_OFFSET (4 * 1024 * 1024)
-const uint8_t *rom = (const uint8_t *)(0x40200000 + FLASH_TARGET_OFFSET); // XIP_BASE address for ESP32
+const uint8_t *rom = (const uint8_t *) (XIP_BASE + FLASH_TARGET_OFFSET);
 static unsigned char rom_bank0[65536];
 
 static uint8_t ram[32768];

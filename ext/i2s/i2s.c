@@ -24,6 +24,12 @@
 
 #include "i2s.h"
 
+// I2S
+#define GPIO_I2S_BCLK     21
+#define GPIO_I2S_LRCLK    22
+#define GPIO_I2S_DIN      23
+
+#warning "lr needs to be righ tafter btclk"
 /**
  * return the default i2s context used to store information about the setup
  */
@@ -31,8 +37,8 @@ i2s_config_t i2s_get_default_config(void) {
     i2s_config_t i2s_config = {
 		.sample_freq = 44100, 
 		.channel_count = 2,
-		.data_pin = 26,
-		.clock_pin_base = 27,
+		.data_pin = GPIO_I2S_DIN, 
+		.clock_pin_base = GPIO_I2S_BCLK,
 		.pio = pio0,
 		.sm = 0,
         .dma_channel = 0,

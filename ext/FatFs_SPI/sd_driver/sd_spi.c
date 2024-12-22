@@ -115,7 +115,7 @@ void sd_spi_send_initializing_sequence(sd_card_t * pSD) {
 void sd_spi_init_pl022(sd_card_t *pSD) {
     // Let the PL022 SPI handle it.
     // the CS line is brought high between each byte during transmission.
-    gpio_set_function(pSD->ss_gpio, GPIO_FUNC_SPI);
+    // gpio_set_function(pSD->ss_gpio, GPIO_FUNC_SPI);
 }
 
 /* [] END OF FILE */

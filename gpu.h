@@ -1,17 +1,23 @@
 /* Functions required for communication with the ILI9225. */
 void mk_ili9225_set_rst(bool state)
 {
-	gpio_write(IOX_LCD_RST, state);
+	// lcd needs por
+	#warning "This was done because of inverter, but please change back once hardware is changed
+	gpio_write(IOX_LCD_RST, !state);
 }
 
 void mk_ili9225_set_rs(bool state)
 {
 	gpio_write(GPIO_LCD_MISO, state);
 }
-
+bool iscs = false;
 void mk_ili9225_set_cs(bool state)
 {
-	gpio_write(IOX_TFT_nCS, state);
+	// this was done due to slowness of iox write
+	if (!iscs) {
+		gpio_write(IOX_TFT_nCS, 0);
+		iscs = true;
+	}
 }
 
 void mk_ili9225_set_led(bool state)
@@ -192,6 +198,7 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
 
 
 
+#if ENABLE_LCD
 #define IPS_LCD_WIDTH  320
 #define IPS_LCD_HEIGHT 320
 #define IMAGE_HEIGHT 288
@@ -366,4 +373,31 @@ static void dpi_draw_line(const uint_fast8_t line) {
 //         lv_task_handler();
 //         sleep_ms(5);
 //     }
+// }
+
+#endif
+
+
+
+//TMDS
+// Define the bit mapping for the TMDS lanes
+// static const int lane_to_output_bit[3] = {4, 6, 0}; // Mapping D0, D1, D2
+
+// // Assign clock pair (CLK) to GPIO 14 & 15
+// hstx_ctrl_hw->bit[2] = HSTX_CTRL_BIT0_CLK_BITS;           // CLK+
+// hstx_ctrl_hw->bit[3] = HSTX_CTRL_BIT0_CLK_BITS | HSTX_CTRL_BIT0_INV_BITS; // CLK-
+
+// // Assign TMDS lanes to GPIO pins
+// for (uint lane = 0; lane < 3; ++lane) {
+//     int bit = lane_to_output_bit[lane];
+//     uint32_t lane_data_sel_bits =
+//         (lane * 10    ) << HSTX_CTRL_BIT0_SEL_P_LSB |
+//         (lane * 10 + 1) << HSTX_CTRL_BIT0_SEL_N_LSB;
+//     hstx_ctrl_hw->bit[bit    ] = lane_data_sel_bits; // Assign data to lane
+//     hstx_ctrl_hw->bit[bit + 1] = lane_data_sel_bits | HSTX_CTRL_BIT0_INV_BITS; // Inverted data
+// }
+
+// // Set the function of GPIO pins to HSTX for DVI output
+// for (int i = 12; i <= 19; ++i) {
+//     gpio_set_function(i, GPIO_FUNC_HSTX); // Set GPIO function to HSTX
 // }

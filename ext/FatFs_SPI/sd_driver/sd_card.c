@@ -1202,15 +1202,15 @@ bool sd_init_driver() {
                 gpio_pull_up(pSD->card_detect_gpio);
                 gpio_set_dir(pSD->card_detect_gpio, GPIO_IN);
             }
-            if (pSD->set_drive_strength) {
-                gpio_set_drive_strength(pSD->ss_gpio, pSD->ss_gpio_drive_strength);
-            }
+            // if (pSD->set_drive_strength) {
+            //     gpio_set_drive_strength(pSD->ss_gpio, pSD->ss_gpio_drive_strength);
+            // }
             // Chip select is active-low, so we'll initialise it to a
             // driven-high state.
-            gpio_write(pSD->ss_gpio, 1);  // Avoid any glitches when enabling output
-            gpio_init(pSD->ss_gpio);
-            gpio_set_dir(pSD->ss_gpio, GPIO_OUT);
-            gpio_write(pSD->ss_gpio, 1);  // In case set_dir does anything
+            // gpio_write(pSD->ss_gpio, 1);  // Avoid any glitches when enabling output
+            // gpio_init(pSD->ss_gpio);
+            // gpio_set_dir(pSD->ss_gpio, GPIO_OUT);
+            // gpio_write(pSD->ss_gpio, 1);  // In case set_dir does anything
         }
         for (size_t i = 0; i < spi_get_num(); ++i) {
             spi_t *pSPI = spi_get_by_num(i);

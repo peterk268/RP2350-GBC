@@ -21,6 +21,7 @@
 #include <hardware/irq.h>
 #include "hardware/pwm.h"
 #include "hardware/powman.h"
+#include "pico/sleep.h"
 
 // Essential headers
 #include "settings.h"
@@ -38,6 +39,7 @@
 
 /* Main Modularization */
 #include "global.h"
+#include "leds.h"
 #include "gpu.h"
 #include "gb.h"
 #include "sd.h"
@@ -51,6 +53,7 @@ int main(void)
 	enum gb_init_error_e ret;
 	
 	// MARK: - Overclock
+	// vreg_disable_voltage_limit();
     const unsigned vco = 1596*1000*1000;	/* 266MHz */
     const unsigned div1 = 6, div2 = 1;
 
@@ -59,12 +62,26 @@ int main(void)
     set_sys_clock_pll(vco, div1, div2);
     sleep_ms(2);
 
+    // const unsigned vco = 1500 * 1000 * 1000;  // VCO frequency: 1500 MHz
+    // const unsigned div1 = 5;  // Post-divider 1
+    // const unsigned div2 = 1;  // Post-divider 2
+
+    // // Increase voltage to support higher clock speeds
+    // vreg_set_voltage(VREG_VOLTAGE_1_15);
+    // sleep_ms(2);  // Wait for voltage to stabilize
+
+    // // Configure system clock to 300 MHz using the PLL
+    // set_sys_clock_pll(vco, div1, div2);
+    // sleep_ms(2);  // Wait for clock to stabilize
+
 
 	/* Initialise USB serial connection for debugging. */
 	stdio_init_all();
 	// time_init();
 	// sleep_ms(5000);
 	putstdio("INIT: ");
+
+	set_up_select();
 
 	// MARK: - I2C INIT
 	i2c_init(IOX_I2C_PORT, 400 * 1000); // 400 kHz
@@ -73,6 +90,8 @@ int main(void)
     gpio_pull_up(GPIO_I2C_SDA);
     gpio_pull_up(GPIO_I2C_SCL);
 
+	sleep_ms(10);
+
 	// MARK: - Battery Monitor Config
 	config_battery_monitor();
 
@@ -80,29 +99,23 @@ int main(void)
 	config_iox_ports();
 	// Set up sleep interrupt asap.
 	setup_switch_sleep();
+	sleep_ms(10);
 
-	gpio_set_function(GPIO_B_SELECT, GPIO_FUNC_SIO);
+	// turn on 3v3
+	gpio_write(IOX_n3V3_MCU_EN, false);
+
 
 	gpio_set_function(GPIO_LCD_SCK, GPIO_FUNC_SPI);
 	gpio_set_function(GPIO_LCD_MOSI, GPIO_FUNC_SPI);
 	gpio_set_function(GPIO_LCD_MISO, GPIO_FUNC_SIO);
 
-	gpio_set_function(GPIO_LCD_LED, GPIO_FUNC_PWM);
-
-	gpio_set_dir(GPIO_B_SELECT, false);
 	gpio_set_dir(GPIO_LCD_MISO, true);
 
     // MARK: - PWM Set up
-	uint slice_num = pwm_gpio_to_slice_num(GPIO_LCD_LED);
-	uint8_t led_pwm_duty_cycle = 64; // set to 6/8 brightness level, 0 highest, 255 lowest
-	pwm_set_wrap(slice_num, 255); // Set PWM period
-    pwm_set_chan_level(slice_num, PWM_CHAN_A, led_pwm_duty_cycle); // Set PWM duty cycle
-	pwm_set_enabled(slice_num, true); // Enable PWM
+	config_leds();
 
 	gpio_set_slew_rate(GPIO_LCD_SCK, GPIO_SLEW_RATE_FAST);
 	gpio_set_slew_rate(GPIO_LCD_MOSI, GPIO_SLEW_RATE_FAST);
-	
-	gpio_pull_up(GPIO_B_SELECT);
 
     // MARK: - LCD SPI Config
 	/* Set SPI clock to use high frequency. */
@@ -135,9 +148,11 @@ while(true)
 	// MARK: - ROM File selector
 	mk_ili9225_init();
 	mk_ili9225_fill(0x0000);
-
-	rom_file_selector();
 #endif
+#endif
+
+#if ENABLE_SDCARD
+	rom_file_selector();
 #endif
 
 	// MARK: - Initialise GB context
@@ -233,22 +248,12 @@ while(true)
 			if(!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
 				/* select + up: increase sound volume */
 				// i2s_increase_volume(&i2s_config);
-				if (led_pwm_duty_cycle >= 32) { // Ensure it won't go below 0
-					led_pwm_duty_cycle -= 32;
-				} else {
-					led_pwm_duty_cycle = 0; // Clamp to 0 if it would go below 0
-				}
-				pwm_set_chan_level(slice_num, PWM_CHAN_A, led_pwm_duty_cycle);
+				increase_lcd_brightness(32);
 			}
 			if(!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
 				/* select + down: decrease sound volume */
 				// i2s_decrease_volume(&i2s_config);
-				if (led_pwm_duty_cycle <= (255 - 32)) { // Ensure it won't exceed 255
-					led_pwm_duty_cycle += 32;
-				} else {
-					led_pwm_duty_cycle = 255; // Clamp to 255 if it would exceed
-				}
-				pwm_set_chan_level(slice_num, PWM_CHAN_A, led_pwm_duty_cycle);
+				decrease_lcd_brightness(32);
 			}
 #endif
 			if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {

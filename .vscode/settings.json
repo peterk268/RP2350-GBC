@@ -41,6 +41,7 @@
         "clocks.h": "c",
         "bootrom.h": "c",
         "stdio.h": "c",
-        "gpio.h": "c"
+        "gpio.h": "c",
+        "cstdint": "cpp"
     }
 }

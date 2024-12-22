@@ -43,8 +43,8 @@
 
 // I2S
 #define GPIO_I2S_BCLK     21
-#define GPIO_I2S_DIN      22
-#define GPIO_I2S_LRCLK    23
+#define GPIO_I2S_LRCLK    22
+#define GPIO_I2S_DIN      23
 
 #define GPIO_LCD_LED      24
 
@@ -76,6 +76,18 @@
 #define GPIO_nHP_DETECT   46
 #define GPIO_AUD_POT_ADC  47
 
+void set_up_select() {
+    gpio_set_function(GPIO_B_SELECT, GPIO_FUNC_SIO);
+	gpio_set_dir(GPIO_B_SELECT, false);
+	gpio_pull_up(GPIO_B_SELECT);
+	sleep_ms(100);
+
+	// If the Select button is pressed during power-on, we should go into bootloader mode.
+    if (!gpio_get(GPIO_B_SELECT)) {
+		// Parameters: gpio_activity_pin_mask, disable_interface_mask
+		reset_usb_boot(0, 0);
+    }
+}
 
 // MARK: - IOX Pin definitions
 #define IOX_B_A         (0 + 48)
@@ -186,7 +198,7 @@ void read_io_expander_states(int8_t port) {
     i2c_read_blocking(IOX_I2C_PORT, IOX_I2C_ADDR, &read_buffer, 1, false);
 
     // Output the state of the pins (MSB first)
-    printf("Pin states: 0x%02X\n", read_buffer);
+    // printf("Pin states: 0x%02X\n", read_buffer);
 
     // Decode individual pins based on port value
     if (port == 0) {

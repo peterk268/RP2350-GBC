@@ -103,6 +103,10 @@ static int powman_example_off(void) {
     powman_hw->boot[2] = 0;
     powman_hw->boot[3] = 0;
 
+    uart_default_tx_wait_blocking();
+    sleep_run_from_xosc();
+    uart_default_tx_wait_blocking();
+
     // Switch to required power state
     int rc = powman_set_power_state(off_state);
     if (rc != PICO_OK) {
@@ -114,19 +118,21 @@ static int powman_example_off(void) {
 }
 
 void sleep_device() {
-    iox_state_set(IOX_n3V3_MCU_EN, false);
     
+    config_iox_ports();
+    // gpio_write(IOX_n3V3_MCU_EN, true);
+    sleep_us(10);
     #warning "Save Game"
     powman_example_init(1704067200000);
 
-    powman_example_off();
     powman_enable_gpio_wakeup(0, GPIO_SW_OUT, false, true);
-
+    sleep_us(10);
+    powman_example_off();
 }
 
 // Function to execute on interrupt
 void gpio_callback(uint gpio, uint32_t events) {
-    if (events & GPIO_IRQ_EDGE_FALL) {
+    if (events & GPIO_IRQ_LEVEL_LOW) {
         // Handle the falling edge interrupt
         printf("GPIO %d went LOW\n", gpio);
         // Sleep device
@@ -137,8 +143,7 @@ void gpio_callback(uint gpio, uint32_t events) {
 void setup_switch_sleep() {
     gpio_init(GPIO_SW_OUT);
     gpio_set_dir(GPIO_SW_OUT, GPIO_IN);
-    gpio_pull_up(GPIO_SW_OUT);
-
+    sleep_ms(100);
     // Set up the interrupt
-    gpio_set_irq_enabled_with_callback(GPIO_SW_OUT, GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
+    gpio_set_irq_enabled_with_callback(GPIO_SW_OUT, GPIO_IRQ_LEVEL_LOW, true, &gpio_callback);
 }

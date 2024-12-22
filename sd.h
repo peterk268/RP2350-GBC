@@ -90,10 +90,13 @@ void load_cart_rom_file(char *filename) {
 			f_read(&fil,buffer,sizeof buffer,&br);
 			if(br==0) break; /* end of file */
 
+			uint32_t ints = save_and_disable_interrupts();
 			printf("I Erasing target region...\n");
 			flash_range_erase(flash_target_offset,FLASH_SECTOR_SIZE);
 			printf("I Programming target region...\n");
 			flash_range_program(flash_target_offset,buffer,FLASH_SECTOR_SIZE);
+
+			restore_interrupts (ints);
 			
 			/* Read back target region and check programming */
 			printf("I Done. Reading back target region...\n");
@@ -162,6 +165,7 @@ uint16_t rom_file_selector_display_page(char filename[22][256],uint16_t num_page
 	num_file=0;
     while(num_file<22 && fr == FR_OK && fno.fname[0]) {
 		if (fno.fname[0] != '.') {
+			printf(fno.fname);
 			strcpy(filename[num_file],fno.fname);
 			num_file++;
 		}

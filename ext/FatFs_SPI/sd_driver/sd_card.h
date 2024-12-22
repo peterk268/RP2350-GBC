@@ -36,7 +36,7 @@ typedef struct {
     const char *pcName;
     spi_t *spi;
     // Slave select is here in sd_card_t because multiple SDs can share an SPI
-    uint ss_gpio;                   // Slave select for this SD card
+    uint8_t ss_gpio;                   // Slave select for this SD card
     bool use_card_detect;
     uint card_detect_gpio;    // Card detect; ignored if !use_card_detect
     uint card_detected_true;  // Varies with card socket; ignored if !use_card_detect

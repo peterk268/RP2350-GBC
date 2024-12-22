@@ -23,10 +23,14 @@ if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
 # ====================================================================================
-set(PICO_BOARD pico2 CACHE STRING "Board type")
+set(PICO_BOARD solderparty_rp2350_stamp_xl CACHE STRING "Board type")
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
+# We also need PICO EXTRAS
+set(PICO_EXTRAS_FETCH_FROM_GIT 1)
+include(pico_extras_import.cmake)
+
 
 project(RP2350_GBC C CXX ASM)
 
@@ -65,6 +69,7 @@ target_link_libraries(RP2350_GBC
         pico_stdlib pico_stdio pico_bootrom pico_multicore pico_stdio  pico_multicore
         hardware_clocks hardware_pio hardware_vreg hardware_pio hardware_pwm
         hardware_sync hardware_pll hardware_spi hardware_irq hardware_dma hardware_flash hardware_i2c pico_aon_timer hardware_powman
+        hardware_sleep
         pico_binary_info)
 
 target_compile_definitions(RP2350_GBC PRIVATE

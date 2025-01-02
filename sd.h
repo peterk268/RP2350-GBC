@@ -75,7 +75,7 @@ void write_cart_ram_file(struct gb_s *gb) {
 void load_cart_rom_file(char *filename) {
 	UINT br;
 	uint8_t buffer[FLASH_SECTOR_SIZE];
-	bool mismatch=false;
+	// bool mismatch=false;
 	sd_card_t *pSD=sd_get_by_num(0);
 	FRESULT fr=f_mount(&pSD->fatfs,pSD->pcName,1);
 	if (FR_OK!=fr) {
@@ -91,29 +91,30 @@ void load_cart_rom_file(char *filename) {
 			if(br==0) break; /* end of file */
 
 			uint32_t ints = save_and_disable_interrupts();
-			printf("I Erasing target region...\n");
+
+			// printf("I Erasing target region...\n");
 			flash_range_erase(flash_target_offset,FLASH_SECTOR_SIZE);
-			printf("I Programming target region...\n");
+			// printf("I Programming target region...\n");
 			flash_range_program(flash_target_offset,buffer,FLASH_SECTOR_SIZE);
 
 			restore_interrupts (ints);
 			
 			/* Read back target region and check programming */
-			printf("I Done. Reading back target region...\n");
-			for(uint32_t i=0;i<FLASH_SECTOR_SIZE;i++) {
-				if(rom[flash_target_offset+i]!=buffer[i]) {
-					mismatch=true;
-				}
-			}
+			// printf("I Done. Reading back target region...\n");
+			// for(uint32_t i=0;i<FLASH_SECTOR_SIZE;i++) {
+			// 	if(rom[flash_target_offset+i]!=buffer[i]) {
+			// 		mismatch=true;
+			// 	}
+			// }
 
 			/* Next sector */
 			flash_target_offset+=FLASH_SECTOR_SIZE;
 		}
-		if(mismatch) {
-	        printf("I Programming successful!\n");
-		} else {
-			printf("E Programming failed!\n");
-		}
+		// if(mismatch) {
+	    //     printf("I Programming successful!\n");
+		// } else {
+		// 	printf("E Programming failed!\n");
+		// }
 	} else {
 		printf("E f_open(%s) error: %s (%d)\n",filename,FRESULT_str(fr),fr);
 	}

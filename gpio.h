@@ -456,3 +456,32 @@ uint8_t get_iox_port_states(bool port) {
                (sd_ncs_state << 0);
     }
 }
+
+
+
+// MARK: - ADC
+// Function to initialize the ADC
+void init_adc(uint8_t adc_gpio) {
+    // Initialize ADC hardware
+    adc_init();
+
+    // Map GPIO 40-47 to ADC inputs 0-7
+    switch (adc_gpio) {
+        case 40: adc_gpio_init(adc_gpio); adc_select_input(0); break;  // GPIO 40 corresponds to ADC0
+        case 41: adc_gpio_init(adc_gpio); adc_select_input(1); break;  // GPIO 41 corresponds to ADC1
+        case 42: adc_gpio_init(adc_gpio); adc_select_input(2); break;  // GPIO 42 corresponds to ADC2
+        case 43: adc_gpio_init(adc_gpio); adc_select_input(3); break;  // GPIO 43 corresponds to ADC3
+        case 44: adc_gpio_init(adc_gpio); adc_select_input(4); break;  // GPIO 44 corresponds to ADC4
+        case 45: adc_gpio_init(adc_gpio); adc_select_input(5); break;  // GPIO 45 corresponds to ADC5
+        case 46: adc_gpio_init(adc_gpio); adc_select_input(6); break;  // GPIO 46 corresponds to ADC6
+        case 47: adc_gpio_init(adc_gpio); adc_select_input(7); break;  // GPIO 47 corresponds to ADC7
+        default:
+            printf("Invalid ADC GPIO. Supported GPIOs: 40, 41, 42, 43, 44, 45, 46, 47\n");
+            return;
+    }
+}
+
+// Function to read ADC value
+uint16_t read_adc() {
+    return adc_read(); // Reads raw 12-bit ADC value (0-4095)
+}

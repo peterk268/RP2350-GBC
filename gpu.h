@@ -2,7 +2,7 @@
 void mk_ili9225_set_rst(bool state)
 {
 	// lcd needs por
-	#warning "This was done because of inverter, but please change back once hardware is changed
+	#warning "This was done because of inverter, but please change back once hardware is changed"
 	gpio_write(IOX_LCD_RST, !state);
 }
 
@@ -35,6 +35,69 @@ void mk_ili9225_delay_ms(unsigned ms)
 	sleep_ms(ms);
 }
 
+// Structure to hold enhancement parameters
+typedef struct {
+    bool apply_gamma;        // Enable/disable gamma correction
+    bool apply_contrast;     // Enable/disable contrast adjustment
+    bool apply_vibrancy;     // Enable/disable vibrancy boost
+    float gamma_value;       // Gamma correction value (e.g., 2.2)
+    float contrast_factor;   // Contrast adjustment factor (e.g., 1.2)
+    uint8_t vibrancy_boost;  // Amount to boost each color (e.g., 2)
+} PixelEnhancementParams;
+
+uint16_t enhance_pixel(uint16_t pixel, PixelEnhancementParams params) {
+    // Extract RGB components from RGB565
+    uint8_t red = (pixel >> 11) & 0x1F;
+    uint8_t green = (pixel >> 5) & 0x3F;
+    uint8_t blue = pixel & 0x1F;
+
+    // Threshold for near-black detection
+    const uint8_t black_threshold = 2;
+
+    // Detect near-black pixels
+    if (red <= black_threshold && green <= black_threshold && blue <= black_threshold) {
+        red = 0;
+        green = 0;
+        blue = 0;
+    } else {
+        // Apply gamma correction
+        if (params.apply_gamma) {
+            float gamma = params.gamma_value;
+            red = (uint8_t)(31 * pow(red / 31.0, gamma));
+            green = (uint8_t)(63 * pow(green / 63.0, gamma));
+            blue = (uint8_t)(31 * pow(blue / 31.0, gamma));
+        }
+
+        // Apply contrast adjustment
+        if (params.apply_contrast) {
+            float contrast = params.contrast_factor;
+            red = (uint8_t)(red * contrast);
+            green = (uint8_t)(green * contrast);
+            blue = (uint8_t)(blue * contrast);
+        }
+
+        // Apply vibrancy boost
+        if (params.apply_vibrancy) {
+            int8_t boost = params.vibrancy_boost;  // Allow negative values
+
+            // Adjust each channel with the vibrancy boost and clamp
+            red = (boost > 0) ? (red + boost <= 31 ? red + boost : 31)
+                              : (red + boost >= 0 ? red + boost : 0);
+            green = (boost > 0) ? (green + boost <= 63 ? green + boost : 63)
+                                : (green + boost >= 0 ? green + boost : 0);
+            blue = (boost > 0) ? (blue + boost <= 31 ? blue + boost : 31)
+                               : (blue + boost >= 0 ? blue + boost : 0);
+        }
+
+        // Clamp values to their respective ranges (safety check)
+        red = (red > 31) ? 31 : red;
+        green = (green > 63) ? 63 : green;
+        blue = (blue > 31) ? 31 : blue;
+    }
+
+    // Recombine into RGB565
+    return (red << 11) | (green << 5) | blue;
+}
 
 
 #if ENABLE_LCD 
@@ -42,10 +105,27 @@ void core1_lcd_draw_line(const uint_fast8_t line)
 {
 	static uint16_t fb[LCD_WIDTH];
 
+	// PixelEnhancementParams params = {
+	// 	.apply_gamma = false,
+	// 	.apply_contrast = true,
+	// 	.apply_vibrancy = false,
+	// 	.gamma_value = 2.2,         // Gamma correction factor
+	// 	.contrast_factor = 0.5,     // Increase contrast by 20%
+	// 	.vibrancy_boost = -5        // Boost each color by 2
+	// };
+
 #if PEANUT_FULL_GBC_SUPPORT
  	if (gbc->cgb.cgbMode) {
- 		for(unsigned int x = 0; x < LCD_WIDTH; x++){
-			fb[x] = gbc->cgb.fixPalette[pixels_buffer[x]];
+		// user has not assigned palette.
+		if (manual_palette_selected == -1) {
+			for(unsigned int x = 0; x < LCD_WIDTH; x++){
+				fb[x] = gbc->cgb.fixPalette[pixels_buffer[x]];
+			}
+		} else {
+			for(unsigned int x = 0; x < LCD_WIDTH; x++){
+				fb[x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
+						[pixels_buffer[x] & 3];
+			}
 		}
  	}
  	else {

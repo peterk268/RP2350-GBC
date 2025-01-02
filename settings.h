@@ -4,7 +4,7 @@
 #define ENABLE_SDCARD	1
 #define PEANUT_GB_HIGH_LCD_ACCURACY 1
 #define PEANUT_GB_USE_BIOS 0
-
+#define PEANUT_FULL_GBC_SUPPORT 1
 /* Use DMA for all drawing to LCD. Benefits aren't fully realised at the moment
  * due to busy loops waiting for DMA completion. */
 #define USE_DMA		0

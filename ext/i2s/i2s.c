@@ -118,44 +118,55 @@ void i2s_dma_write(i2s_config_t *i2s_config,const int16_t *samples) {
     /* Wait the completion of the previous DMA transfer */
     dma_channel_wait_for_finish_blocking(i2s_config->dma_channel);
     /* Copy samples into the DMA buffer */
-    if(i2s_config->volume==0) {
+    uint8_t shift = 16 - ((uint8_t)roundf(i2s_config->volume * 16.0f));
+    // max volume 
+    if(i2s_config->volume>0.98) {
         memcpy(i2s_config->dma_buf,samples,i2s_config->dma_trans_count*sizeof(int32_t));
     } else {
         for(uint16_t i=0;i<i2s_config->dma_trans_count*2;i++) {
-            i2s_config->dma_buf[i] = samples[i]>>i2s_config->volume;
+            i2s_config->dma_buf[i] = samples[i];
+            i2s_config->dma_buf[i] >>= shift;
+            // printf("\nshift: %d:, dma: %d, sample: %d", shift, i2s_config->dma_buf[i], samples[i]);
+            // i2s_config->dma_buf[i] = (int16_t)roundf((float)samples[i] * i2s_config->volume);
         }
     }
     
-    /* Initiate the DMA transfer */
-    dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
-                                         i2s_config->dma_buf,
-                                         i2s_config->dma_trans_count);
+    if (i2s_config->volume > 5) {
+        /* Initiate the DMA transfer */
+        dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
+                                            i2s_config->dma_buf,
+                                            i2s_config->dma_trans_count);
+    } else {
+        sleep_ms(5);
+    }
 }
+
 
 /**
  * Adjust the output volume
  * i2s_config: I2S context obtained by i2s_get_default_config()
  *     volume: desired volume between 0 (highest. volume) and 16 (lowest volume)
  */
-void i2s_volume(i2s_config_t *i2s_config,uint8_t volume) {
-    if(volume>16) volume=16;
-    i2s_config->volume=volume;
+void i2s_volume(i2s_config_t *i2s_config, float volume) {
+    if (volume > 1) volume = 1;
+    if (volume < 0) volume = 0;
+    i2s_config->volume = volume;
 }
 
-/**
- * Increases the output volume
- */
-void i2s_increase_volume(i2s_config_t *i2s_config) {
-    if(i2s_config->volume>0) {
-        i2s_config->volume--;
-    }
-}
+// /**
+//  * Increases the output volume
+//  */
+// void i2s_increase_volume(i2s_config_t *i2s_config) {
+//     if(i2s_config->volume>0) {
+//         i2s_config->volume--;
+//     }
+// }
 
-/**
- * Decreases the output volume
- */
-void i2s_decrease_volume(i2s_config_t *i2s_config) {
-    if(i2s_config->volume<16) {
-        i2s_config->volume++;
-    }
-}
+// /**
+//  * Decreases the output volume
+//  */
+// void i2s_decrease_volume(i2s_config_t *i2s_config) {
+//     if(i2s_config->volume<16) {
+//         i2s_config->volume++;
+//     }
+// }

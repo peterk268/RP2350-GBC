@@ -23,7 +23,7 @@ static unsigned char rom_bank0[65536];
 static uint8_t ram[32768];
 static int lcd_line_busy = 0;
 static palette_t palette;	// Colour palette
-static uint8_t manual_palette_selected=0;
+static int8_t manual_palette_selected=-1;
 
 static struct
 {
@@ -61,3 +61,5 @@ static uint8_t pixels_buffer[LCD_WIDTH];
 static struct gb_s *gbc;
 
 #define putstdio(x) write(1, x, strlen(x))
+
+repeating_timer_t timer;

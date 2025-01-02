@@ -69,7 +69,7 @@ target_link_libraries(RP2350_GBC
         pico_stdlib pico_stdio pico_bootrom pico_multicore pico_stdio  pico_multicore
         hardware_clocks hardware_pio hardware_vreg hardware_pio hardware_pwm
         hardware_sync hardware_pll hardware_spi hardware_irq hardware_dma hardware_flash hardware_i2c pico_aon_timer hardware_powman
-        hardware_sleep
+        hardware_sleep hardware_adc
         pico_binary_info)
 
 target_compile_definitions(RP2350_GBC PRIVATE
@@ -77,7 +77,7 @@ target_compile_definitions(RP2350_GBC PRIVATE
         PICO_ENTER_USB_BOOT_ON_EXIT=1
         PICO_STDIO_ENABLE_CRLF_SUPPORT=0
         PICO_STDIO_DEFAULT_CRLF=0
-        PICO_PRINTF_SUPPORT_FLOAT=0
+        PICO_PRINTF_SUPPORT_FLOAT=1
         PICO_PRINTF_SUPPORT_EXPONENTIAL=0
         PICO_PRINTF_SUPPORT_LONG_LONG=1
         PICO_PRINTF_SUPPORT_PTRDIFF_T=0)

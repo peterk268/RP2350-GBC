@@ -22,6 +22,7 @@
 #include "hardware/pwm.h"
 #include "hardware/powman.h"
 #include "pico/sleep.h"
+#include "hardware/adc.h"
 
 // Essential headers
 #include "settings.h"
@@ -54,25 +55,24 @@ int main(void)
 	
 	// MARK: - Overclock
 	// vreg_disable_voltage_limit();
-    const unsigned vco = 1596*1000*1000;	/* 266MHz */
-    const unsigned div1 = 6, div2 = 1;
+    // const unsigned vco = 1596*1000*1000;	/* 266MHz */
+    // const unsigned div1 = 6, div2 = 1;
 
-    vreg_set_voltage(VREG_VOLTAGE_1_15);
-    sleep_ms(2);
-    set_sys_clock_pll(vco, div1, div2);
-    sleep_ms(2);
-
-    // const unsigned vco = 1500 * 1000 * 1000;  // VCO frequency: 1500 MHz
-    // const unsigned div1 = 5;  // Post-divider 1
-    // const unsigned div2 = 1;  // Post-divider 2
-
-    // // Increase voltage to support higher clock speeds
     // vreg_set_voltage(VREG_VOLTAGE_1_15);
-    // sleep_ms(2);  // Wait for voltage to stabilize
-
-    // // Configure system clock to 300 MHz using the PLL
+    // sleep_ms(2);
     // set_sys_clock_pll(vco, div1, div2);
-    // sleep_ms(2);  // Wait for clock to stabilize
+    // sleep_ms(2);
+
+    const unsigned vco = 1500 * 1000 * 1000;  // VCO frequency: 1500 MHz
+    const unsigned div1 = 5;  // Post-divider 1
+    const unsigned div2 = 1;  // Post-divider 2
+
+    // Increase voltage to support higher clock speeds
+    vreg_set_voltage(VREG_VOLTAGE_1_15);
+    sleep_ms(2);  // Wait for voltage to stabilize
+    // Configure system clock to 300 MHz using the PLL
+    set_sys_clock_pll(vco, div1, div2);
+    sleep_ms(2);  // Wait for clock to stabilize
 
 
 	/* Initialise USB serial connection for debugging. */
@@ -101,9 +101,19 @@ int main(void)
 	setup_switch_sleep();
 	sleep_ms(10);
 
+	// Trigger the battery check immediately
+    process_bat_percent();
+	// Set up a repeating timer for 2 minutes
+    if (!add_repeating_timer_ms(120000, battery_timer_callback, NULL, &timer)) {
+        printf("Failed to add repeating timer\n");
+    }
+
 	// turn on 3v3
 	gpio_write(IOX_n3V3_MCU_EN, false);
 
+	// Initialize the ADC for GPIO_AUD_POT_ADC and nHP_DETECT
+    init_adc(GPIO_AUD_POT_ADC);
+	init_adc(GPIO_nHP_DETECT);
 
 	gpio_set_function(GPIO_LCD_SCK, GPIO_FUNC_SPI);
 	gpio_set_function(GPIO_LCD_MOSI, GPIO_FUNC_SPI);
@@ -213,6 +223,7 @@ while(true)
 		frames++;
 #if ENABLE_SOUND
 		if(!gb.direct.frame_skip) {
+			read_volume(&i2s_config);
 			audio_callback(NULL, stream, AUDIO_BUFFER_SIZE_BYTES);
 			i2s_dma_write(&i2s_config, stream);
 		}
@@ -258,6 +269,9 @@ while(true)
 #endif
 			if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
 				/* select + right: select the next manual color palette */
+				// config_led(GPIO_BUTTON_LED, button_led_duty_cycle, true);
+				// sleep_ms(10);
+				// increase_button_brightness(32);
 				if(manual_palette_selected<12) {
 					manual_palette_selected++;
 					manual_assign_palette(palette,manual_palette_selected);
@@ -265,9 +279,14 @@ while(true)
 			}
 			if(!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
 				/* select + left: select the previous manual color palette */
-				if(manual_palette_selected>0) {
+				// config_led(GPIO_BUTTON_LED, button_led_duty_cycle, true);
+				// sleep_ms(10);
+				// decrease_button_brightness(32);
+				if(manual_palette_selected>-1) {
 					manual_palette_selected--;
-					manual_assign_palette(palette,manual_palette_selected);
+					if (manual_palette_selected != -1) {
+						manual_assign_palette(palette,manual_palette_selected);
+					}
 				}
 			}
 			if(!gb.direct.joypad_bits.start && prev_joypad_bits.start) {

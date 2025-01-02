@@ -2,6 +2,10 @@
 
 #define BAT_MONITOR_I2C_ADDR 0b1010101
 
+void sleep_device();
+
+bool low_power = false;
+
 // Function to read a 16-bit register
 uint16_t read_register(uint8_t reg) {
     uint8_t buffer[2] = {0};
@@ -34,6 +38,39 @@ uint16_t get_average_current_mA() {
 
 uint16_t get_bat_charge_percent() {
     return read_register(0x1C);
+}
+
+void process_bat_percent() {
+    uint16_t percent = get_bat_charge_percent();
+
+    printf("Battery Percent: %d, rem_cap: %d, full_cap: %d, current: %d", percent, get_remaining_bat_capacity_mAh(), get_full_bat_capacity_mAh(), get_average_current_mA());
+    if (percent <= 20) {
+        if (percent <= 5) {
+            // sleep_device();
+        }
+        // if first time seeing low power.
+        if (!low_power) {
+            // flash led
+            low_power = true;
+            #warning "need better indicator for low power"
+            decrease_pwr_brightness(255);
+            // setup_fast_blink(GPIO_PWR_LED, 200, false);
+        }
+	} else {
+        // if first time exiting low_power state
+        if (low_power) {
+            increase_pwr_brightness(MAX_BRIGHTNESS/8);
+            // config_led(GPIO_PWR_LED, pwr_led_duty_cycle, false);
+            low_power = false;
+        }
+    }
+
+}
+
+// Timer callback function
+bool battery_timer_callback(repeating_timer_t *rt) {
+    process_bat_percent();
+    return true; // Return true to keep the timer running
 }
 
 void subcommand_control(uint16_t subcommand) {
@@ -107,6 +144,8 @@ static int powman_example_off(void) {
     sleep_run_from_xosc();
     uart_default_tx_wait_blocking();
 
+    sleep_ms(1);
+
     // Switch to required power state
     int rc = powman_set_power_state(off_state);
     if (rc != PICO_OK) {
@@ -118,11 +157,29 @@ static int powman_example_off(void) {
 }
 
 void sleep_device() {
+    // #if ENABLE_SDCARD				
+    // write_cart_ram_file(gbc);
+    // #endif				
+    sleep_ms(10);
     
+    // gpio_deinit(GPIO_PWR_LED);
+    // gpio_deinit(GPIO_BUTTON_LED);
+    // gpio_deinit(GPIO_LCD_LED);
+    deconfig_leds();
     config_iox_ports();
     // gpio_write(IOX_n3V3_MCU_EN, true);
+    for (uint8_t i = 0; i<48; i++) {
+        if (i != GPIO_SW_OUT)
+            gpio_deinit(i);
+    }
+    cancel_repeating_timer(&timer);
+
+    pio_sm_set_enabled(pio0, 0, false);
+    i2c_deinit(IOX_I2C_PORT);
+    spi_deinit(LCD_SPI);
+    spi_deinit(SD_SPI);
+
     sleep_us(10);
-    #warning "Save Game"
     powman_example_init(1704067200000);
 
     powman_enable_gpio_wakeup(0, GPIO_SW_OUT, false, true);

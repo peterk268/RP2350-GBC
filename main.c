@@ -45,6 +45,7 @@
 #include "gb.h"
 #include "sd.h"
 #include "audio.h"
+#include "rtc.h"
 #include "battery.h"
 
 
@@ -90,6 +91,10 @@ int main(void)
     gpio_pull_up(GPIO_I2C_SDA);
     gpio_pull_up(GPIO_I2C_SCL);
 
+	#if ENABLE_RTC
+	initialize_rtc(RTC_DEFAULT_VALUE);
+	#endif
+	
 	sleep_ms(10);
 
 	// MARK: - Battery Monitor Config
@@ -176,6 +181,10 @@ while(true)
 		printf("Error: %d\n", ret);
 		goto out;
 	}
+
+	#if ENABLE_RTC
+	synchronize_gb_rtc(&gb);
+	#endif
 
 	// MARK: - Auto Assign Palette
 	char rom_title[16];

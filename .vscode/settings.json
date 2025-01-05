@@ -42,6 +42,7 @@
         "bootrom.h": "c",
         "stdio.h": "c",
         "gpio.h": "c",
-        "cstdint": "cpp"
+        "cstdint": "cpp",
+        "rtc.h": "c"
     }
 }

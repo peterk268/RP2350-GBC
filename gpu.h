@@ -99,6 +99,48 @@ uint16_t enhance_pixel(uint16_t pixel, PixelEnhancementParams params) {
     return (red << 11) | (green << 5) | blue;
 }
 
+uint16_t shift_components(uint16_t pixel) {
+    // Green component: Extract (bits 5–10) -> 6 bits
+    uint16_t green_mask = 0b0000011111100000; // Green mask (6 bits)
+    uint16_t green = (pixel & green_mask) >> 5;
+
+    // Shift the green component forward by 1, preserving the 6-bit range
+    green = (green << 1) & 0b111111;  // Ensuring we stay within 6 bits (0-63)
+
+    // Clear the old green bits in the original pixel
+    pixel &= ~green_mask;
+
+    // Insert the shifted green back into the pixel
+    pixel |= (green << 5);
+
+    // Red component: Extract (bits 11–15) -> 5 bits
+    uint16_t red_mask = 0b1111100000000000; // Red mask (5 bits)
+    uint16_t red = (pixel & red_mask) >> 11;
+
+    // Shift the red component forward by 1, preserving the 5-bit range
+    red = (red << 1) & 0b11111;  // Ensuring we stay within 5 bits (0-31)
+
+    // Clear the old red bits in the original pixel
+    pixel &= ~red_mask;
+
+    // Insert the shifted red back into the pixel
+    pixel |= (red << 11);
+
+    // Blue component: Extract (bits 0–4) -> 5 bits
+    uint16_t blue_mask = 0b0000000000011111; // Blue mask (5 bits)
+    uint16_t blue = pixel & blue_mask;
+
+    // Shift the blue component forward by 1, preserving the 5-bit range
+    blue = (blue << 1) & 0b11111;  // Ensuring we stay within 5 bits (0-31)
+
+    // Clear the old blue bits in the original pixel
+    pixel &= ~blue_mask;
+
+    // Insert the shifted blue back into the pixel
+    pixel |= blue;
+
+    return pixel;
+}
 
 #if ENABLE_LCD 
 void core1_lcd_draw_line(const uint_fast8_t line)
@@ -119,7 +161,7 @@ void core1_lcd_draw_line(const uint_fast8_t line)
 		// user has not assigned palette.
 		if (manual_palette_selected == -1) {
 			for(unsigned int x = 0; x < LCD_WIDTH; x++){
-				fb[x] = gbc->cgb.fixPalette[pixels_buffer[x]];
+				fb[x] = shift_components(gbc->cgb.fixPalette[pixels_buffer[x]]);
 			}
 		} else {
 			for(unsigned int x = 0; x < LCD_WIDTH; x++){

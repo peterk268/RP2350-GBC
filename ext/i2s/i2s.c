@@ -137,7 +137,7 @@ void i2s_dma_write(i2s_config_t *i2s_config,const int16_t *samples) {
                                             i2s_config->dma_buf,
                                             i2s_config->dma_trans_count);
     } else {
-        sleep_ms(5);
+        sleep_ms(3);
     }
 }
 

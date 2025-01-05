@@ -105,9 +105,8 @@ static powman_power_state on_state;
 
 // Initialise everything
 void powman_example_init(uint64_t abs_time_ms) {
-    // start powman and set the time
-    powman_timer_start();
-    powman_timer_set_ms(abs_time_ms);
+    // start powman and set the time if not already.
+    initialize_rtc(abs_time_ms);
 
     // Allow power down when debugger connected
     powman_set_debug_power_request_ignored(true);
@@ -180,7 +179,7 @@ void sleep_device() {
     spi_deinit(SD_SPI);
 
     sleep_us(10);
-    powman_example_init(1704067200000);
+    powman_example_init(RTC_DEFAULT_VALUE);
 
     powman_enable_gpio_wakeup(0, GPIO_SW_OUT, false, true);
     sleep_us(10);

@@ -140,7 +140,7 @@ static int powman_example_off(void) {
     powman_hw->boot[3] = 0;
 
     uart_default_tx_wait_blocking();
-    sleep_run_from_xosc();
+    sleep_run_from_lposc();
     uart_default_tx_wait_blocking();
 
     sleep_ms(1);

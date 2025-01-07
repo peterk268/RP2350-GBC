@@ -215,7 +215,8 @@ while(true)
 #endif
 
 	putstdio("\n> ");
-	uint_fast32_t frames = 0;
+	// RTC tick counter
+	uint_fast8_t frames = 0;
 	uint64_t start_time = time_us_64();
     // MARK: - Game Play
 	while(1)
@@ -230,6 +231,14 @@ while(true)
 		} while(HEDLEY_LIKELY(gb.gb_frame == 0));
 
 		frames++;
+
+		// Tick RTC approximately once per second (assuming ~60 FPS)
+		uint8_t fps = gb.direct.frame_skip ? 120 : 60;
+		if (frames >= fps) {
+			gb_tick_rtc(&gb);
+			frames = 0; // Reset counter
+		}
+
 #if ENABLE_SOUND
 		if(!gb.direct.frame_skip) {
 			read_volume(&i2s_config);

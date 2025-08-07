@@ -183,10 +183,14 @@ void core1_lcd_draw_line(const uint_fast8_t line)
 	// // Calculate the start line for the rotated display
     uint_fast8_t rotated_line = LCD_HEIGHT - line - 1;
 
+#if USE_IPS_LCD
+	#warning "ips: add ips init"
+#else
 	mk_ili9225_set_x(rotated_line + 16);
 	// mk_ili9225_set_x(line + 16);
 
 	mk_ili9225_write_pixels(fb, LCD_WIDTH);
+#endif
 	__atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
 }
 
@@ -251,6 +255,9 @@ void main_core1(void)
 {
 	union core_cmd cmd;
 
+#if USE_IPS_LCD
+	#warning "ips: add ips init"
+#else
 	/* Initialise and control LCD on core 1. */
 	mk_ili9225_init();
 
@@ -259,7 +266,7 @@ void main_core1(void)
 
 	/* Set LCD window to DMG size. */
 	mk_ili9225_fill_rect(31,16,LCD_WIDTH,LCD_HEIGHT,0x0000);
-
+#endif
 	// Sleep used for debugging LCD window.
 	//sleep_ms(1000);
 
@@ -274,7 +281,11 @@ void main_core1(void)
 			break;
 
 		case CORE_CMD_IDLE_SET:
+#if USE_IPS_LCD
+			#warning "ips: add ips init"
+#else
 			mk_ili9225_display_control(true, cmd.data);
+#endif
 			break;
 
 		case CORE_CMD_NOP:

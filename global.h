@@ -63,3 +63,6 @@ static struct gb_s *gbc;
 #define putstdio(x) write(1, x, strlen(x))
 
 repeating_timer_t timer;
+
+bool low_power = false;
+bool low_power_shutdown = false;

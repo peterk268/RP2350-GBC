@@ -94,3 +94,39 @@ void increase_button_brightness(uint8_t step) {
 void decrease_button_brightness(uint8_t step) {
     adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, step, false, true);
 }
+
+repeating_timer_t pwr_led_timer;
+bool pwr_led_on = false;
+
+bool pwr_led_timer_callback(repeating_timer_t *rt) {
+    if (pwr_led_on) {
+        increase_pwr_brightness(128);
+    } else {
+        decrease_pwr_brightness(255);
+    }
+    pwr_led_on = !pwr_led_on;
+    return true; // Return true to keep the timer running
+}
+
+void setup_pwr_led_flash() {
+    config_led(GPIO_PWR_LED, pwr_led_duty_cycle, false);    // Active High
+
+    // deconfig_led(GPIO_PWR_LED);
+    // // gpio_deinit(GPIO_PWR_LED);
+
+    // sleep_ms(1);
+
+    // // gpio_init(GPIO_PWR_LED);
+    // gpio_set_function(GPIO_PWR_LED, GPIO_FUNC_SIO);
+    // gpio_set_dir(GPIO_PWR_LED, true);
+    // sleep_ms(1);
+    sleep_ms(1);
+
+    if (!add_repeating_timer_ms(250, pwr_led_timer_callback, NULL, &pwr_led_timer)) {
+        printf("Failed to add repeating timer\n");
+    }
+}
+
+void remove_pwr_led_flash() {
+    cancel_repeating_timer(&pwr_led_timer);
+}

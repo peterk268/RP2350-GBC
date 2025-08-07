@@ -7,7 +7,10 @@ uint64_t current_time_ms = 0;
 #define RTC_UNSET_VALUE 0
 
 // Example: Default value to indicate unset RTC
-#define RTC_DEFAULT_VALUE 1736222908000
+// For pokemon silver this is the time since North American release date (Oct 14, 2000)
+// plus a day - 10 minutes
+#warning "Make rtc a flash variable or idk store it in rtc"
+#define RTC_DEFAULT_VALUE 767232000000 + 85800000
 
 // Function to check if the RTC timer was set
 bool is_rtc_set() {

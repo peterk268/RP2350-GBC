@@ -1,27 +1,3 @@
-/**
- * MIT License
- *
- * Copyright (c) 2022 Vincent Mistler
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to
- * deal in the Software without restriction, including without limitation the
- * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
- * sell copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
- */
-
 #include "i2s.h"
 
 // I2S
@@ -120,18 +96,17 @@ void i2s_dma_write(i2s_config_t *i2s_config,const int16_t *samples) {
     /* Copy samples into the DMA buffer */
     uint8_t shift = 16 - ((uint8_t)roundf(i2s_config->volume * 16.0f));
     // max volume 
-    if(i2s_config->volume>0.98) {
+    if(i2s_config->volume>0.90) {
         memcpy(i2s_config->dma_buf,samples,i2s_config->dma_trans_count*sizeof(int32_t));
     } else {
         for(uint16_t i=0;i<i2s_config->dma_trans_count*2;i++) {
-            i2s_config->dma_buf[i] = samples[i];
-            i2s_config->dma_buf[i] >>= shift;
+            // i2s_config->dma_buf[i] = samples[i] * i2s_config->volume;
             // printf("\nshift: %d:, dma: %d, sample: %d", shift, i2s_config->dma_buf[i], samples[i]);
-            // i2s_config->dma_buf[i] = (int16_t)roundf((float)samples[i] * i2s_config->volume);
+            i2s_config->dma_buf[i] = (int16_t)roundf((float)samples[i] * i2s_config->volume);
         }
     }
     
-    if (i2s_config->volume > 5) {
+    if (i2s_config->volume > 0.05) {
         /* Initiate the DMA transfer */
         dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
                                             i2s_config->dma_buf,
@@ -152,6 +127,19 @@ void i2s_volume(i2s_config_t *i2s_config, float volume) {
     if (volume < 0) volume = 0;
     i2s_config->volume = volume;
 }
+
+void i2s_set_sample_freq(i2s_config_t *i2s_config, uint32_t sample_freq, bool frameskip) {
+    if (frameskip) {
+        sample_freq *= 2; // Double the sample frequency for faster processing
+    }
+
+    uint32_t system_clock_frequency = clock_get_hz(clk_sys);
+    uint32_t divider = system_clock_frequency * 4 / sample_freq;
+    pio_sm_set_clkdiv_int_frac(i2s_config->pio, i2s_config->sm, divider >> 8u, divider & 0xffu);
+
+    i2s_config->sample_freq = sample_freq;
+}
+
 
 // /**
 //  * Increases the output volume

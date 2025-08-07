@@ -109,6 +109,78 @@ void load_cart_rom_file(char *filename) {
 
 			/* Next sector */
 			flash_target_offset+=FLASH_SECTOR_SIZE;
+			#warning "Implement this soon"
+			// CHATGPT OPTIMIZATION
+			/*
+			#define BLOCK_SIZE 65536  // 64KB
+			uint8_t buffer[BLOCK_SIZE];  // Needs enough RAM (check stack usage)
+
+			for (;;) {
+				f_read(&fil, buffer, BLOCK_SIZE, &br);
+				if (br == 0) break;
+
+				// Erase all sectors in this block
+				for (uint32_t i = 0; i < br; i += FLASH_SECTOR_SIZE)
+					flash_range_erase(flash_target_offset + i, FLASH_SECTOR_SIZE);
+
+				// Program in 256-byte chunks (page size)
+				for (uint32_t i = 0; i < br; i += FLASH_PAGE_SIZE)
+					flash_range_program(flash_target_offset + i, buffer + i, FLASH_PAGE_SIZE);
+
+				flash_target_offset += br;
+			}
+			*/
+		
+			/*64KB Sector erase FUKYES
+			void load_cart_rom_file(char *filename) {
+				UINT br;
+				const uint32_t BLOCK_SIZE = 64 * 1024;  // 64KB
+				const uint32_t PAGE_SIZE = 256;
+				uint8_t buffer[BLOCK_SIZE];  // Ensure you have enough stack or use malloc
+				sd_card_t *pSD = sd_get_by_num(0);
+				FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+				if (FR_OK != fr) {
+					printf("E f_mount error: %s (%d)\n", FRESULT_str(fr), fr);
+					return;
+				}
+
+				FIL fil;
+				fr = f_open(&fil, filename, FA_READ);
+				if (fr == FR_OK) {
+					uint32_t flash_target_offset = FLASH_TARGET_OFFSET;
+
+					for (;;) {
+						f_read(&fil, buffer, BLOCK_SIZE, &br);
+						if (br == 0) break;
+
+						uint32_t ints = save_and_disable_interrupts();
+
+						// Erase one 64KB block
+						flash_do_cmd_addr(FUNC_XIP_SSI, 0xD8, flash_target_offset);
+						// Wait until erase is complete (WIP bit in status reg cleared)
+						while (flash_get_cmd(FUNC_XIP_SSI, 0x05) & 0x01);
+
+						// Program in 256-byte chunks (page size)
+						for (uint32_t i = 0; i < br; i += PAGE_SIZE) {
+							flash_range_program(flash_target_offset + i, buffer + i, PAGE_SIZE);
+						}
+
+						restore_interrupts(ints);
+						flash_target_offset += br;
+					}
+				} else {
+					printf("E f_open(%s) error: %s (%d)\n", filename, FRESULT_str(fr), fr);
+				}
+
+				fr = f_close(&fil);
+				if (fr != FR_OK) {
+					printf("E f_close error: %s (%d)\n", FRESULT_str(fr), fr);
+				}
+				f_unmount(pSD->pcName);
+				printf("I load_cart_rom_file(%s) COMPLETE\n", filename);
+			}
+
+			*/
 		}
 		// if(mismatch) {
 	    //     printf("I Programming successful!\n");
@@ -149,6 +221,7 @@ uint16_t rom_file_selector_display_page(char filename[22][256],uint16_t num_page
 	}
 
     /* search *.gb files */
+	#warning "This is a problem for .gba"
 	uint16_t num_file=0;
 	fr=f_findfirst(&dj, &fno, "", "*.gb*");
 
@@ -266,6 +339,7 @@ void rom_file_selector() {
 			mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
 			sleep_ms(150);
 		}
+		sleep_ms(10);
 		tight_loop_contents();
 	}
 }

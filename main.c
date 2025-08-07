@@ -23,6 +23,7 @@
 #include "hardware/powman.h"
 #include "pico/sleep.h"
 #include "hardware/adc.h"
+#include "hardware/watchdog.h"
 
 // Essential headers
 #include "settings.h"
@@ -108,8 +109,8 @@ int main(void)
 
 	// Trigger the battery check immediately
     process_bat_percent();
-	// Set up a repeating timer for 2 minutes
-    if (!add_repeating_timer_ms(120000, battery_timer_callback, NULL, &timer)) {
+	// Set up a repeating timer for 10 seconds
+    if (!add_repeating_timer_ms(10000, battery_timer_callback, NULL, &timer)) {
         printf("Failed to add repeating timer\n");
     }
 
@@ -158,16 +159,24 @@ int main(void)
 // MARK: - Infinite Loop
 while(true)
 {
+	// MARK: - ROM File selector
 #if ENABLE_LCD
 #if ENABLE_SDCARD
-	// MARK: - ROM File selector
+#if USE_IPS_LCD
+	#warning "ips: add ips init"
+#else
 	mk_ili9225_init();
 	mk_ili9225_fill(0x0000);
 #endif
 #endif
+#endif
 
 #if ENABLE_SDCARD
+#if USE_IPS_LCD
+	#warning "ips: add ips init"
+#else
 	rom_file_selector();
+#endif
 #endif
 
 	// MARK: - Initialise GB context
@@ -218,6 +227,15 @@ while(true)
 	// RTC tick counter
 	uint_fast8_t frames = 0;
 	uint64_t start_time = time_us_64();
+	#warning "fix the led flashing thing at some point"
+	// resetting led timer because of bug
+	low_power = false;
+	cancel_repeating_timer(&timer);
+	// Set up a repeating timer for 10 seconds
+    if (!add_repeating_timer_ms(10000, battery_timer_callback, NULL, &timer)) {
+        printf("Failed to add repeating timer\n");
+    }
+
     // MARK: - Game Play
 	while(1)
 	{
@@ -240,11 +258,11 @@ while(true)
 		}
 
 #if ENABLE_SOUND
-		if(!gb.direct.frame_skip) {
+		// if(!gb.direct.frame_skip) {
 			read_volume(&i2s_config);
 			audio_callback(NULL, stream, AUDIO_BUFFER_SIZE_BYTES);
 			i2s_dma_write(&i2s_config, stream);
-		}
+		// }
 #endif
 
 		// MARK: - Update buttons state
@@ -277,12 +295,14 @@ while(true)
 			if(!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
 				/* select + up: increase sound volume */
 				// i2s_increase_volume(&i2s_config);
-				increase_lcd_brightness(32);
+				increase_lcd_brightness(16);
+				increase_pwr_brightness(4);
 			}
 			if(!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
 				/* select + down: decrease sound volume */
 				// i2s_decrease_volume(&i2s_config);
-				decrease_lcd_brightness(32);
+				decrease_lcd_brightness(16);
+				decrease_pwr_brightness(4);
 			}
 #endif
 			if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
@@ -317,6 +337,7 @@ while(true)
 			if(!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
 				/* select + A: enable/disable frame-skip => fast-forward */
 				gb.direct.frame_skip=!gb.direct.frame_skip;
+				i2s_set_sample_freq(&i2s_config, 44100, gb.direct.frame_skip);
 				printf("I gb.direct.frame_skip = %d\n",gb.direct.frame_skip);
 			}
 			if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {

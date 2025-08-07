@@ -1,6 +1,6 @@
 // Peanut-GB emulator settings
 #define ENABLE_LCD	1
-#define ENABLE_RTC 1
+#define ENABLE_RTC 0
 #define ENABLE_SOUND	1
 #define ENABLE_SDCARD	1
 #define PEANUT_GB_HIGH_LCD_ACCURACY 1

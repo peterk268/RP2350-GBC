@@ -43,6 +43,7 @@
         "stdio.h": "c",
         "gpio.h": "c",
         "cstdint": "cpp",
-        "rtc.h": "c"
+        "rtc.h": "c",
+        "mk_ili9225.h": "c"
     }
 }

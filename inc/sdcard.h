@@ -31,10 +31,10 @@ void spi_dma_isr();
 static spi_t spis[]={
     {
         .hw_inst=SD_SPI,
-        .miso_gpio=GPIO_SD_MISO,
-        .mosi_gpio=GPIO_SD_MOSI,
-        .sck_gpio=GPIO_SD_SCK,
-        .baud_rate=12500*1000,
+        .miso_gpio=GPIO_SPI0_MISO,
+        .mosi_gpio=GPIO_SPI0_MOSI,
+        .sck_gpio=GPIO_SPI0_SCK,
+        .baud_rate=10000*1000,
         .dma_isr=spi_dma_isr
     }
 };

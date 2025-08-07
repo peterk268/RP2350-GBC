@@ -87,10 +87,10 @@ int main(void)
 
 	// MARK: - I2C INIT
 	i2c_init(IOX_I2C_PORT, 400 * 1000); // 400 kHz
-    gpio_set_function(GPIO_I2C_SDA, GPIO_FUNC_I2C);
-    gpio_set_function(GPIO_I2C_SCL, GPIO_FUNC_I2C);
-    gpio_pull_up(GPIO_I2C_SDA);
-    gpio_pull_up(GPIO_I2C_SCL);
+    gpio_set_function(GPIO_I2C1_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(GPIO_I2C1_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(GPIO_I2C1_SDA);
+    gpio_pull_up(GPIO_I2C1_SCL);
 
 	#if ENABLE_RTC
 	initialize_rtc(RTC_DEFAULT_VALUE);
@@ -104,7 +104,8 @@ int main(void)
     // MARK: - Initialise GPIO
 	config_iox_ports();
 	// Set up sleep interrupt asap.
-	setup_switch_sleep();
+	#warning "We'll come back to this at some point... well not really cause now we got power hold"
+	// setup_switch_sleep();
 	sleep_ms(10);
 
 	// Trigger the battery check immediately
@@ -114,32 +115,31 @@ int main(void)
         printf("Failed to add repeating timer\n");
     }
 
-	// turn on 3v3
-	gpio_write(IOX_n3V3_MCU_EN, false);
-
 	// Initialize the ADC for GPIO_AUD_POT_ADC and nHP_DETECT
     init_adc(GPIO_AUD_POT_ADC);
-	init_adc(GPIO_nHP_DETECT);
 
-	gpio_set_function(GPIO_LCD_SCK, GPIO_FUNC_SPI);
-	gpio_set_function(GPIO_LCD_MOSI, GPIO_FUNC_SPI);
-	gpio_set_function(GPIO_LCD_MISO, GPIO_FUNC_SIO);
+	// Enable Audio and SD Card
+	write_iox_port1(NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, 1, 0, NO_UPDATE);
 
-	gpio_set_dir(GPIO_LCD_MISO, true);
-
-    // MARK: - PWM Set up
+	// MARK: - PWM Set up
 	config_leds();
 
-	gpio_set_slew_rate(GPIO_LCD_SCK, GPIO_SLEW_RATE_FAST);
-	gpio_set_slew_rate(GPIO_LCD_MOSI, GPIO_SLEW_RATE_FAST);
+	// SD WILL HANDLE SPI INIT
+	// gpio_set_function(GPIO_SPI0_SCK, GPIO_FUNC_SPI);
+	// gpio_set_function(GPIO_SPI0_MOSI, GPIO_FUNC_SPI);
+	// gpio_set_function(GPIO_SPI0_MISO, GPIO_FUNC_SPI);
 
-    // MARK: - LCD SPI Config
-	/* Set SPI clock to use high frequency. */
-	clock_configure(clk_peri, 0,
-			CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS,
-			125 * 1000 * 1000, 125 * 1000 * 1000);
-	spi_init(LCD_SPI, 30*1000*1000);
-	spi_set_format(LCD_SPI, 16, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+	// gpio_set_slew_rate(GPIO_SPI0_SCK, GPIO_SLEW_RATE_FAST);
+	// gpio_set_slew_rate(GPIO_SPI0_MOSI, GPIO_SLEW_RATE_FAST);
+	// gpio_set_slew_rate(GPIO_SPI0_MISO, GPIO_SLEW_RATE_FAST);
+
+    // // MARK: - LCD SPI Config
+	// /* Set SPI clock to use high frequency. */
+	// clock_configure(clk_peri, 0,
+	// 		CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS,
+	// 		125 * 1000 * 1000, 125 * 1000 * 1000);
+	// spi_init(LCD_SPI, 10*1000*1000);
+	// spi_set_format(LCD_SPI, 16, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
 
     // MARK: - I2S Config
 #if ENABLE_SOUND

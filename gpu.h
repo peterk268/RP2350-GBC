@@ -3,19 +3,19 @@ void mk_ili9225_set_rst(bool state)
 {
 	// lcd needs por
 	#warning "This was done because of inverter, but please change back once hardware is changed"
-	gpio_write(IOX_LCD_RST, !state);
+	gpio_write(IOX_LCD_nRST, !state);
 }
 
 void mk_ili9225_set_rs(bool state)
 {
-	gpio_write(GPIO_LCD_MISO, state);
+	gpio_write(GPIO_SPI0_MISO, state);
 }
 bool iscs = false;
 void mk_ili9225_set_cs(bool state)
 {
 	// this was done due to slowness of iox write
 	if (!iscs) {
-		gpio_write(IOX_TFT_nCS, 0);
+		gpio_write(IOX_LCD_nCS, 0);
 		iscs = true;
 	}
 }

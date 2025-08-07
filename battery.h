@@ -243,13 +243,14 @@ void shutdown_peripherals(bool keep_i2c) {
 
     for (uint8_t i = 0; i<48; i++) {
         if (i != GPIO_SW_OUT && 
-            (!keep_i2c || (i != GPIO_I2C_SCL && i != GPIO_I2C_SDA && i != GPIO_PWR_LED)))
+            (!keep_i2c || (i != GPIO_I2C1_SCL && i != GPIO_I2C1_SDA && i != GPIO_PWR_LED)))
             gpio_deinit(i);
     }
     cancel_repeating_timer(&timer);
 
 }
 
+#warning "sleep device currently unstable"
 void sleep_device() {
     // #if ENABLE_SDCARD				
     // write_cart_ram_file(gbc);

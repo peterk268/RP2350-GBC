@@ -3,9 +3,9 @@
 
 // Duty Cycle Values
 #warning "Make these flash variables"
-uint8_t lcd_led_duty_cycle = MAX_BRIGHTNESS/2;    // Active High
-uint8_t pwr_led_duty_cycle = MAX_BRIGHTNESS/8;    // Active High
-uint8_t button_led_duty_cycle = MIN_BRIGHTNESS; // Active Low
+uint8_t lcd_led_duty_cycle = MAX_BRIGHTNESS/2;    
+uint8_t pwr_led_duty_cycle = MAX_BRIGHTNESS/8;  
+uint8_t button_led_duty_cycle = MIN_BRIGHTNESS; 
 
 // Generalized LED Configuration Function
 void config_led(uint8_t gpio_num, uint8_t duty_cycle, bool is_active_low) {
@@ -70,8 +70,7 @@ void adjust_brightness(uint8_t gpio_num, uint8_t *current_duty_cycle, uint8_t st
 void config_leds() {
     config_led(GPIO_LCD_LED, lcd_led_duty_cycle, false);    // Active High
     config_led(GPIO_PWR_LED, pwr_led_duty_cycle, false);    // Active High
-    #warning "fix pmos"
-    // config_led(GPIO_BUTTON_LED, button_led_duty_cycle, true); // Active Low
+    config_led(GPIO_BUTTON_LED, button_led_duty_cycle, false); // Active High
 }
 
 void increase_lcd_brightness(uint8_t step) {
@@ -89,10 +88,10 @@ void decrease_pwr_brightness(uint8_t step) {
 }
 
 void increase_button_brightness(uint8_t step) {
-    adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, step, true, true);
+    adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, step, true, false);
 }
 void decrease_button_brightness(uint8_t step) {
-    adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, step, false, true);
+    adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, step, false, false);
 }
 
 repeating_timer_t pwr_led_timer;

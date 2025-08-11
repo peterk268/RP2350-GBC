@@ -24,6 +24,8 @@
 #include "pico/sleep.h"
 #include "hardware/adc.h"
 #include "hardware/watchdog.h"
+#include "pico/scanvideo.h"
+#include "pico/scanvideo/composable_scanline.h"
 
 // Essential headers
 #include "settings.h"

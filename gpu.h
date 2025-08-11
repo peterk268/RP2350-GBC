@@ -6,209 +6,210 @@
 #define USE_GPT 0
 #define ENABLE_SPI 1
 
-// #if !USE_CUSTOM
-// #define VGA_MODE vga_mode_320x240_60
-// extern const struct scanvideo_pio_program video_24mhz_composable;
-// #else
+#if !USE_CUSTOM
+#define VGA_MODE vga_mode_320x240_60
+extern const struct scanvideo_pio_program video_24mhz_composable;
+#else
 
-// // MARK: - DONT TOUCH
-// #if !USE_GPT
-// const scanvideo_timing_t tft_timing_320x320_60 = {
-//     //pclk multiple of 2 in reference to system clock 150mhz
-//     .clock_freq      = 18.75 * 1000 * 1000,   // ↓ now 12 MHz (within your panel’s 20 MHz max)
-//     .h_active        = 320,
-//     .v_active        = 320,
-//     .h_front_porch   =   4,
-//     .h_pulse         =    500,
-//     .h_total         = 320 + 4 + 500 + 4,  // back porch = 20
-//     .h_sync_polarity =    0,
-//     .v_front_porch   =    2,
-//     .v_pulse         =    1,
-//     .v_total         = 320 + 2 + 1 + 2,    // back porch = 8
-//     .v_sync_polarity =    0,
-//     .enable_clock    =    1,
-//     .clock_polarity  =    0,
-//     .enable_den      =    1
-// };
-// #else
-// //chatgpt
-// const scanvideo_timing_t tft_timing_320x320_60 = {
-//     .clock_freq      = 10 * 1000 * 1000, // 12 MHz pixel clock (based on tCYC ≥ 50 ns)
-//     .h_active        = 320,
-//     .v_active        = 320,
-//     .h_front_porch   = 10,
-//     .h_pulse         = 2,
-//     .h_total         = 342,
-//     .h_sync_polarity = 0,
-//     .v_front_porch   = 4,
-//     .v_pulse         = 1,
-//     .v_total         = 330,
-//     .v_sync_polarity = 0,
-//     .enable_clock    = 1,
-//     .clock_polarity  = 0,
-//     .enable_den      = 1
-// };
-// #endif
-// extern const struct scanvideo_pio_program video_24mhz_composable;  // ← swap in 12 MHz
-// const scanvideo_mode_t tft_mode_320x320_60 = {
-//     .default_timing     = &tft_timing_320x320_60,
-//     .pio_program        = &video_24mhz_composable, 
-//     .width              = 320,
-//     .height             = 320,
-//     .xscale             = 1,
-//     .yscale             = 1,
-//     .yscale_denominator = 1
-// };
-// #define VGA_MODE tft_mode_320x320_60
-// #endif
+// MARK: - DONT TOUCH
+#if !USE_GPT
+const scanvideo_timing_t tft_timing_320x320_60 = {
+    //pclk multiple of 2 in reference to system clock 150mhz
+    .clock_freq      = 18.75 * 1000 * 1000,   // ↓ now 12 MHz (within your panel’s 20 MHz max)
+    .h_active        = 320,
+    .v_active        = 320,
+    .h_front_porch   =   4,
+    .h_pulse         =    500,
+    .h_total         = 320 + 4 + 500 + 4,  // back porch = 20
+    .h_sync_polarity =    0,
+    .v_front_porch   =    2,
+    .v_pulse         =    1,
+    .v_total         = 320 + 2 + 1 + 2,    // back porch = 8
+    .v_sync_polarity =    0,
+    .enable_clock    =    1,
+    .clock_polarity  =    0,
+    .enable_den      =    1
+};
+#else
+//chatgpt
+const scanvideo_timing_t tft_timing_320x320_60 = {
+    .clock_freq      = 10 * 1000 * 1000, // 12 MHz pixel clock (based on tCYC ≥ 50 ns)
+    .h_active        = 320,
+    .v_active        = 320,
+    .h_front_porch   = 10,
+    .h_pulse         = 2,
+    .h_total         = 342,
+    .h_sync_polarity = 0,
+    .v_front_porch   = 4,
+    .v_pulse         = 1,
+    .v_total         = 330,
+    .v_sync_polarity = 0,
+    .enable_clock    = 1,
+    .clock_polarity  = 0,
+    .enable_den      = 1
+};
+#endif
+extern const struct scanvideo_pio_program video_24mhz_composable;  // ← swap in 12 MHz
+const scanvideo_mode_t tft_mode_320x320_60 = {
+    .default_timing     = &tft_timing_320x320_60,
+    .pio_program        = &video_24mhz_composable, 
+    .width              = 320,
+    .height             = 320,
+    .xscale             = 1,
+    .yscale             = 1,
+    .yscale_denominator = 1
+};
+#define VGA_MODE tft_mode_320x320_60
+#endif
 
-// uint16_t make_pixel_bgr(uint8_t r, uint8_t g, uint8_t b) {
-//     return ((b & 0x1F) << 11) | ((g & 0x3F) << 5) | (r & 0x1F);
-// }
-// static inline uint16_t rgb565_to_bgr565(uint16_t rgb) {
-//     // Extract R, G, B from RGB565
-//     uint8_t r = rgb & 0x1F;           // bits 0–4
-//     uint8_t g = (rgb >> 5) & 0x3F;    // bits 5–10
-//     uint8_t b = (rgb >> 11) & 0x1F;   // bits 11–15
+uint16_t make_pixel_bgr(uint8_t r, uint8_t g, uint8_t b) {
+    return ((b & 0x1F) << 11) | ((g & 0x3F) << 5) | (r & 0x1F);
+}
+static inline uint16_t rgb565_to_bgr565(uint16_t rgb) {
+    // Extract R, G, B from RGB565
+    uint8_t r = rgb & 0x1F;           // bits 0–4
+    uint8_t g = (rgb >> 5) & 0x3F;    // bits 5–10
+    uint8_t b = (rgb >> 11) & 0x1F;   // bits 11–15
 
-//     // Re-pack into BGR565 format
-//     return (r << 11) | (g << 5) | b;
-// }
+    // Re-pack into BGR565 format
+    return (r << 11) | (g << 5) | b;
+}
 
-// // IN SCAN LINE DO THIS: 
-// //     uint16_t bgcolour = rgb565_to_bgr565(rgb_color);
-
-
-// // MARK: - EXAMPLE CODE
-// // https://github.com/raspberrypi/pico-playground/tree/master
-
-// // to make sure only one core updates the state when the frame number changes
-// // todo note we should actually make sure here that the other core isn't still rendering (i.e. all must arrive before either can proceed - a la barrier)
-// static struct mutex frame_logic_mutex;
-
-// static void frame_update_logic();
-// static void render_scanline(struct scanvideo_scanline_buffer *dest, int core);
-
-// // "Worker thread" for each core
-// void render_loop() {
-//     static uint32_t last_frame_num = 0;
-//     int core_num = get_core_num();
-//     printf("Rendering on core %d\n", core_num);
-//     while (true) {
-//         struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
-//         mutex_enter_blocking(&frame_logic_mutex);
-//         uint32_t frame_num = scanvideo_frame_number(scanline_buffer->scanline_id);
-//         // Note that with multiple cores we may have got here not for the first
-//         // scanline, however one of the cores will do this logic first before either
-//         // does the actual generation
-//         if (frame_num != last_frame_num) {
-//             last_frame_num = frame_num;
-//             frame_update_logic();
-//         }
-//         mutex_exit(&frame_logic_mutex);
-
-//         render_scanline(scanline_buffer, core_num);
-
-//         // Release the rendered buffer into the wild
-//         scanvideo_end_scanline_generation(scanline_buffer);
-//     }
-// }
-
-// struct semaphore video_setup_complete;
-
-// void core1_func() {
-//     sem_acquire_blocking(&video_setup_complete);
-//     render_loop();
-// }
-
-// int vga_main(void) {
-//     mutex_init(&frame_logic_mutex);
-//     sem_init(&video_setup_complete, 0, 1);
-
-//     // Core 1 will wait for us to finish video setup, and then start rendering
-// #ifdef DUAL_CORE_RENDER
-//     multicore_launch_core1(core1_func);
-// #endif
-
-//     scanvideo_setup(&VGA_MODE);
-//     scanvideo_timing_enable(true);
-
-//     sem_release(&video_setup_complete);
-//     render_loop();
-//     return 0;
-// }
-// void frame_update_logic() {
-// }
-
-// #define MIN_COLOR_RUN 3
-
-// int32_t single_color_scanline(uint32_t *buf, size_t buf_length, int width, uint32_t color16) {
-//     assert(buf_length >= 2);
-
-//     assert(width >= MIN_COLOR_RUN);
-//     // | jmp color_run | color | count-3 |  buf[0] =
-//     buf[0] = COMPOSABLE_COLOR_RUN | (color16 << 16);
-//     buf[1] = (width - MIN_COLOR_RUN) | (COMPOSABLE_RAW_1P << 16);
-//     // note we must end with a black pixel
-//     buf[2] = 0 | (COMPOSABLE_EOL_ALIGN << 16);
-
-//     return 3;
-// }
-
-// #define VISIBLE_HEIGHT 288
-// #define VERTICAL_OFFSET 2
-
-// #define IMAGE_WIDTH 320
-// #define IMAGE_HEIGHT 288
-
-// static inline uint16_t *raw_scanline_prepare(struct scanvideo_scanline_buffer *dest, uint width) {
-//     assert(width >= 3);
-//     assert(width % 2 == 0);
-//     // +1 for the black pixel at the end, -3 because the program outputs n+3 pixels.
-//     dest->data[0] = COMPOSABLE_RAW_RUN | (width + 1 - 3 << 16);
-//     // After user pixels, 1 black pixel then discard remaining FIFO data
-//     dest->data[width / 2 + 2] = 0x0000u | (COMPOSABLE_EOL_ALIGN << 16);
-//     dest->data_used = width / 2 + 2;
-//     assert(dest->data_used <= dest->data_max);
-//     return (uint16_t *) &dest->data[1];
-// }
-
-// static inline void raw_scanline_finish(struct scanvideo_scanline_buffer *dest) {
-//     // Need to pivot the first pixel with the count so that PIO can keep up
-//     // with its 1 pixel per 2 clocks
-//     uint32_t first = dest->data[0];
-//     uint32_t second = dest->data[1];
-//     dest->data[0] = (first & 0x0000ffffu) | ((second & 0x0000ffffu) << 16);
-//     dest->data[1] = (second & 0xffff0000u) | ((first & 0xffff0000u) >> 16);
-//     dest->status = SCANLINE_OK;
-// }
+// IN SCAN LINE DO THIS: 
+//     uint16_t bgcolour = rgb565_to_bgr565(rgb_color);
 
 
-// void render_scanline(struct scanvideo_scanline_buffer *dest, int core) {
-//     int l = scanvideo_scanline_number(dest->scanline_id);
+// MARK: - EXAMPLE CODE
+// https://github.com/raspberrypi/pico-playground/tree/master
 
-//     if (l < VERTICAL_OFFSET || l >= (VERTICAL_OFFSET + IMAGE_HEIGHT)) {
-//         // Outside the image area – black line
-//         dest->data_used = single_color_scanline(dest->data, dest->data_max, VGA_MODE.width, 0x0000);
-//     } else {
-//         // Line within image area
-//         // int line_in_image = l - VERTICAL_OFFSET;
+// to make sure only one core updates the state when the frame number changes
+// todo note we should actually make sure here that the other core isn't still rendering (i.e. all must arrive before either can proceed - a la barrier)
+static struct mutex frame_logic_mutex;
 
-//         // // Prepare the scanline for raw pixels
-//         // uint16_t *colour_buf = raw_scanline_prepare(dest, VGA_MODE.width);
+static void frame_update_logic();
+static void render_scanline(struct scanvideo_scanline_buffer *dest, int core);
 
-//         // // Get the pointer to the correct line of image data
-//         // const uint16_t *src_line = &my_image_raw[line_in_image * IMAGE_WIDTH];
+// "Worker thread" for each core
+void render_loop() {
+    static uint32_t last_frame_num = 0;
+    int core_num = get_core_num();
+    printf("Rendering on core %d\n", core_num);
+    while (true) {
+        struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
+        mutex_enter_blocking(&frame_logic_mutex);
+        uint32_t frame_num = scanvideo_frame_number(scanline_buffer->scanline_id);
+        // Note that with multiple cores we may have got here not for the first
+        // scanline, however one of the cores will do this logic first before either
+        // does the actual generation
+        if (frame_num != last_frame_num) {
+            last_frame_num = frame_num;
+            frame_update_logic();
+        }
+        mutex_exit(&frame_logic_mutex);
 
-//         // // Copy the line to the scanline buffer
-//         // memcpy(colour_buf, src_line, IMAGE_WIDTH * sizeof(uint16_t));
+        render_scanline(scanline_buffer, core_num);
 
-//         // // Finish the scanline
-//         // raw_scanline_finish(dest);
-//     }
+        // Release the rendered buffer into the wild
+        scanvideo_end_scanline_generation(scanline_buffer);
+    }
+}
 
-//     dest->status = SCANLINE_OK;
-// }
+struct semaphore video_setup_complete;
+
+void core1_func() {
+    sem_acquire_blocking(&video_setup_complete);
+    render_loop();
+}
+
+int vga_main(void) {
+    mutex_init(&frame_logic_mutex);
+    sem_init(&video_setup_complete, 0, 1);
+
+    // Core 1 will wait for us to finish video setup, and then start rendering
+#ifdef DUAL_CORE_RENDER
+    multicore_launch_core1(core1_func);
+#endif
+
+    scanvideo_setup(&VGA_MODE);
+    scanvideo_timing_enable(true);
+
+    sem_release(&video_setup_complete);
+    render_loop();
+    return 0;
+}
+void frame_update_logic() {
+}
+
+#define MIN_COLOR_RUN 3
+
+int32_t single_color_scanline(uint32_t *buf, size_t buf_length, int width, uint32_t color16) {
+    assert(buf_length >= 2);
+
+    assert(width >= MIN_COLOR_RUN);
+    // | jmp color_run | color | count-3 |  buf[0] =
+    buf[0] = COMPOSABLE_COLOR_RUN | (color16 << 16);
+    buf[1] = (width - MIN_COLOR_RUN) | (COMPOSABLE_RAW_1P << 16);
+    // note we must end with a black pixel
+    buf[2] = 0 | (COMPOSABLE_EOL_ALIGN << 16);
+
+    return 3;
+}
+
+#define VISIBLE_HEIGHT 288
+#define VERTICAL_OFFSET 2
+
+#define IMAGE_WIDTH 320
+#define IMAGE_HEIGHT 288
+
+static inline uint16_t *raw_scanline_prepare(struct scanvideo_scanline_buffer *dest, uint width) {
+    assert(width >= 3);
+    assert(width % 2 == 0);
+    // +1 for the black pixel at the end, -3 because the program outputs n+3 pixels.
+    dest->data[0] = COMPOSABLE_RAW_RUN | (width + 1 - 3 << 16);
+    // After user pixels, 1 black pixel then discard remaining FIFO data
+    dest->data[width / 2 + 2] = 0x0000u | (COMPOSABLE_EOL_ALIGN << 16);
+    dest->data_used = width / 2 + 2;
+    assert(dest->data_used <= dest->data_max);
+    return (uint16_t *) &dest->data[1];
+}
+
+static inline void raw_scanline_finish(struct scanvideo_scanline_buffer *dest) {
+    // Need to pivot the first pixel with the count so that PIO can keep up
+    // with its 1 pixel per 2 clocks
+    uint32_t first = dest->data[0];
+    uint32_t second = dest->data[1];
+    dest->data[0] = (first & 0x0000ffffu) | ((second & 0x0000ffffu) << 16);
+    dest->data[1] = (second & 0xffff0000u) | ((first & 0xffff0000u) >> 16);
+    dest->status = SCANLINE_OK;
+}
+
+
+void render_scanline(struct scanvideo_scanline_buffer *dest, int core) {
+    int l = scanvideo_scanline_number(dest->scanline_id);
+
+    if (l < VERTICAL_OFFSET || l >= (VERTICAL_OFFSET + IMAGE_HEIGHT)) {
+        // Outside the image area – black line
+        dest->data_used = single_color_scanline(dest->data, dest->data_max, VGA_MODE.width, 0x0000);
+    } else {
+		#warning "scanvideo here"
+        // Line within image area
+        // int line_in_image = l - VERTICAL_OFFSET;
+
+        // // Prepare the scanline for raw pixels
+        // uint16_t *colour_buf = raw_scanline_prepare(dest, VGA_MODE.width);
+
+        // // Get the pointer to the correct line of image data
+        // const uint16_t *src_line = &my_image_raw[line_in_image * IMAGE_WIDTH];
+
+        // // Copy the line to the scanline buffer
+        // memcpy(colour_buf, src_line, IMAGE_WIDTH * sizeof(uint16_t));
+
+        // // Finish the scanline
+        // raw_scanline_finish(dest);
+    }
+
+    dest->status = SCANLINE_OK;
+}
 
 
 // MARK: - SPI

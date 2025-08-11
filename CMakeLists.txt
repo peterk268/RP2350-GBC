@@ -69,7 +69,8 @@ target_link_libraries(RP2350_GBC
         hardware_clocks hardware_pio hardware_vreg hardware_pio hardware_pwm
         hardware_sync hardware_pll hardware_spi hardware_irq hardware_dma hardware_flash hardware_i2c pico_aon_timer hardware_powman
         hardware_sleep hardware_adc
-        pico_binary_info)
+        pico_binary_info
+        pico_scanvideo_dpi)
 
 target_compile_definitions(RP2350_GBC PRIVATE
         PARAM_ASSERTIONS_DISABLE_ALL=1

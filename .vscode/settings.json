@@ -44,6 +44,6 @@
         "gpio.h": "c",
         "cstdint": "cpp",
         "rtc.h": "c",
-        "mk_ili9225.h": "c"
+        "sleep.h": "c"
     }
 }

@@ -3,9 +3,9 @@
 
 // Duty Cycle Values
 #warning "Make these flash variables"
-uint8_t lcd_led_duty_cycle = MAX_BRIGHTNESS/2;    
+uint8_t lcd_led_duty_cycle = MAX_BRIGHTNESS/8;    
 uint8_t pwr_led_duty_cycle = MAX_BRIGHTNESS/8;  
-uint8_t button_led_duty_cycle = MIN_BRIGHTNESS; 
+uint8_t button_led_duty_cycle = MAX_BRIGHTNESS/8; 
 
 // Generalized LED Configuration Function
 void config_led(uint8_t gpio_num, uint8_t duty_cycle, bool is_active_low) {

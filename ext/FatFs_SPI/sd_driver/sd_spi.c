@@ -45,7 +45,7 @@ static void sd_spi_unlock(sd_card_t *pSD) {
 
 // Would do nothing if pSD->ss_gpio were set to GPIO_FUNC_SPI.
 static void sd_spi_select(sd_card_t *pSD) {
-    gpio_write(pSD->ss_gpio, 0);
+    gpio_write(pSD->ss_gpio, 1);
     // A fill byte seems to be necessary, sometimes:
     uint8_t fill = SPI_FILL_CHAR;
     spi_write_blocking(pSD->spi->hw_inst, &fill, 1);
@@ -53,7 +53,7 @@ static void sd_spi_select(sd_card_t *pSD) {
 }
 
 static void sd_spi_deselect(sd_card_t *pSD) {
-    gpio_write(pSD->ss_gpio, 1);
+    gpio_write(pSD->ss_gpio, 0);
     LED_OFF();
     /*
     MMC/SDC enables/disables the DO output in synchronising to the SCLK. This
@@ -102,7 +102,7 @@ uint8_t sd_spi_write(sd_card_t *pSD, const uint8_t value) {
 void sd_spi_send_initializing_sequence(sd_card_t * pSD) {
     bool old_ss = gpio_get(pSD->ss_gpio);
     // Set DI and CS high and apply 74 or more clock pulses to SCLK:
-    gpio_write(pSD->ss_gpio, 1);
+    gpio_write(pSD->ss_gpio, 0);
     uint8_t ones[10];
     memset(ones, 0xFF, sizeof ones);
     absolute_time_t timeout_time = make_timeout_time_ms(1);

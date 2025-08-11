@@ -56,7 +56,7 @@ pico_set_program_version(RP2350_GBC "0.1")
 pico_generate_pio_header(RP2350_GBC ${CMAKE_CURRENT_LIST_DIR}/ext/i2s/audio_i2s.pio)
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(RP2350_GBC 0)
+pico_enable_stdio_uart(RP2350_GBC 1)
 pico_enable_stdio_usb(RP2350_GBC 1)
 
 target_include_directories(RP2350_GBC PRIVATE inc ext/minigb_apu ext/i2s)

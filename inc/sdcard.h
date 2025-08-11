@@ -27,14 +27,14 @@
 #include "rtc.h"
 
 void spi_dma_isr();
-
+#warning "SD SPI Speed not good :P"
 static spi_t spis[]={
     {
         .hw_inst=SD_SPI,
         .miso_gpio=GPIO_SPI0_MISO,
         .mosi_gpio=GPIO_SPI0_MOSI,
         .sck_gpio=GPIO_SPI0_SCK,
-        .baud_rate=10000*1000,
+        .baud_rate=400*1000,
         .dma_isr=spi_dma_isr
     }
 };
@@ -43,7 +43,7 @@ static sd_card_t sd_cards[]={
     {
         .pcName="0:",
         .spi=&spis[0],
-        .ss_gpio=IOX_SD_nCS,
+        .ss_gpio=IOX_SD_CS,
         .use_card_detect=false,
         .m_Status=STA_NOINIT
     }

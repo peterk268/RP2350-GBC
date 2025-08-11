@@ -88,7 +88,7 @@
 #define IOX_B_START          (6  + 48)
 #define IOX_DVI_DETECT       (7  + 48)
 
-#define IOX_SD_nCS           (10 + 48)
+#define IOX_SD_CS            (10 + 48)
 #define IOX_LCD_nCS          (11 + 48)
 #define IOX_ESP_nCS          (12 + 48)
 #define IOX_LCD_nRST         (13 + 48)
@@ -111,6 +111,25 @@ void set_up_select() {
     }
 }
 
+void setup_hold_power() {
+    gpio_set_function(GPIO_PWR_HOLD, GPIO_FUNC_SIO);
+	gpio_set_dir(GPIO_PWR_HOLD, true);
+    gpio_write(GPIO_PWR_HOLD, false);
+}
+void hold_power() {
+    gpio_write(GPIO_PWR_HOLD, true);
+}
+void release_power() {
+    gpio_write(GPIO_PWR_HOLD, false);
+}
+
+void test_hold_power() {
+    hold_power();
+    sleep_ms(5000);
+    release_power();
+}
+
+
 // MARK: - Boolean variables for IO Expander pins
 bool b_a_state = 0;
 bool b_b_state = 0;
@@ -121,7 +140,7 @@ bool b_right_state = 0;
 bool b_start_state = 0;
 bool dvi_detect_state = 0;
 
-bool sd_ncs_state = 1;
+bool sd_cs_state = 0;
 bool lcd_ncs_state = 1;
 bool esp_ncs_state = 1;
 bool lcd_rst_state = 0;
@@ -144,7 +163,7 @@ void config_iox_port(bool port, uint8_t config_data);
 void config_iox_ports();
 void read_io_expander_states(int8_t port);
 void write_io_expander_states(bool port, uint8_t data);
-void write_iox_port1(int8_t new_sd_ncs_state, int8_t new_lcd_ncs_state, int8_t new_esp_ncs_state, int8_t new_lcd_rst_state, int8_t new_esp_en_state, int8_t new_audio_en_state, int8_t new_sd_nen_state, int8_t new_sd_cd_state);
+void write_iox_port1(int8_t new_sd_cs_state, int8_t new_lcd_ncs_state, int8_t new_esp_ncs_state, int8_t new_lcd_rst_state, int8_t new_esp_en_state, int8_t new_audio_en_state, int8_t new_sd_nen_state, int8_t new_sd_cd_state);
 bool gpio_read(uint8_t gpio_num);
 bool iox_state_lookup(uint8_t gpio_num);
 void iox_state_set(uint8_t gpio_num, bool value);
@@ -164,7 +183,7 @@ void config_iox_ports() {
     config_iox_port(1, 0b10000000);
 
     // Initialize IOX outputs to defaults
-    write_iox_port1(1, 1, 1, 0, 0, 0, 1, 0);
+    write_iox_port1(0, 1, 1, 0, 0, 0, 1, 0);
 }
 
 // port: 0 or 1, or 2 for both
@@ -192,7 +211,7 @@ void read_io_expander_states(int8_t port) {
         b_start_state    = read_buffer & (1 << (IOX_B_START - 48));
         dvi_detect_state = read_buffer & (1 << (IOX_DVI_DETECT - 48));
     } else {
-        sd_ncs_state   = read_buffer & (1 << (IOX_SD_nCS - 48));
+        sd_cs_state   = read_buffer & (1 << (IOX_SD_CS - 48));
         lcd_ncs_state  = read_buffer & (1 << (IOX_LCD_nCS - 48));
         esp_ncs_state  = read_buffer & (1 << (IOX_ESP_nCS - 48));
         lcd_rst_state  = read_buffer & (1 << (IOX_LCD_nRST - 48));
@@ -224,8 +243,8 @@ void write_iox_port0(int8_t new_dvi_detect_state, int8_t new_b_start_state, int8
     write_io_expander_states(0, states);
 }
 
-void write_iox_port1(int8_t new_sd_ncs_state, int8_t new_lcd_ncs_state, int8_t new_esp_ncs_state, int8_t new_lcd_rst_state, int8_t new_esp_en_state, int8_t new_audio_en_state, int8_t new_sd_nen_state, int8_t new_sd_cd_state) {
-    if (new_sd_ncs_state != NO_UPDATE) sd_ncs_state = new_sd_ncs_state;
+void write_iox_port1(int8_t new_sd_cs_state, int8_t new_lcd_ncs_state, int8_t new_esp_ncs_state, int8_t new_lcd_rst_state, int8_t new_esp_en_state, int8_t new_audio_en_state, int8_t new_sd_nen_state, int8_t new_sd_cd_state) {
+    if (new_sd_cs_state != NO_UPDATE) sd_cs_state = new_sd_cs_state;
     if (new_lcd_ncs_state != NO_UPDATE) lcd_ncs_state = new_lcd_ncs_state;
     if (new_esp_ncs_state != NO_UPDATE) esp_ncs_state = new_esp_ncs_state;
     if (new_lcd_rst_state != NO_UPDATE) lcd_rst_state = new_lcd_rst_state;
@@ -269,7 +288,7 @@ bool iox_state_lookup(uint8_t gpio_num) {
         case IOX_B_START:    return b_start_state;
         case IOX_DVI_DETECT: return dvi_detect_state;
 
-        case IOX_SD_nCS:     return sd_ncs_state;
+        case IOX_SD_CS:     return sd_cs_state;
         case IOX_LCD_nCS:    return lcd_ncs_state;
         case IOX_ESP_nCS:    return esp_ncs_state;
         case IOX_LCD_nRST:   return lcd_rst_state;
@@ -295,7 +314,7 @@ void iox_state_set(uint8_t gpio_num, bool value) {
         case IOX_B_START:    b_start_state = value; break;
         case IOX_DVI_DETECT: dvi_detect_state = value; break;
 
-        case IOX_SD_nCS:     sd_ncs_state = value; break;
+        case IOX_SD_CS:     sd_cs_state = value; break;
         case IOX_LCD_nCS:    lcd_ncs_state = value; break;
         case IOX_ESP_nCS:    esp_ncs_state = value; break;
         case IOX_LCD_nRST:   lcd_rst_state = value; break;
@@ -328,7 +347,7 @@ uint8_t get_iox_port_states(bool port) {
                (lcd_rst_state << 3) |
                (esp_ncs_state << 2) |
                (lcd_ncs_state << 1) |
-               (sd_ncs_state << 0);
+               (sd_cs_state << 0);
     }
 }
 

@@ -33,7 +33,6 @@
 #include "hedley.h"
 #include "minigb_apu.h"
 #include "peanut_gb.h"
-#include "mk_ili9225.h"
 #include "sdcard.h"
 #include "i2s.h"
 #include "gbcolors.h"
@@ -78,12 +77,14 @@ int main(void)
 
 
 	/* Initialise USB serial connection for debugging. */
+	setup_default_uart();
 	stdio_init_all();
 	// time_init();
-	// sleep_ms(5000);
+	// sleep_ms(3000);
 	putstdio("INIT: ");
 
-	set_up_select();
+    set_up_select();
+    setup_hold_power();
 
 	// MARK: - I2C INIT
 	i2c_init(IOX_I2C_PORT, 400 * 1000); // 400 kHz
@@ -108,21 +109,38 @@ int main(void)
 	// setup_switch_sleep();
 	sleep_ms(10);
 
-	// Trigger the battery check immediately
-    process_bat_percent();
-	// Set up a repeating timer for 10 seconds
-    if (!add_repeating_timer_ms(10000, battery_timer_callback, NULL, &timer)) {
-        printf("Failed to add repeating timer\n");
-    }
+	#warning "Hold off on battery monitor"
+	// // Trigger the battery check immediately
+    // process_bat_percent();
+	// // Set up a repeating timer for 10 seconds
+    // if (!add_repeating_timer_ms(10000, battery_timer_callback, NULL, &timer)) {
+    //     printf("Failed to add repeating timer\n");
+    // }
 
 	// Initialize the ADC for GPIO_AUD_POT_ADC and nHP_DETECT
     init_adc(GPIO_AUD_POT_ADC);
 
-	// Enable Audio and SD Card
-	write_iox_port1(NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, 1, 0, NO_UPDATE);
-
 	// MARK: - PWM Set up
 	config_leds();
+
+	#if ENABLE_LCD && USE_IPS_LCD
+	lcd_power_on_reset();
+	init_spi_lcd();
+	gpio_write(IOX_LCD_nCS, 0);
+	lcd_config();
+	gpio_write(IOX_LCD_nCS, 1);
+
+	sleep_ms(10);
+	gpio_deinit(GPIO_SPI0_SCK);
+	gpio_deinit(GPIO_SPI0_MOSI);
+	gpio_deinit(GPIO_SPI0_MISO);
+	sleep_ms(10);
+    #endif
+
+	// Enable Audio and SD Card
+	write_iox_port1(NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, 1, 0, NO_UPDATE);
+	sleep_ms(2000);
+
 
 	// SD WILL HANDLE SPI INIT
 	// gpio_set_function(GPIO_SPI0_SCK, GPIO_FUNC_SPI);
@@ -133,12 +151,12 @@ int main(void)
 	// gpio_set_slew_rate(GPIO_SPI0_MOSI, GPIO_SLEW_RATE_FAST);
 	// gpio_set_slew_rate(GPIO_SPI0_MISO, GPIO_SLEW_RATE_FAST);
 
-    // // MARK: - LCD SPI Config
-	// /* Set SPI clock to use high frequency. */
+    // MARK: - LCD SPI Config
+	/* Set SPI clock to use high frequency. */
 	// clock_configure(clk_peri, 0,
 	// 		CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS,
 	// 		125 * 1000 * 1000, 125 * 1000 * 1000);
-	// spi_init(LCD_SPI, 10*1000*1000);
+	// spi_init(LCD_SPI, 30*1000*1000);
 	// spi_set_format(LCD_SPI, 16, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
 
     // MARK: - I2S Config
@@ -165,18 +183,13 @@ while(true)
 #if USE_IPS_LCD
 	#warning "ips: add ips init"
 #else
-	mk_ili9225_init();
-	mk_ili9225_fill(0x0000);
+	// mk_ili9225_init();
+	// mk_ili9225_fill(0x0000);
 #endif
 #endif
 #endif
-
 #if ENABLE_SDCARD
-#if USE_IPS_LCD
-	#warning "ips: add ips init"
-#else
 	rom_file_selector();
-#endif
 #endif
 
 	// MARK: - Initialise GB context

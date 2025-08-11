@@ -44,7 +44,6 @@ add_subdirectory(ext/lvgl)
 
 add_executable(RP2350_GBC 
             main.c 
-            mk_ili9225.c 
             ext/minigb_apu/minigb_apu.c 
             ext/i2s/i2s.c
 )
@@ -59,7 +58,7 @@ pico_generate_pio_header(RP2350_GBC ${CMAKE_CURRENT_LIST_DIR}/ext/i2s/audio_i2s.
 pico_enable_stdio_uart(RP2350_GBC 1)
 pico_enable_stdio_usb(RP2350_GBC 1)
 
-target_include_directories(RP2350_GBC PRIVATE inc ext/minigb_apu ext/i2s)
+target_include_directories(RP2350_GBC BEFORE PRIVATE inc ext/minigb_apu ext/i2s)
 
 
 # Add the standard library to the build
@@ -80,7 +79,29 @@ target_compile_definitions(RP2350_GBC PRIVATE
         PICO_PRINTF_SUPPORT_FLOAT=1
         PICO_PRINTF_SUPPORT_EXPONENTIAL=0
         PICO_PRINTF_SUPPORT_LONG_LONG=1
-        PICO_PRINTF_SUPPORT_PTRDIFF_T=0)
+        PICO_PRINTF_SUPPORT_PTRDIFF_T=0
+        
+        # SCAN VIDEO
+        PICO_SCANVIDEO_ENABLE_DEN_PIN=0
+
+        PICO_SCANVIDEO_ENABLE_CLOCK_PIN=1
+        PICO_SCANVIDEO_COLOR_PIN_COUNT=16
+        PICO_SCANVIDEO_COLOR_PIN_BASE=25
+
+        PICO_SCANVIDEO_DPI_PIXEL_RCOUNT=5
+        PICO_SCANVIDEO_DPI_PIXEL_GCOUNT=6
+        PICO_SCANVIDEO_DPI_PIXEL_BCOUNT=5
+
+        PICO_SCANVIDEO_DPI_PIXEL_RSHIFT=0u
+        PICO_SCANVIDEO_DPI_PIXEL_GSHIFT=5u
+        PICO_SCANVIDEO_DPI_PIXEL_BSHIFT=11u
+
+        PICO_SCANVIDEO_PIXEL_RSHIFT=0u
+        PICO_SCANVIDEO_PIXEL_GSHIFT=5u
+        PICO_SCANVIDEO_PIXEL_BSHIFT=11u
+
+        PICO_SCANVIDEO_SYNC_PIN_BASE=41
+)
 
 function(pico_add_verbose_dis_output TARGET)
     add_custom_command(TARGET ${TARGET} POST_BUILD

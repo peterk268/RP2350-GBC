@@ -255,9 +255,9 @@ uint16_t rom_file_selector_display_page(char filename[22][256],uint16_t num_page
 		printf("%s\n", filename[ifile]);
 	}
 	#else
-	mk_ili9225_fill(0x0000);
+	// mk_ili9225_fill(0x0000);
 	for(uint8_t ifile=0;ifile<num_file;ifile++) {
-		mk_ili9225_text(filename[ifile],0,ifile*8,0xFFFF,0x0000);
+		// mk_ili9225_text(filename[ifile],0,ifile*8,0xFFFF,0x0000);
     }
 	#endif
 	return num_file;
@@ -281,7 +281,7 @@ void rom_file_selector() {
 	#if USE_IPS_LCD
 	#warning "Display roms on ips screen"
 	#else
-	mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
+	// mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
 	#endif
 	/* get user's input */
 	bool up,down,left,right,a,b,select,start;
@@ -310,38 +310,22 @@ void rom_file_selector() {
 		}
 		if(!down) {
 			/* select the next rom */
-			#if USE_IPS_LCD
-			#warning "Display roms on ips screen"
-			#else
-			mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0x0000);
-			#endif
+			//mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0x0000);
 			selected++;
 			if(selected>=num_file) selected=0;
-			#if USE_IPS_LCD
-			#warning "Display roms on ips screen"
+			//mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
 			printf("%s\n", filename[selected]);
-			#else
-			mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
-			#endif
 			sleep_ms(150);
 		}
 		if(!up) {
 			/* select the previous rom */
-			#if USE_IPS_LCD
-			#warning "Display roms on ips screen"
-			#else
-			mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0x0000);
-			#endif
+			//mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0x0000);
 			if(selected==0) {
 				selected=num_file-1;
 			} else {
 				selected--;
 			}
-			#if USE_IPS_LCD
-			#warning "Display roms on ips screen"
-			#else
-			mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
-			#endif
+			//mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
 			sleep_ms(150);
 		}
 		if(!right) {
@@ -355,11 +339,7 @@ void rom_file_selector() {
 			}
 			/* select the first file */
 			selected=0;
-			#if USE_IPS_LCD
-			#warning "Display roms on ips screen"
-			#else
-			mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
-			#endif
+			//mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
 			sleep_ms(150);
 		}
 		if((!left) && num_page>0) {
@@ -368,11 +348,7 @@ void rom_file_selector() {
 			num_file=rom_file_selector_display_page(filename,num_page);
 			/* select the first file */
 			selected=0;
-			#if USE_IPS_LCD
-			#warning "Display roms on ips screen"
-			#else
-			mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
-			#endif
+			//mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
 			sleep_ms(150);
 		}
 		sleep_ms(10);

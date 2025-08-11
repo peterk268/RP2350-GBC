@@ -220,6 +220,7 @@ while(true)
 
 	/* Start Core1, which processes requests to the LCD. */
 	putstdio("CORE1 ");
+	gpio_write(GPIO_DPI_DEN, 1);
 	multicore_launch_core1(main_core1);
 	
 	putstdio("LCD ");

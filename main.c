@@ -72,19 +72,11 @@ int main(void)
 	/* Initialise USB serial connection for debugging. */
 	setup_default_uart();
 	stdio_init_all();
-	// time_init();
-	// sleep_ms(3000);
-	putstdio("INIT: ");
-
     set_up_select();
     setup_hold_power();
 
 	// MARK: - I2C INIT
-	i2c_init(IOX_I2C_PORT, 400 * 1000); // 400 kHz
-    gpio_set_function(GPIO_I2C1_SDA, GPIO_FUNC_I2C);
-    gpio_set_function(GPIO_I2C1_SCL, GPIO_FUNC_I2C);
-    gpio_pull_up(GPIO_I2C1_SDA);
-    gpio_pull_up(GPIO_I2C1_SCL);
+	init_i2c();
 
 	#if ENABLE_RTC
 	initialize_rtc(RTC_DEFAULT_VALUE);
@@ -123,17 +115,17 @@ int main(void)
 	lcd_config();
 	gpio_write(IOX_LCD_nCS, 1);
 
-	sleep_ms(10);
+	sleep_ms(1);
 	gpio_deinit(GPIO_SPI0_SCK);
 	gpio_deinit(GPIO_SPI0_MOSI);
 	gpio_deinit(GPIO_SPI0_MISO);
-	sleep_ms(10);
     #endif
 
 	// Enable Audio and SD Card
+	#if ENABLE_SDCARD || ENABLE_SOUND
 	write_iox_port1(NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, 1, 0, NO_UPDATE);
 	sleep_ms(2000);
-
+	#endif
 
 	// SD WILL HANDLE SPI INIT
 	// gpio_set_function(GPIO_SPI0_SCK, GPIO_FUNC_SPI);

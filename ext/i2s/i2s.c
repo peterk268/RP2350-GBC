@@ -1,9 +1,13 @@
 #include "i2s.h"
 
 // I2S
-#define GPIO_I2S_BCLK     21
-#define GPIO_I2S_LRCLK    22
-#define GPIO_I2S_DIN      23
+#define I2S_PIO              pio1
+#define I2S_PIO_GPIO         GPIO_FUNC_PIO1
+
+#define GPIO_I2S_MCLK        20
+#define GPIO_I2S_BCLK        21
+#define GPIO_I2S_LRCLK       22
+#define GPIO_I2S_DIN         23
 
 #warning "lr needs to be righ tafter btclk"
 /**
@@ -15,7 +19,7 @@ i2s_config_t i2s_get_default_config(void) {
 		.channel_count = 2,
 		.data_pin = GPIO_I2S_DIN, 
 		.clock_pin_base = GPIO_I2S_BCLK,
-		.pio = pio0,
+		.pio = I2S_PIO,
 		.sm = 0,
         .dma_channel = 0,
         .dma_buf = NULL,
@@ -31,10 +35,10 @@ i2s_config_t i2s_get_default_config(void) {
  * i2s_config: I2S context obtained by i2s_get_default_config()
  */
 void i2s_init(i2s_config_t *i2s_config) {
-    uint8_t func=GPIO_FUNC_PIO0;    // TODO: GPIO_FUNC_PIO0 for pio0 or GPIO_FUNC_PIO1 for pio1
-    gpio_set_function(i2s_config->data_pin, GPIO_FUNC_PIO0);
-    gpio_set_function(i2s_config->clock_pin_base, GPIO_FUNC_PIO0);
-    gpio_set_function(i2s_config->clock_pin_base+1, GPIO_FUNC_PIO0);
+    uint8_t func=I2S_PIO_GPIO;
+    gpio_set_function(i2s_config->data_pin, I2S_PIO_GPIO);
+    gpio_set_function(i2s_config->clock_pin_base, I2S_PIO_GPIO);
+    gpio_set_function(i2s_config->clock_pin_base+1, I2S_PIO_GPIO);
     
     i2s_config->sm = pio_claim_unused_sm(i2s_config->pio, true);
     

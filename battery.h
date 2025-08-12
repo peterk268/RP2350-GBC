@@ -39,7 +39,7 @@ int16_t get_average_current_mA() {
 }
 
 uint16_t get_bat_charge_percent() {
-    return read_register(0x1C);
+    return 100 - read_register(0x1C);
 }
 
 // bool is_charging() {
@@ -56,7 +56,7 @@ void process_bat_percent() {
     uint16_t percent = get_bat_charge_percent();
     int16_t current_mA = get_average_current_mA();
 
-    printf("Battery Percent: %d, rem_cap: %d, full_cap: %d, current: %d", percent, get_remaining_bat_capacity_mAh(), get_full_bat_capacity_mAh(), current_mA);
+    printf("Battery Percent: %d, rem_cap: %d, full_cap: %d, current: %d, voltage: %d\n", percent, get_remaining_bat_capacity_mAh(), get_full_bat_capacity_mAh(), current_mA, read_voltage_mV());
 
     // False data
     // if (percent == 0) { printf("fail"); return;};
@@ -238,7 +238,7 @@ void shutdown_peripherals(bool keep_i2c) {
     spi_deinit(LCD_SPI);
     spi_deinit(SD_SPI);
 
-    pio_sm_set_enabled(pio0, 0, false);
+    pio_sm_set_enabled(I2S_PIO, 0, false);
     for (uint dma_channel = 0; dma_channel < NUM_DMA_CHANNELS; dma_channel++) dma_channel_abort(dma_channel); // Reset DMA
 
     for (uint8_t i = 0; i<48; i++) {

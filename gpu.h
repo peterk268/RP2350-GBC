@@ -1,16 +1,16 @@
 // MARK: DPI TIMINGS
 const scanvideo_timing_t tft_timing_320x320_60 = {
     //pclk multiple of 2 in reference to system clock 150mhz
-    .clock_freq      = 18.75 * 1000 * 1000,   // ↓ now 12 MHz (within your panel’s 20 MHz max)
+    .clock_freq      = 15 * 1000 * 1000,   // ↓ now 12 MHz (within your panel’s 20 MHz max)
     .h_active        = 320,
     .v_active        = 288,
     .h_front_porch   =   4,
-    .h_pulse         =    500,
-    .h_total         = 320 + 4 + 500 + 4,  // back porch = 20
+    .h_pulse         =    130,
+    .h_total         = 320 + 4 + 130 + 4,  // back porch = 20
     .h_sync_polarity =    0,
     .v_front_porch   =    4,
-    .v_pulse         =    1,
-    .v_total         = 288 + 4 + 1 + 4,    // back porch = 8
+    .v_pulse         =    8,
+    .v_total         = 288 + 4 + 8 + 4,    // back porch = 8
     .v_sync_polarity =    0,
     .enable_clock    =    1,
     .clock_polarity  =    0,
@@ -111,13 +111,7 @@ struct semaphore video_setup_complete;
 // MARK: - MAIN CORE1 LOOP
 _Noreturn
 void main_core1(void) {
-    mutex_init(&frame_logic_mutex);
-    sem_init(&video_setup_complete, 0, 1);
-
-    scanvideo_setup(&VGA_MODE);
-    scanvideo_timing_enable(true);
-
-    sem_release(&video_setup_complete);
+    sem_acquire_blocking(&video_setup_complete);
 
     #warning "We'll take this out at some point"
     gpio_write(GPIO_DPI_DEN, 1);
@@ -125,6 +119,17 @@ void main_core1(void) {
     render_loop();
     
     HEDLEY_UNREACHABLE();
+}
+
+// Must be done before sd and i2s init
+void setup_dpi() {
+    mutex_init(&frame_logic_mutex);
+    sem_init(&video_setup_complete, 0, 1);
+
+    scanvideo_setup(&VGA_MODE);
+    scanvideo_timing_enable(true);
+
+    sem_release(&video_setup_complete);
 }
 
 // MARK: FRAME LOGIC

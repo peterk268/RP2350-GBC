@@ -120,6 +120,7 @@ int main(void)
 	gpio_deinit(GPIO_SPI0_SCK);
 	gpio_deinit(GPIO_SPI0_MOSI);
 	gpio_deinit(GPIO_SPI0_MISO);
+	setup_dpi();
     #endif
 
 	// Enable Audio and SD Card

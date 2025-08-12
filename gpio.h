@@ -9,6 +9,9 @@
 #define RTC_I2C_PORT         i2c1
 #define DAC_I2C_PORT         i2c1
 
+#define I2S_PIO              pio1
+#define I2S_PIO_GPIO         GPIO_FUNC_PIO1
+
 // MARK: - GPIO Pin Definitions
 
 // Misc.

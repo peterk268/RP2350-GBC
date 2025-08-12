@@ -95,13 +95,14 @@ int main(void)
 	sleep_ms(10);
 
 	#warning "Hold off on battery monitor"
-	// // Trigger the battery check immediately
-    // process_bat_percent();
-	// // Set up a repeating timer for 10 seconds
-    // if (!add_repeating_timer_ms(10000, battery_timer_callback, NULL, &timer)) {
-    //     printf("Failed to add repeating timer\n");
-    // }
-
+	#if ENABLE_BAT_MONITORING
+	// Trigger the battery check immediately
+    process_bat_percent();
+	// Set up a repeating timer for 10 seconds
+    if (!add_repeating_timer_ms(10000, battery_timer_callback, NULL, &timer)) {
+        printf("Failed to add repeating timer\n");
+    }
+	#endif
 	// Initialize the ADC for GPIO_AUD_POT_ADC and nHP_DETECT
     init_adc(GPIO_AUD_POT_ADC);
 
@@ -229,10 +230,12 @@ while(true)
 	// resetting led timer because of bug
 	low_power = false;
 	cancel_repeating_timer(&timer);
+	#if ENABLE_BAT_MONITORING
 	// Set up a repeating timer for 10 seconds
     if (!add_repeating_timer_ms(10000, battery_timer_callback, NULL, &timer)) {
         printf("Failed to add repeating timer\n");
     }
+	#endif
 
     // MARK: - Game Play
 	while(1)

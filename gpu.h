@@ -8,9 +8,9 @@ const scanvideo_timing_t tft_timing_320x320_60 = {
     .h_pulse         =    500,
     .h_total         = 320 + 4 + 500 + 4,  // back porch = 20
     .h_sync_polarity =    0,
-    .v_front_porch   =    2,
+    .v_front_porch   =    4,
     .v_pulse         =    1,
-    .v_total         = 288 + 2 + 1 + 2,    // back porch = 8
+    .v_total         = 288 + 4 + 1 + 4,    // back porch = 8
     .v_sync_polarity =    0,
     .enable_clock    =    1,
     .clock_polarity  =    0,

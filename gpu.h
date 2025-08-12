@@ -1,18 +1,3 @@
-#if USE_IPS_LCD
-#warning "add ips set up here"
-// #define DUAL_CORE_RENDER
-
-#define USE_CUSTOM 1
-#define USE_GPT 0
-#define ENABLE_SPI 1
-
-#if !USE_CUSTOM
-#define VGA_MODE vga_mode_320x240_60
-extern const struct scanvideo_pio_program video_24mhz_composable;
-#else
-
-// MARK: - DONT TOUCH
-#if !USE_GPT
 const scanvideo_timing_t tft_timing_320x320_60 = {
     //pclk multiple of 2 in reference to system clock 150mhz
     .clock_freq      = 18.75 * 1000 * 1000,   // ↓ now 12 MHz (within your panel’s 20 MHz max)
@@ -30,25 +15,7 @@ const scanvideo_timing_t tft_timing_320x320_60 = {
     .clock_polarity  =    0,
     .enable_den      =    1
 };
-#else
-//chatgpt
-const scanvideo_timing_t tft_timing_320x320_60 = {
-    .clock_freq      = 10 * 1000 * 1000, // 12 MHz pixel clock (based on tCYC ≥ 50 ns)
-    .h_active        = 320,
-    .v_active        = 320,
-    .h_front_porch   = 10,
-    .h_pulse         = 2,
-    .h_total         = 342,
-    .h_sync_polarity = 0,
-    .v_front_porch   = 4,
-    .v_pulse         = 1,
-    .v_total         = 330,
-    .v_sync_polarity = 0,
-    .enable_clock    = 1,
-    .clock_polarity  = 0,
-    .enable_den      = 1
-};
-#endif
+
 extern const struct scanvideo_pio_program video_24mhz_composable;  // ← swap in 12 MHz
 const scanvideo_mode_t tft_mode_320x320_60 = {
     .default_timing     = &tft_timing_320x320_60,
@@ -60,35 +27,14 @@ const scanvideo_mode_t tft_mode_320x320_60 = {
     .yscale_denominator = 1
 };
 #define VGA_MODE tft_mode_320x320_60
-#endif
 
-uint16_t make_pixel_bgr(uint8_t r, uint8_t g, uint8_t b) {
-    return ((b & 0x1F) << 11) | ((g & 0x3F) << 5) | (r & 0x1F);
-}
-static inline uint16_t rgb565_to_bgr565(uint16_t rgb) {
-    // Extract R, G, B from RGB565
-    uint8_t r = rgb & 0x1F;           // bits 0–4
-    uint8_t g = (rgb >> 5) & 0x3F;    // bits 5–10
-    uint8_t b = (rgb >> 11) & 0x1F;   // bits 11–15
-
-    // Re-pack into BGR565 format
-    return (r << 11) | (g << 5) | b;
-}
-
-// IN SCAN LINE DO THIS: 
-//     uint16_t bgcolour = rgb565_to_bgr565(rgb_color);
-
-
-// MARK: - EXAMPLE CODE
-// https://github.com/raspberrypi/pico-playground/tree/master
-
-// to make sure only one core updates the state when the frame number changes
-// todo note we should actually make sure here that the other core isn't still rendering (i.e. all must arrive before either can proceed - a la barrier)
 static struct mutex frame_logic_mutex;
 
 static void frame_update_logic();
-static void render_scanline(struct scanvideo_scanline_buffer *dest, int core);
+static void scanline_update_logic();
+static void render_scanline(struct scanvideo_scanline_buffer *dest, int core, const uint16_t *fb);
 
+// MARK: - RENDER LOOP
 // "Worker thread" for each core
 void render_loop() {
     static uint32_t last_frame_num = 0;
@@ -105,9 +51,10 @@ void render_loop() {
             last_frame_num = frame_num;
             frame_update_logic();
         }
+        scanline_update_logic();
         mutex_exit(&frame_logic_mutex);
 
-        render_scanline(scanline_buffer, core_num);
+        render_scanline(scanline_buffer, core_num, NULL);
 
         // Release the rendered buffer into the wild
         scanvideo_end_scanline_generation(scanline_buffer);
@@ -116,19 +63,10 @@ void render_loop() {
 
 struct semaphore video_setup_complete;
 
-void core1_func() {
-    sem_acquire_blocking(&video_setup_complete);
-    render_loop();
-}
-
+// MARK: - VGA MAIN
 int vga_main(void) {
     mutex_init(&frame_logic_mutex);
     sem_init(&video_setup_complete, 0, 1);
-
-    // Core 1 will wait for us to finish video setup, and then start rendering
-#ifdef DUAL_CORE_RENDER
-    multicore_launch_core1(core1_func);
-#endif
 
     scanvideo_setup(&VGA_MODE);
     scanvideo_timing_enable(true);
@@ -137,7 +75,15 @@ int vga_main(void) {
     render_loop();
     return 0;
 }
+
+// MARK: FRAME LOGIC
 void frame_update_logic() {
+    // here i will need to let the frame set its position. by setting the black lines or idk...
+}
+
+// MARK: SCANLINE LOGIC
+void scanline_update_logic() {
+    // here is where i'll wait for the scanline to be ready and process the data.
 }
 
 #define MIN_COLOR_RUN 3
@@ -184,32 +130,119 @@ static inline void raw_scanline_finish(struct scanvideo_scanline_buffer *dest) {
 }
 
 
-void render_scanline(struct scanvideo_scanline_buffer *dest, int core) {
-    int l = scanvideo_scanline_number(dest->scanline_id);
+// MARK: RENDER SCANLINE
+void render_scanline(struct scanvideo_scanline_buffer *dest, int core, const uint16_t *fb) {
+    // Prepare the scanline for raw pixels
+    uint16_t *colour_buf = raw_scanline_prepare(dest, VGA_MODE.width);
 
-    if (l < VERTICAL_OFFSET || l >= (VERTICAL_OFFSET + IMAGE_HEIGHT)) {
-        // Outside the image area – black line
-        dest->data_used = single_color_scanline(dest->data, dest->data_max, VGA_MODE.width, 0x0000);
-    } else {
-		#warning "scanvideo here"
-        // Line within image area
-        // int line_in_image = l - VERTICAL_OFFSET;
+    // Copy the line to the scanline buffer
+    memcpy(colour_buf, fb, LCD_WIDTH * sizeof(uint16_t));
 
-        // // Prepare the scanline for raw pixels
-        // uint16_t *colour_buf = raw_scanline_prepare(dest, VGA_MODE.width);
-
-        // // Get the pointer to the correct line of image data
-        // const uint16_t *src_line = &my_image_raw[line_in_image * IMAGE_WIDTH];
-
-        // // Copy the line to the scanline buffer
-        // memcpy(colour_buf, src_line, IMAGE_WIDTH * sizeof(uint16_t));
-
-        // // Finish the scanline
-        // raw_scanline_finish(dest);
-    }
+    // Finish the scanline
+    raw_scanline_finish(dest);
 
     dest->status = SCANLINE_OK;
 }
+
+#if ENABLE_LCD 
+uint16_t shift_components(uint16_t pixel);
+// MARK: CORE1 LCD DRAW LINE
+void core1_lcd_draw_line(const uint_fast8_t line)
+{
+	static uint16_t fb[LCD_WIDTH];
+
+#if PEANUT_FULL_GBC_SUPPORT
+ 	if (gbc->cgb.cgbMode) {
+		// user has not assigned palette.
+		if (manual_palette_selected == -1) {
+			for(unsigned int x = 0; x < LCD_WIDTH; x++){
+				fb[x] = shift_components(gbc->cgb.fixPalette[pixels_buffer[x]]);
+			}
+		} else {
+			for(unsigned int x = 0; x < LCD_WIDTH; x++){
+				fb[x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
+						[pixels_buffer[x] & 3];
+			}
+		}
+ 	}
+ 	else {
+#endif
+ 		for(unsigned int x = 0; x < LCD_WIDTH; x++){
+			fb[x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
+					[pixels_buffer[x] & 3];
+		}
+#if PEANUT_FULL_GBC_SUPPORT
+	}
+#endif	
+
+	// // Calculate the start line for the rotated display
+    uint_fast8_t rotated_line = LCD_HEIGHT - line - 1;
+
+	#warning "ips: send out pixels"
+
+	__atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
+}
+
+// MARK: CORE1 MAIN LOOP
+_Noreturn
+void main_core1(void)
+{
+	union core_cmd cmd;
+
+	/* Handle commands coming from core0. */
+	while(1)
+	{
+		cmd.full = multicore_fifo_pop_blocking();
+		switch(cmd.cmd)
+		{
+		case CORE_CMD_LCD_LINE:
+			core1_lcd_draw_line(cmd.data);
+			break;
+
+		case CORE_CMD_IDLE_SET:
+			break;
+
+		case CORE_CMD_NOP:
+		default:
+			break;
+		}
+	}
+
+	HEDLEY_UNREACHABLE();
+}
+#endif
+
+#if ENABLE_LCD
+// MARK: CORE0 LCD RETRIEVE LINE
+void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
+		   const uint_fast8_t line)
+{
+    union core_cmd cmd;
+
+	/* Wait until previous line is sent. */
+	while(__atomic_load_n(&lcd_line_busy, __ATOMIC_SEQ_CST))
+		tight_loop_contents();
+
+    // Reverse the order of pixel data
+    uint8_t reversed_pixels[LCD_WIDTH];
+    for (unsigned int i = 0; i < LCD_WIDTH; ++i)
+    {
+        reversed_pixels[i] = pixels[LCD_WIDTH - 1 - i];
+    }
+
+	memcpy(pixels_buffer, reversed_pixels, LCD_WIDTH);
+
+	gbc = gb;
+	// memcpy(pixels_buffer, pixels, LCD_WIDTH);
+
+    /* Populate command. */
+    cmd.cmd = CORE_CMD_LCD_LINE;
+    cmd.data = line;
+
+    __atomic_store_n(&lcd_line_busy, 1, __ATOMIC_SEQ_CST);
+    multicore_fifo_push_blocking(cmd.full);
+}
+#endif
 
 
 // MARK: - SPI
@@ -304,45 +337,8 @@ void lcd_config() {
     sleep_ms(1);
     writecommand(0x2C);
 }
-#else
-/* Functions required for communication with the ILI9225. */
-void mk_ili9225_set_rst(bool state)
-{
-	// lcd needs por
-	#warning "This was done because of inverter, but please change back once hardware is changed"
-	gpio_write(IOX_LCD_nRST, !state);
-}
 
-void mk_ili9225_set_rs(bool state)
-{
-	gpio_write(GPIO_SPI0_MISO, state);
-}
-bool iscs = false;
-void mk_ili9225_set_cs(bool state)
-{
-	// this was done due to slowness of iox write
-	if (!iscs) {
-		gpio_write(IOX_LCD_nCS, 0);
-		iscs = true;
-	}
-}
-
-void mk_ili9225_set_led(bool state)
-{
-	gpio_write(GPIO_LCD_LED, state);
-}
-
-void mk_ili9225_spi_write16(const uint16_t *halfwords, size_t len)
-{
-	spi_write16_blocking(LCD_SPI, halfwords, len);
-}
-
-void mk_ili9225_delay_ms(unsigned ms)
-{
-	sleep_ms(ms);
-}
-#endif
-
+// MARK: Shift GBC Color
 uint16_t shift_components(uint16_t pixel) {
     // Green component: Extract (bits 5–10) -> 6 bits
     uint16_t green_mask = 0b0000011111100000; // Green mask (6 bits)
@@ -386,328 +382,16 @@ uint16_t shift_components(uint16_t pixel) {
     return pixel;
 }
 
-#if ENABLE_LCD 
-void core1_lcd_draw_line(const uint_fast8_t line)
-{
-	static uint16_t fb[LCD_WIDTH];
-
-#if PEANUT_FULL_GBC_SUPPORT
- 	if (gbc->cgb.cgbMode) {
-		// user has not assigned palette.
-		if (manual_palette_selected == -1) {
-			for(unsigned int x = 0; x < LCD_WIDTH; x++){
-				fb[x] = shift_components(gbc->cgb.fixPalette[pixels_buffer[x]]);
-			}
-		} else {
-			for(unsigned int x = 0; x < LCD_WIDTH; x++){
-				fb[x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
-						[pixels_buffer[x] & 3];
-			}
-		}
- 	}
- 	else {
-#endif
- 		for(unsigned int x = 0; x < LCD_WIDTH; x++){
-			fb[x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
-					[pixels_buffer[x] & 3];
-		}
-#if PEANUT_FULL_GBC_SUPPORT
-	}
-#endif	
-
-	// // Calculate the start line for the rotated display
-    uint_fast8_t rotated_line = LCD_HEIGHT - line - 1;
-
-#if USE_IPS_LCD
-	#warning "ips: send out pixels"
-#else
-	// mk_ili9225_set_x(rotated_line + 16);
-	// // mk_ili9225_set_x(line + 16);
-
-	// mk_ili9225_write_pixels(fb, LCD_WIDTH);
-#endif
-	__atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
+// MARK: RGB TO BGR
+uint16_t make_pixel_bgr(uint8_t r, uint8_t g, uint8_t b) {
+    return ((b & 0x1F) << 11) | ((g & 0x3F) << 5) | (r & 0x1F);
 }
+static inline uint16_t rgb565_to_bgr565(uint16_t rgb) {
+    // Extract R, G, B from RGB565
+    uint8_t r = rgb & 0x1F;           // bits 0–4
+    uint8_t g = (rgb >> 5) & 0x3F;    // bits 5–10
+    uint8_t b = (rgb >> 11) & 0x1F;   // bits 11–15
 
-// MARK: - SCALED DISPLAY LOGIC
-/*
-#if ENABLE_LCD 
-void core1_lcd_draw_line(const uint_fast8_t line)
-{
-	// scaling pixels 2x horizontally
-	static uint16_t scaled_pixels[LCD_WIDTH*DISPLAY_SCALE];
-
-	// function to scale each pixel horizontally
-	void scale_pixels(const uint8_t x, const uint16_t pixel) {
-		const uint16_t starting_point = x * DISPLAY_SCALE;
-		for (int j = 0; j < DISPLAY_SCALE; j++) {
-			scaled_pixels[starting_point + j] = pixel;
-		}
-	}
-
-	// Selecting color pallete based on GBC (full) or GB (limited) and calling `scale_pixels`
-#if PEANUT_FULL_GBC_SUPPORT
-	if (gbc->cgb.cgbMode) {
-		for(uint8_t x = 0; x < LCD_WIDTH; x++) {
-			// if we allow full gbc support and the game being played used cgbMode we fix the pallete with 64 colors.
-			uint16_t pixel = gbc->cgb.fixPalette[pixels_buffer[x]];
-			
-			scale_pixels(x, pixel);
-		}
-	} 
-	else {
-#endif
-		for(uint8_t x = 0; x < LCD_WIDTH; x++) {
-			// if we are not using the full gbc support, ignore all the previous logic and just use limited pallete.
-			// other case could be that we are supporting full gbc but the current game does not.
-			uint16_t pixel = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
-				[pixels_buffer[x] & 3];
-			
-			scale_pixels(x, pixel);
-		}
-#if PEANUT_FULL_GBC_SUPPORT
-	}
-#endif	
-
-	// here we are writing the same line 2x vertically.
-	for (uint8_t x = 0; x < DISPLAY_SCALE; x++) {
-		// Calculate the start line for the rotated and scaled display
-		uint16_t newLine = ((LCD_HEIGHT - line - 1) * DISPLAY_SCALE) + x;
-
-		// setting x starting point for write line
-		mk_ili9225_set_x(newLine + 16);
-
-		// writing scaled_pixels to display
-		mk_ili9225_write_pixels(scaled_pixels, LCD_WIDTH*DISPLAY_SCALE);
-	}
-
-	// letting cpu core know that lcd line is not busy and can process the next
-	__atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
+    // Re-pack into BGR565 format
+    return (r << 11) | (g << 5) | b;
 }
-*/
-_Noreturn
-void main_core1(void)
-{
-	union core_cmd cmd;
-
-#if USE_IPS_LCD
-	#warning "ips: add ips init"
-#else
-	/* Initialise and control LCD on core 1. */
-	// mk_ili9225_init();
-
-	// /* Clear LCD screen. */
-	// mk_ili9225_fill(0x0000);
-
-	// /* Set LCD window to DMG size. */
-	// mk_ili9225_fill_rect(31,16,LCD_WIDTH,LCD_HEIGHT,0x0000);
-#endif
-	// Sleep used for debugging LCD window.
-	//sleep_ms(1000);
-
-	/* Handle commands coming from core0. */
-	while(1)
-	{
-		cmd.full = multicore_fifo_pop_blocking();
-		switch(cmd.cmd)
-		{
-		case CORE_CMD_LCD_LINE:
-			core1_lcd_draw_line(cmd.data);
-			break;
-
-		case CORE_CMD_IDLE_SET:
-#if USE_IPS_LCD
-			#warning "ips: idle the lcd, idk. tbh"
-#else
-			// mk_ili9225_display_control(true, cmd.data);
-#endif
-			break;
-
-		case CORE_CMD_NOP:
-		default:
-			break;
-		}
-	}
-
-	HEDLEY_UNREACHABLE();
-}
-#endif
-
-#if ENABLE_LCD
-void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
-		   const uint_fast8_t line)
-{
-    union core_cmd cmd;
-
-	/* Wait until previous line is sent. */
-	while(__atomic_load_n(&lcd_line_busy, __ATOMIC_SEQ_CST))
-		tight_loop_contents();
-
-    // Reverse the order of pixel data
-    uint8_t reversed_pixels[LCD_WIDTH];
-    for (unsigned int i = 0; i < LCD_WIDTH; ++i)
-    {
-        reversed_pixels[i] = pixels[LCD_WIDTH - 1 - i];
-    }
-
-	memcpy(pixels_buffer, reversed_pixels, LCD_WIDTH);
-
-	gbc = gb;
-	// memcpy(pixels_buffer, pixels, LCD_WIDTH);
-
-    /* Populate command. */
-    cmd.cmd = CORE_CMD_LCD_LINE;
-    cmd.data = line;
-
-    __atomic_store_n(&lcd_line_busy, 1, __ATOMIC_SEQ_CST);
-    multicore_fifo_push_blocking(cmd.full);
-}
-#endif
-
-
-
-#if ENABLE_LCD
-#define IPS_LCD_WIDTH  320
-#define IPS_LCD_HEIGHT 320
-#define IMAGE_HEIGHT 288
-#define IMAGE_WIDTH 320
-#define DOTCLOCK_FREQ 15000000 // 15 MHz typical
-
-static void lcd_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);
-static void lv_port_disp_init(void);
-
-void lv_port_disp_init(void) {
-    static lv_disp_draw_buf_t draw_buf;
-    static lv_color_t buf1[IPS_LCD_WIDTH * 10]; // 10 lines buffer
-    static lv_color_t buf2[IPS_LCD_WIDTH * 10];
-
-    lv_disp_draw_buf_init(&draw_buf, buf1, buf2, IPS_LCD_WIDTH * 10);
-
-    static lv_disp_drv_t disp_drv;
-    lv_disp_drv_init(&disp_drv);
-    
-    disp_drv.hor_res = IPS_LCD_WIDTH;
-    disp_drv.ver_res = IPS_LCD_HEIGHT;
-    disp_drv.flush_cb = lcd_flush_cb;
-    disp_drv.draw_buf = &draw_buf;
-
-    lv_disp_drv_register(&disp_drv);
-}
-
-static void lcd_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) {
-    // for (int y = area->y1; y <= area->y2; y++) {
-    //     gpio_write(GPIO_DPI_HSYNC, 0); // Start of line
-    //     for (int x = area->x1; x <= area->x2; x++) {
-    //         // Extract RGB values from the LVGL color buffer
-    //         drive_rgb_pins(color_p->full);
-
-    //         // Toggle pixel clock
-    //         gpio_write(GPIO_DPI_PCLK, 1);
-    //         gpio_write(GPIO_DPI_PCLK, 0);
-
-    //         color_p++;
-    //     }
-    //     gpio_write(GPIO_DPI_HSYNC, 1); // End of line
-    // }
-
-    // gpio_write(GPIO_DPI_VSYNC, 1); // Frame ready
-    // gpio_write(GPIO_DPI_DEN, 1);   // Data enable
-
-    // lv_disp_flush_ready(drv); // Notify LVGL that flush is complete
-}
-
-#warning "Implement this function in when we are reading for the ips lcd"
-/*
-static void dpi_draw_line(const uint_fast8_t line) {
-	static uint16_t fb[LCD_WIDTH];
-
-#if PEANUT_FULL_GBC_SUPPORT
- 	if (gbc->cgb.cgbMode) {
- 		for(unsigned int x = 0; x < LCD_WIDTH; x++){
-			fb[x] = gbc->cgb.fixPalette[pixels_buffer[x]];
-		}
- 	}
- 	else {
-#endif
- 		for(unsigned int x = 0; x < LCD_WIDTH; x++){
-			fb[x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
-					[pixels_buffer[x] & 3];
-		}
-#if PEANUT_FULL_GBC_SUPPORT
-	}
-#endif	
-
-    // Copy pixel data into the framebuffer, centered vertically
-    size_t vertical_offset = (IPS_LCD_HEIGHT - IMAGE_HEIGHT) / 2;
-    // Calculate the actual line position for centering
-    uint_fast8_t centered_line = vertical_offset + line;
-
-	// Start the display at the offset if this is the first line == 0
-	if (line == 0) {
-		dpi_set_y(centered_line);
-	} 
-	if (line == LCD_HEIGHT) {
-		new_frame();
-	}
-
-	// Scaling 2x vertically
-	// Line outputted once with the 2x horizontal, then again on a new line for 2x vertical.
-	for (int h = 0; h < DISPLAY_SCALE; h++) {
-		// Output the line to the display
-		for (int i = 0; i < LCD_WIDTH; i++) {
-			// Scaling 2x horizontally
-			for (int j = 0; j < DISPLAY_SCALE; j++) {
-				drive_rgb_pins(fb[i]);
-
-				// Simulate pixel clock pulse
-				gpio_put(GPIO_DPI_PCLK, 1);
-				gpio_put(GPIO_DPI_PCLK, 0);
-			}
-		}
-		new_line();
-	}
-
-
-	__atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
-}
-*/
-// int main() {
-//     stdio_init_all();
-//     init_dpi_pins();
-//     dpi_set_pixel_clock(DOTCLOCK_FREQ);
-
-//     lv_init();
-//     lv_port_disp_init();
-
-//     while (1) {
-//         lv_task_handler();
-//         sleep_ms(5);
-//     }
-// }
-
-#endif
-
-
-
-//TMDS
-// Define the bit mapping for the TMDS lanes
-// static const int lane_to_output_bit[3] = {4, 6, 0}; // Mapping D0, D1, D2
-
-// // Assign clock pair (CLK) to GPIO 14 & 15
-// hstx_ctrl_hw->bit[2] = HSTX_CTRL_BIT0_CLK_BITS;           // CLK+
-// hstx_ctrl_hw->bit[3] = HSTX_CTRL_BIT0_CLK_BITS | HSTX_CTRL_BIT0_INV_BITS; // CLK-
-
-// // Assign TMDS lanes to GPIO pins
-// for (uint lane = 0; lane < 3; ++lane) {
-//     int bit = lane_to_output_bit[lane];
-//     uint32_t lane_data_sel_bits =
-//         (lane * 10    ) << HSTX_CTRL_BIT0_SEL_P_LSB |
-//         (lane * 10 + 1) << HSTX_CTRL_BIT0_SEL_N_LSB;
-//     hstx_ctrl_hw->bit[bit    ] = lane_data_sel_bits; // Assign data to lane
-//     hstx_ctrl_hw->bit[bit + 1] = lane_data_sel_bits | HSTX_CTRL_BIT0_INV_BITS; // Inverted data
-// }
-
-// // Set the function of GPIO pins to HSTX for DVI output
-// for (int i = 12; i <= 19; ++i) {
-//     gpio_set_function(i, GPIO_FUNC_HSTX); // Set GPIO function to HSTX
-// }

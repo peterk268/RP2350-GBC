@@ -353,7 +353,9 @@ while(true)
 			if(!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
 				/* select + A: enable/disable frame-skip => fast-forward */
 				gb.direct.frame_skip=!gb.direct.frame_skip;
+				#if ENABLE_SOUND
 				i2s_set_sample_freq(&i2s_config, 44100, gb.direct.frame_skip);
+				#endif
 				printf("I gb.direct.frame_skip = %d\n",gb.direct.frame_skip);
 			}
 			if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {

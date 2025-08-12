@@ -33,6 +33,7 @@ static struct mutex frame_logic_mutex;
 static void frame_update_logic();
 static void scanline_update_logic();
 static void render_scanline(struct scanvideo_scanline_buffer *dest, int core, const uint16_t *fb);
+uint16_t shift_components(uint16_t pixel);
 
 // MARK: - RENDER LOOP
 // "Worker thread" for each core
@@ -41,12 +42,56 @@ void render_loop() {
     int core_num = get_core_num();
     printf("Rendering on core %d\n", core_num);
     while (true) {
+        // Command processing from core 0
+        union core_cmd cmd;
+		cmd.full = multicore_fifo_pop_blocking();
+
+        static uint16_t fb[LCD_WIDTH];
+
+		switch(cmd.cmd) {
+		case CORE_CMD_LCD_LINE:
+#if PEANUT_FULL_GBC_SUPPORT
+            if (gbc->cgb.cgbMode) {
+                // user has not assigned palette.
+                if (manual_palette_selected == -1) {
+                    for(unsigned int x = 0; x < LCD_WIDTH; x++){
+                        fb[x] = shift_components(gbc->cgb.fixPalette[pixels_buffer[x]]);
+                    }
+                } else {
+                    for(unsigned int x = 0; x < LCD_WIDTH; x++){
+                        fb[x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
+                                [pixels_buffer[x] & 3];
+                    }
+                }
+            }
+            else {
+#endif
+                for(unsigned int x = 0; x < LCD_WIDTH; x++){
+                    fb[x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
+                            [pixels_buffer[x] & 3];
+                }
+#if PEANUT_FULL_GBC_SUPPORT
+            }
+#endif	
+
+			break;
+		case CORE_CMD_IDLE_SET:
+            printf("Idle mode set to %d on core %d\n", cmd.data, core_num);
+			continue;
+		case CORE_CMD_NOP:
+            printf("No operation on core %d\n", core_num);
+            continue;
+		default:
+			continue;
+		}
+
+        // Scanline generation
+        printf("Rendering scanline %d on core %d\n", cmd.data, core_num);
         struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
+        printf("STARTING\n");
         mutex_enter_blocking(&frame_logic_mutex);
         uint32_t frame_num = scanvideo_frame_number(scanline_buffer->scanline_id);
-        // Note that with multiple cores we may have got here not for the first
-        // scanline, however one of the cores will do this logic first before either
-        // does the actual generation
+        // Frame and scanline update logic within mutex
         if (frame_num != last_frame_num) {
             last_frame_num = frame_num;
             frame_update_logic();
@@ -54,17 +99,21 @@ void render_loop() {
         scanline_update_logic();
         mutex_exit(&frame_logic_mutex);
 
-        render_scanline(scanline_buffer, core_num, NULL);
+        render_scanline(scanline_buffer, core_num, fb);
 
         // Release the rendered buffer into the wild
         scanvideo_end_scanline_generation(scanline_buffer);
+
+        // lcd line no longer busy
+        __atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
     }
 }
 
 struct semaphore video_setup_complete;
 
-// MARK: - VGA MAIN
-int vga_main(void) {
+// MARK: - MAIN CORE1 LOOP
+_Noreturn
+void main_core1(void) {
     mutex_init(&frame_logic_mutex);
     sem_init(&video_setup_complete, 0, 1);
 
@@ -73,7 +122,8 @@ int vga_main(void) {
 
     sem_release(&video_setup_complete);
     render_loop();
-    return 0;
+    
+    HEDLEY_UNREACHABLE();
 }
 
 // MARK: FRAME LOGIC
@@ -83,7 +133,6 @@ void frame_update_logic() {
 
 // MARK: SCANLINE LOGIC
 void scanline_update_logic() {
-    // here is where i'll wait for the scanline to be ready and process the data.
 }
 
 #define MIN_COLOR_RUN 3
@@ -132,85 +181,17 @@ static inline void raw_scanline_finish(struct scanvideo_scanline_buffer *dest) {
 
 // MARK: RENDER SCANLINE
 void render_scanline(struct scanvideo_scanline_buffer *dest, int core, const uint16_t *fb) {
-    // Prepare the scanline for raw pixels
-    uint16_t *colour_buf = raw_scanline_prepare(dest, VGA_MODE.width);
+    uint16_t *colour_buf = raw_scanline_prepare(dest, VGA_MODE.width); // VGA_MODE.width = 320
 
-    // Copy the line to the scanline buffer
-    memcpy(colour_buf, fb, LCD_WIDTH * sizeof(uint16_t));
+    for (int x = 0; x < LCD_WIDTH; x++) {  // LCD_WIDTH = 160
+        uint16_t px = fb[x];
+        colour_buf[2*x]     = px;  // left pixel
+        colour_buf[2*x + 1] = px;  // right pixel (duplicate)
+    }
 
-    // Finish the scanline
     raw_scanline_finish(dest);
-
     dest->status = SCANLINE_OK;
 }
-
-#if ENABLE_LCD 
-uint16_t shift_components(uint16_t pixel);
-// MARK: CORE1 LCD DRAW LINE
-void core1_lcd_draw_line(const uint_fast8_t line)
-{
-	static uint16_t fb[LCD_WIDTH];
-
-#if PEANUT_FULL_GBC_SUPPORT
- 	if (gbc->cgb.cgbMode) {
-		// user has not assigned palette.
-		if (manual_palette_selected == -1) {
-			for(unsigned int x = 0; x < LCD_WIDTH; x++){
-				fb[x] = shift_components(gbc->cgb.fixPalette[pixels_buffer[x]]);
-			}
-		} else {
-			for(unsigned int x = 0; x < LCD_WIDTH; x++){
-				fb[x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
-						[pixels_buffer[x] & 3];
-			}
-		}
- 	}
- 	else {
-#endif
- 		for(unsigned int x = 0; x < LCD_WIDTH; x++){
-			fb[x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
-					[pixels_buffer[x] & 3];
-		}
-#if PEANUT_FULL_GBC_SUPPORT
-	}
-#endif	
-
-	// // Calculate the start line for the rotated display
-    uint_fast8_t rotated_line = LCD_HEIGHT - line - 1;
-
-	#warning "ips: send out pixels"
-
-	__atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
-}
-
-// MARK: CORE1 MAIN LOOP
-_Noreturn
-void main_core1(void)
-{
-	union core_cmd cmd;
-
-	/* Handle commands coming from core0. */
-	while(1)
-	{
-		cmd.full = multicore_fifo_pop_blocking();
-		switch(cmd.cmd)
-		{
-		case CORE_CMD_LCD_LINE:
-			core1_lcd_draw_line(cmd.data);
-			break;
-
-		case CORE_CMD_IDLE_SET:
-			break;
-
-		case CORE_CMD_NOP:
-		default:
-			break;
-		}
-	}
-
-	HEDLEY_UNREACHABLE();
-}
-#endif
 
 #if ENABLE_LCD
 // MARK: CORE0 LCD RETRIEVE LINE

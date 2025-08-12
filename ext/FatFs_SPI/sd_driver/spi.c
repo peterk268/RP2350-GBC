@@ -22,7 +22,7 @@ specific language governing permissions and limitations under the License.
 //
 #include "spi.h"
 
-static bool irqChannel1 = false;
+static bool irqChannel1 = true;
 static bool irqShared = true;
 
 void spi_irq_handler(spi_t *pSPI) {

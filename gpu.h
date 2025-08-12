@@ -121,6 +121,10 @@ void main_core1(void) {
     scanvideo_timing_enable(true);
 
     sem_release(&video_setup_complete);
+
+    #warning "We'll take this out at some point"
+    gpio_write(GPIO_DPI_DEN, 1);
+    
     render_loop();
     
     HEDLEY_UNREACHABLE();

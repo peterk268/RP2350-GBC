@@ -57,15 +57,6 @@ int main(void)
 	enum gb_init_error_e ret;
 	
 	// MARK: - Overclock
-	// vreg_disable_voltage_limit();
-    // const unsigned vco = 1596*1000*1000;	/* 266MHz */
-    // const unsigned div1 = 6, div2 = 1;
-
-    // vreg_set_voltage(VREG_VOLTAGE_1_15);
-    // sleep_ms(2);
-    // set_sys_clock_pll(vco, div1, div2);
-    // sleep_ms(2);
-
     const unsigned vco = 1500 * 1000 * 1000;  // VCO frequency: 1500 MHz
     const unsigned div1 = 5;  // Post-divider 1
     const unsigned div2 = 1;  // Post-divider 2
@@ -220,7 +211,6 @@ while(true)
 
 	/* Start Core1, which processes requests to the LCD. */
 	putstdio("CORE1 ");
-	gpio_write(GPIO_DPI_DEN, 1);
 	multicore_launch_core1(main_core1);
 	
 	putstdio("LCD ");

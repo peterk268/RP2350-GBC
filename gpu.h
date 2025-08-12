@@ -1,15 +1,16 @@
+// MARK: DPI TIMINGS
 const scanvideo_timing_t tft_timing_320x320_60 = {
     //pclk multiple of 2 in reference to system clock 150mhz
     .clock_freq      = 18.75 * 1000 * 1000,   // ↓ now 12 MHz (within your panel’s 20 MHz max)
     .h_active        = 320,
-    .v_active        = 320,
+    .v_active        = 288,
     .h_front_porch   =   4,
     .h_pulse         =    500,
     .h_total         = 320 + 4 + 500 + 4,  // back porch = 20
     .h_sync_polarity =    0,
     .v_front_porch   =    2,
     .v_pulse         =    1,
-    .v_total         = 320 + 2 + 1 + 2,    // back porch = 8
+    .v_total         = 288 + 2 + 1 + 2,    // back porch = 8
     .v_sync_polarity =    0,
     .enable_clock    =    1,
     .clock_polarity  =    0,
@@ -21,7 +22,7 @@ const scanvideo_mode_t tft_mode_320x320_60 = {
     .default_timing     = &tft_timing_320x320_60,
     .pio_program        = &video_24mhz_composable, 
     .width              = 320,
-    .height             = 320,
+    .height             = 288,
     .xscale             = 1,
     .yscale             = 1,
     .yscale_denominator = 1
@@ -29,7 +30,6 @@ const scanvideo_mode_t tft_mode_320x320_60 = {
 #define VGA_MODE tft_mode_320x320_60
 
 static struct mutex frame_logic_mutex;
-
 static void frame_update_logic();
 static void scanline_update_logic();
 static void render_scanline(struct scanvideo_scanline_buffer *dest, int core, const uint16_t *fb);
@@ -84,26 +84,23 @@ void render_loop() {
 		default:
 			continue;
 		}
+        for (int x = 0; x < DISPLAY_SCALE; x++) {
+            struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
+            mutex_enter_blocking(&frame_logic_mutex);
+            uint32_t frame_num = scanvideo_frame_number(scanline_buffer->scanline_id);
+            // Frame and scanline update logic within mutex
+            if (frame_num != last_frame_num) {
+                last_frame_num = frame_num;
+                frame_update_logic();
+            }
+            scanline_update_logic();
+            mutex_exit(&frame_logic_mutex);
 
-        // Scanline generation
-        printf("Rendering scanline %d on core %d\n", cmd.data, core_num);
-        struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
-        printf("STARTING\n");
-        mutex_enter_blocking(&frame_logic_mutex);
-        uint32_t frame_num = scanvideo_frame_number(scanline_buffer->scanline_id);
-        // Frame and scanline update logic within mutex
-        if (frame_num != last_frame_num) {
-            last_frame_num = frame_num;
-            frame_update_logic();
+            render_scanline(scanline_buffer, core_num, fb);
+
+            // Release the rendered buffer into the wild
+            scanvideo_end_scanline_generation(scanline_buffer);
         }
-        scanline_update_logic();
-        mutex_exit(&frame_logic_mutex);
-
-        render_scanline(scanline_buffer, core_num, fb);
-
-        // Release the rendered buffer into the wild
-        scanvideo_end_scanline_generation(scanline_buffer);
-
         // lcd line no longer busy
         __atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
     }
@@ -208,17 +205,8 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
 	while(__atomic_load_n(&lcd_line_busy, __ATOMIC_SEQ_CST))
 		tight_loop_contents();
 
-    // Reverse the order of pixel data
-    uint8_t reversed_pixels[LCD_WIDTH];
-    for (unsigned int i = 0; i < LCD_WIDTH; ++i)
-    {
-        reversed_pixels[i] = pixels[LCD_WIDTH - 1 - i];
-    }
-
-	memcpy(pixels_buffer, reversed_pixels, LCD_WIDTH);
-
 	gbc = gb;
-	// memcpy(pixels_buffer, pixels, LCD_WIDTH);
+	memcpy(pixels_buffer, pixels, LCD_WIDTH);
 
     /* Populate command. */
     cmd.cmd = CORE_CMD_LCD_LINE;

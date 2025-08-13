@@ -13,12 +13,16 @@ typedef struct i2s_config
     uint16_t channel_count; 
     uint8_t  data_pin;
     uint8_t  clock_pin_base;
+    uint mclk_pin;
     PIO	     pio;
     uint8_t  sm; 
+    uint8_t  sm_mclk;          // added: MCLK SM
     uint8_t  dma_channel;
     uint16_t dma_trans_count;
     uint16_t *dma_buf;
     float volume;
+    bool     mclk_enabled;     // added: enable/disable MCLK generation
+    uint32_t mclk_mult;        // added: MCLK multiplier (e.g. 256)
 } i2s_config_t;
 
 

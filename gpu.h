@@ -1,3 +1,4 @@
+#if ENABLE_LCD
 // MARK: DPI TIMINGS
 const scanvideo_timing_t tft_timing_320x320_60 = {
     //pclk multiple of 2 in reference to system clock 150mhz
@@ -373,3 +374,4 @@ static inline uint16_t rgb565_to_bgr565(uint16_t rgb) {
     // Re-pack into BGR565 format
     return (r << 11) | (g << 5) | b;
 }
+#endif // ENABLE_LCD

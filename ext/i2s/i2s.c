@@ -19,12 +19,16 @@ i2s_config_t i2s_get_default_config(void) {
 		.channel_count = 2,
 		.data_pin = GPIO_I2S_DIN, 
 		.clock_pin_base = GPIO_I2S_BCLK,
+        .mclk_pin = GPIO_I2S_MCLK,
 		.pio = I2S_PIO,
 		.sm = 0,
+        .sm_mclk = 1,
         .dma_channel = 0,
         .dma_buf = NULL,
         .dma_trans_count = 0,
         .volume = 0,
+        .mclk_enabled = true, // MCLK generation is enabled by default
+        .mclk_mult = 256 // Default MCLK multiplier
 	};
 
     return i2s_config;
@@ -41,6 +45,19 @@ void i2s_init(i2s_config_t *i2s_config) {
     gpio_set_function(i2s_config->clock_pin_base+1, I2S_PIO_GPIO);
     
     i2s_config->sm = pio_claim_unused_sm(i2s_config->pio, true);
+
+    if(i2s_config->mclk_enabled) {
+        gpio_set_function(i2s_config->mclk_pin, I2S_PIO_GPIO);
+        i2s_config->sm_mclk = pio_claim_unused_sm(i2s_config->pio, true);
+        uint offset_mclk = pio_add_program(i2s_config->pio, &pio_i2s_mclk_program);
+        pio_i2s_MCLK_program_init(i2s_config->pio, i2s_config->sm_mclk, offset_mclk, i2s_config->mclk_pin);
+
+        int mClk = i2s_config->mclk_mult * i2s_config->sample_freq * 2 /* edges per clock */;
+        pio_sm_set_clkdiv_int_frac(i2s_config->pio, i2s_config->sm_mclk, clock_get_hz(clk_sys) / mClk, 0);
+
+        pio_sm_set_enabled(i2s_config->pio, i2s_config->sm_mclk, true);
+    }
+
     
     uint offset = pio_add_program(i2s_config->pio, &audio_i2s_program);
 
@@ -140,6 +157,11 @@ void i2s_set_sample_freq(i2s_config_t *i2s_config, uint32_t sample_freq, bool fr
     uint32_t system_clock_frequency = clock_get_hz(clk_sys);
     uint32_t divider = system_clock_frequency * 4 / sample_freq;
     pio_sm_set_clkdiv_int_frac(i2s_config->pio, i2s_config->sm, divider >> 8u, divider & 0xffu);
+
+    if (i2s_config->mclk_enabled) {
+        int mClk = i2s_config->mclk_mult * sample_freq * 2 /* edges per clock */;
+        pio_sm_set_clkdiv_int_frac(i2s_config->pio, i2s_config->sm_mclk, clock_get_hz(clk_sys) / mClk, 0);
+    }
 
     i2s_config->sample_freq = sample_freq;
 }

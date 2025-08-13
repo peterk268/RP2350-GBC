@@ -75,6 +75,7 @@ int main(void)
     set_up_select();
     setup_hold_power();
 
+	sleep_ms(3000);
 	// MARK: - I2C INIT
 	init_i2c();
 
@@ -127,6 +128,9 @@ int main(void)
 	#if ENABLE_SDCARD || ENABLE_SOUND
 	write_iox_port1(NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, 1, 0, NO_UPDATE);
 	sleep_ms(2000);
+	gpio_write(IOX_AUDIO_EN, 0);
+	sleep_ms(1);
+	gpio_write(IOX_AUDIO_EN, 1);
 	#endif
 
 	// SD WILL HANDLE SPI INIT
@@ -206,7 +210,7 @@ while(true)
 	/* Start Core1, which processes requests to the LCD. */
 	putstdio("CORE1 ");
 	multicore_launch_core1(main_core1);
-	
+
 	putstdio("LCD ");
 #endif
 

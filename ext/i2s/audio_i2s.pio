@@ -4,6 +4,16 @@
 ; SPDX-License-Identifier: BSD-3-Clause
 ;
 
+.program pio_i2s_mclk
+; PIO SM clock is MCLK x 2
+; MCLK/BCLK sync is maintained by ensuring IN/OUT PIO SM clock dividers 
+; are x128, 384, 256, 512 or 768 multiples of MCLK SM divider as required.
+
+loop_mclk:
+	set pins, 1 ; toggle mclk
+	set pins, 0 
+	; Loop back to beginning...
+
 ; Transmit a mono or stereo I2S audio stream as stereo
 ; This is 16 bits per sample; can be altered by modifying the "set" params,
 ; or made programmable by replacing "set x" with "mov x, y" and using Y as a config register.
@@ -59,5 +69,14 @@ static inline void audio_i2s_program_init(PIO pio, uint sm, uint offset, uint da
 
     pio_sm_exec(pio, sm, pio_encode_jmp(offset + audio_i2s_offset_entry_point));
 }
+
+static inline void pio_i2s_MCLK_program_init(PIO pio, uint sm, uint offset, uint MCLK_pin) {
+    pio_gpio_init(pio, MCLK_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, MCLK_pin, 1, true);
+    pio_sm_config sm_config = pio_i2s_mclk_program_get_default_config(offset);
+    sm_config_set_set_pins(&sm_config, MCLK_pin, 1);
+    pio_sm_init(pio, sm, offset, &sm_config);
+}
+
 
 %}

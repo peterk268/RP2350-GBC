@@ -1,3 +1,5 @@
+#define DAC_I2C_ADDR 0b0011000
+
 void read_volume(i2s_config_t *i2s_config) {
     // ADC reference voltage (assumed 3.3V)
     const float adc_ref_voltage = 3.3f;

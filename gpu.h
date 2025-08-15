@@ -2,19 +2,19 @@
 // MARK: DPI TIMINGS
 const scanvideo_timing_t tft_timing_320x320_60 = {
     //pclk multiple of 2 in reference to system clock 150mhz
-    .clock_freq      = 15 * 1000 * 1000,   // ↓ now 12 MHz (within your panel’s 20 MHz max)
+    .clock_freq      = 10 * 1000 * 1000,   // ↓ now 12 MHz (within your panel’s 20 MHz max)
     .h_active        = 320,
     .v_active        = 288,
-    .h_front_porch   =   4,
-    .h_pulse         =    130,
-    .h_total         = 320 + 4 + 130 + 4,  // back porch = 20
-    .h_sync_polarity =    0,
-    .v_front_porch   =    4,
-    .v_pulse         =    8,
-    .v_total         = 288 + 4 + 8 + 4,    // back porch = 8
-    .v_sync_polarity =    0,
+    .h_front_porch   =   10,
+    .h_pulse         =    10,
+    .h_total         = 320 + 10 + 10 + 10,  // back porch = 20
+    .h_sync_polarity =    1,
+    .v_front_porch   =    10,
+    .v_pulse         =    10,
+    .v_total         = 288 + 10 + 10 + 10,    // back porch = 8
+    .v_sync_polarity =    1,
     .enable_clock    =    1,
-    .clock_polarity  =    0,
+    .clock_polarity  =    1,
     .enable_den      =    1
 };
 
@@ -23,7 +23,7 @@ const scanvideo_mode_t tft_mode_320x320_60 = {
     .default_timing     = &tft_timing_320x320_60,
     .pio_program        = &video_24mhz_composable, 
     .width              = 320,
-    .height             = 288,
+    .height             = 320,
     .xscale             = 1,
     .yscale             = 1,
     .yscale_denominator = 1
@@ -87,15 +87,15 @@ void render_loop() {
 		}
         for (int x = 0; x < DISPLAY_SCALE; x++) {
             struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
-            mutex_enter_blocking(&frame_logic_mutex);
+            // mutex_enter_blocking(&frame_logic_mutex);
             uint32_t frame_num = scanvideo_frame_number(scanline_buffer->scanline_id);
             // Frame and scanline update logic within mutex
-            if (frame_num != last_frame_num) {
-                last_frame_num = frame_num;
-                frame_update_logic();
-            }
-            scanline_update_logic();
-            mutex_exit(&frame_logic_mutex);
+            // if (frame_num != last_frame_num) {
+            //     last_frame_num = frame_num;
+            //     frame_update_logic();
+            // }
+            // scanline_update_logic();
+            // mutex_exit(&frame_logic_mutex);
 
             render_scanline(scanline_buffer, core_num, fb);
 
@@ -114,9 +114,10 @@ _Noreturn
 void main_core1(void) {
     sem_acquire_blocking(&video_setup_complete);
 
+    #if !PICO_SCANVIDEO_ENABLE_DEN_PIN
     #warning "We'll take this out at some point"
     gpio_write(GPIO_DPI_DEN, 1);
-    
+    #endif
     render_loop();
     
     HEDLEY_UNREACHABLE();
@@ -244,10 +245,12 @@ void init_spi_lcd() {
 #define RST_ON 0
 #define RST_OFF 1
 void lcd_power_on_reset() {
+    #if !PICO_SCANVIDEO_ENABLE_DEN_PIN
     gpio_set_function(GPIO_DPI_DEN, GPIO_FUNC_SIO);
 	gpio_set_dir(GPIO_DPI_DEN, true);
     gpio_pull_up(GPIO_DPI_DEN);
     gpio_write(GPIO_DPI_DEN, 0);
+    #endif
 
     gpio_write(IOX_LCD_nRST, RST_ON);
     gpio_write(IOX_LCD_nCS, 1);

@@ -39,7 +39,7 @@ int16_t get_average_current_mA() {
 }
 
 uint16_t get_bat_charge_percent() {
-    return 100 - read_register(0x1C);
+    return read_register(0x1C);
 }
 
 // bool is_charging() {

@@ -46,6 +46,8 @@ void i2s_init(i2s_config_t *i2s_config) {
     
     i2s_config->sm = pio_claim_unused_sm(i2s_config->pio, true);
 
+    uint32_t system_clock_frequency = clock_get_hz(clk_sys);
+
     if(i2s_config->mclk_enabled) {
         gpio_set_function(i2s_config->mclk_pin, I2S_PIO_GPIO);
         i2s_config->sm_mclk = pio_claim_unused_sm(i2s_config->pio, true);
@@ -53,7 +55,7 @@ void i2s_init(i2s_config_t *i2s_config) {
         pio_i2s_MCLK_program_init(i2s_config->pio, i2s_config->sm_mclk, offset_mclk, i2s_config->mclk_pin);
 
         int mClk = i2s_config->mclk_mult * i2s_config->sample_freq * 2 /* edges per clock */;
-        pio_sm_set_clkdiv_int_frac(i2s_config->pio, i2s_config->sm_mclk, clock_get_hz(clk_sys) / mClk, 0);
+        pio_sm_set_clkdiv_int_frac(i2s_config->pio, i2s_config->sm_mclk, system_clock_frequency / mClk, 0);
 
         pio_sm_set_enabled(i2s_config->pio, i2s_config->sm_mclk, true);
     }
@@ -64,7 +66,6 @@ void i2s_init(i2s_config_t *i2s_config) {
     audio_i2s_program_init(i2s_config->pio, i2s_config->sm , offset, i2s_config->data_pin , i2s_config->clock_pin_base);
     
     /* Set PIO clock */
-    uint32_t system_clock_frequency = clock_get_hz(clk_sys);
     uint32_t divider = system_clock_frequency * 4 / i2s_config->sample_freq; // avoid arithmetic overflow
     pio_sm_set_clkdiv_int_frac(i2s_config->pio, i2s_config->sm , divider >> 8u, divider & 0xffu);
 
@@ -111,30 +112,16 @@ void i2s_write(const i2s_config_t *i2s_config,const int16_t *samples,const size_
  * i2s_config: I2S context obtained by i2s_get_default_config()
  *     sample: pointer to an array of dma_trans_count x 32 bits samples
  */
-void i2s_dma_write(i2s_config_t *i2s_config,const int16_t *samples) {
-    /* Wait the completion of the previous DMA transfer */
+void i2s_dma_write(i2s_config_t *i2s_config, const uint16_t *samples) {
+    if (!i2s_config || !samples || !i2s_config->dma_buf) return;
+
+    // Wait for previous DMA transfer to finish
     dma_channel_wait_for_finish_blocking(i2s_config->dma_channel);
-    /* Copy samples into the DMA buffer */
-    uint8_t shift = 16 - ((uint8_t)roundf(i2s_config->volume * 16.0f));
-    // max volume 
-    if(i2s_config->volume>0.90) {
-        memcpy(i2s_config->dma_buf,samples,i2s_config->dma_trans_count*sizeof(int32_t));
-    } else {
-        for(uint16_t i=0;i<i2s_config->dma_trans_count*2;i++) {
-            // i2s_config->dma_buf[i] = samples[i] * i2s_config->volume;
-            // printf("\nshift: %d:, dma: %d, sample: %d", shift, i2s_config->dma_buf[i], samples[i]);
-            i2s_config->dma_buf[i] = (int16_t)roundf((float)samples[i] * i2s_config->volume);
-        }
-    }
-    
-    if (i2s_config->volume > 0.05) {
-        /* Initiate the DMA transfer */
-        dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
-                                            i2s_config->dma_buf,
-                                            i2s_config->dma_trans_count);
-    } else {
-        sleep_ms(3);
-    }
+
+    memcpy(i2s_config->dma_buf, samples, i2s_config->dma_trans_count * sizeof(uint32_t));
+    dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
+                                        i2s_config->dma_buf,
+                                        i2s_config->dma_trans_count);
 }
 
 

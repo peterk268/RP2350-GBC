@@ -75,7 +75,7 @@ int main(void)
     set_up_select();
     setup_hold_power();
 
-	sleep_ms(3000);
+	// sleep_ms(3000);
 	// MARK: - I2C INIT
 	init_i2c();
 
@@ -129,7 +129,7 @@ int main(void)
 	write_iox_port1(NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, 1, 0, NO_UPDATE);
 	sleep_ms(2000);
 	gpio_write(IOX_AUDIO_EN, 0);
-	sleep_ms(1);
+	sleep_ms(10);
 	gpio_write(IOX_AUDIO_EN, 1);
 	#endif
 
@@ -157,12 +157,18 @@ int main(void)
     assert(stream!=NULL);
     memset(stream,0,AUDIO_BUFFER_SIZE_BYTES);  // Zero out the stream buffer
 	
+	setup_dac();
+
 	// Initialize I2S sound driver
 	i2s_config = i2s_get_default_config();
 	i2s_config.sample_freq=AUDIO_SAMPLE_RATE;
 	i2s_config.dma_trans_count =AUDIO_SAMPLES;
 	i2s_volume(&i2s_config,0);
 	i2s_init(&i2s_config);
+
+	#warning "I should really have diagnostics for all my peripherals on start up"
+	// sleep_ms(10);
+	// check_dac();
 #endif
 
 // MARK: - Infinite Loop
@@ -218,7 +224,7 @@ while(true)
 #if ENABLE_SOUND
 	// Initialize audio emulation
 	audio_init();
-	
+
 	putstdio("AUDIO ");
 #endif
 

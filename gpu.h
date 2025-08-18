@@ -5,9 +5,9 @@ const scanvideo_timing_t tft_timing_320x320_60 = {
     .clock_freq      = 10 * 1000 * 1000,   // ↓ now 12 MHz (within your panel’s 20 MHz max)
     .h_active        = 320,
     .v_active        = 288,
-    .h_front_porch   =   10,
-    .h_pulse         =    10,
-    .h_total         = 320 + 10 + 10 + 10,  // back porch = 20
+    .h_front_porch   =   3,
+    .h_pulse         =    20,
+    .h_total         = 320 + 3 + 20 + 3,  // back porch = 20
     .h_sync_polarity =    1,
     .v_front_porch   =    10,
     .v_pulse         =    10,

@@ -8,9 +8,13 @@ void set_volume(uint8_t l_volume, uint8_t r_volume);
 void dac_i2c_write(uint8_t page, uint8_t reg, uint8_t data);
 void dac_i2c_read(uint8_t page, uint8_t reg, uint8_t *data, size_t length);
 
-#define ADC_MIN_CLIP   5     // below this → treat as 0
+#define ADC_MIN_CLIP   4     // below this → treat as 0
 #define ADC_MAX_CLIP   4050   // above this → treat as full scale
-#define DAC_MAX_VOL    80
+#define DAC_MAX_VOL    100 // 127 is max
+#define MUTE_THRESH     1
+#define UNMUTE_THRESH   12
+#define USE_LINEAR_VOLUME_SCALING 0
+#define RAMPED_AUDIO_EXPONENT 0.4f // if this is changed you need to change the unmute threshold.
 
 void detect_headphones() {
     uint8_t data;
@@ -25,17 +29,18 @@ void unmute_dac() {
 }
 
 void mute_drivers() {
-    dac_i2c_write(1, 0x28, 0x00); // HP_L Driver unmuted
-    dac_i2c_write(1, 0x29, 0x00); // HP_R Driver unmuted
-    dac_i2c_write(1, 0x2A, 0x00); // SP_L Driver unmuted with 18dB
-    dac_i2c_write(1, 0x2B, 0x00); // SP_R Driver unmuted with 18dB
+    dac_i2c_write(1, 0x28, 0x00); // HP_L Driver muted
+    dac_i2c_write(1, 0x29, 0x00); // HP_R Driver muted
+    dac_i2c_write(1, 0x2A, 0x00); // SP_L Driver muted
+    dac_i2c_write(1, 0x2B, 0x00); // SP_R Driver muted
 }
 
 void unmute_drivers() {
-    dac_i2c_write(1, 0x28, 0x06); // HP_L Driver unmuted
+    dac_i2c_write(1, 0x28, 0x06); // HP_L Driver unmuted.. no 3d effect because it sounds bad
     dac_i2c_write(1, 0x29, 0x06); // HP_R Driver unmuted
-    dac_i2c_write(1, 0x2A, 0x1C); // SP_L Driver unmuted with 18dB
-    dac_i2c_write(1, 0x2B, 0x1C); // SP_R Driver unmuted with 18dB
+    // bits 3-4 control gain. 00 = 6dB, 01 = 12dB, 10 = 18dB, 11 = 24dB
+    dac_i2c_write(1, 0x2A, 0b00000100); // SP_L Driver unmuted with 6dB
+    dac_i2c_write(1, 0x2B, 0b00000100); // SP_R Driver unmuted with 6dB
 }
 
 void power_on_drivers() {
@@ -61,23 +66,28 @@ void read_volume() {
     if (adc_val < ADC_MIN_CLIP) adc_val = 0;
     else if (adc_val > ADC_MAX_CLIP) adc_val = ADC_MAX_CLIP;
 
+#if USE_LINEAR_VOLUME_SCALING
     // Scale to 0–DAC_MAX_VOL
     uint8_t dac_vol = (uint8_t)((adc_val * DAC_MAX_VOL) / ADC_MAX_CLIP);
+#else
+    float pot_norm = (float)adc_val / ADC_MAX_CLIP;  // 0.0–1.0
+    float dac_f = powf(pot_norm, RAMPED_AUDIO_EXPONENT) * DAC_MAX_VOL;  // exponent < 1 stretches low end
+    uint8_t dac_vol = (uint8_t)dac_f;
+#endif
 
     if (abs((int)dac_vol - (int)current_volume_level) > 1) {
         current_volume_level = dac_vol;
         set_volume(current_volume_level, current_volume_level);
     }
 
-    // --- Mute logic with one-time calls ---
-    if (current_volume_level == 0 && !is_muted) {
-        mute_dac();        // only runs once
-        power_off_drivers();
+    // --- Mute logic with one-time calls and hysteresis ---
+    // can't turn off the drivers because we don't have time to wait to turn them back on.
+    if (current_volume_level <= MUTE_THRESH && !is_muted) {
+        mute_dac();
         is_muted = true;
     } 
-    else if (current_volume_level > 0 && is_muted) {
-        power_on_drivers();
-        unmute_dac();      // only runs once
+    else if (current_volume_level >= UNMUTE_THRESH && is_muted) {
+        unmute_dac();
         is_muted = false;
     }
 
@@ -147,7 +157,10 @@ void set_volume(uint8_t l_volume, uint8_t r_volume) {
     dac_i2c_write(0, 0x42, (uint8_t)rInt);
 }
 
-
+void set_3d(uint8_t msb_3d, uint8_t lsb_3d) {
+    dac_i2c_write(8, 0x40, msb_3d);
+    dac_i2c_write(8, 0x41, lsb_3d);
+}
 
 void setup_dac() {
     dac_i2c_write(0, 0x01, 0x01); // Soft-reset the DAC
@@ -165,26 +178,31 @@ void setup_dac() {
     dac_i2c_write(0, 0x74, 0x00); // VOL/MICDETECT SAR ADC
     dac_i2c_write(0, 0x43, 0x80); // Headset detection enabled
 
-    dac_i2c_write(1, 0x1f, 0b00010100); // Headphone drivers off, Vout set to 1.65V
-    dac_i2c_write(1, 0x21, 0x4e); // Headphone pop reduction - 1.22s driver power on time, driver ramp
-    dac_i2c_write(1, 0x22, 0x70); // Speaker pop reduction - 30.5ms power up wait time
+    set_3d(0x10, 0x00); // Enable 3D sound with slight depth
+
+    // --- Power up phase ---
+    // Power on DAC and mute
     dac_i2c_write(1, 0x23, 0x44); // DAC_L & R mix routing
-    dac_i2c_write(1, 0x28, 0x06); // HP_L Driver unmuted
-    dac_i2c_write(1, 0x29, 0x06); // HP_R Driver unmuted
-    dac_i2c_write(1, 0x2A, 0x1C); // SP_L Driver unmuted with 18dB
-    dac_i2c_write(1, 0x2B, 0x1C); // SP_R Driver unmuted with 18dB
+    dac_i2c_write(0, 0x3F, 0xD4); // DAC data path set up, l and r dac powered on
+    set_volume(0x00, 0x00); // set DAC volume to minimum
+    mute_dac(); // DAC muted
+
+    // Power on the drivers
+    dac_i2c_write(1, 0x1f, 0b00010100); // Headphone drivers off, Vout set to 1.65V
+    dac_i2c_write(1, 0x21, 0x46); // Headphone pop reduction - 600ms driver power on time, driver ramp
+    dac_i2c_write(1, 0x22, 0x70); // Speaker pop reduction - 30.5ms power up wait time
     dac_i2c_write(1, 0x1F, 0b11010100); // Headphone drivers powered on
     dac_i2c_write(1, 0x20, 0b11000110); // Class-D Amplifier powered on
 
+    // Wait for drivers to stabilize and ramp up
+    sleep_ms(600); 
+
+    // Unmute drivers and dacs after power up ramp
+    unmute_drivers();
+
     // set gain
     set_gain(0x7F); // set to max amp gain
-    unmute_dac(); // DAC unmuted
-
-    dac_i2c_write(0, 0x3F, 0xD4); // DAC data path set up, l and r dac powered on
-    // dac_i2c_write(0, 0x41, 0xD4);
-    // dac_i2c_write(0, 0x42, 0xD4);
-    set_volume(0x00, 0x00); // set DAC volume to minimum
-    unmute_dac(); // DAC unmuted
+    unmute_dac(); // Unmute DAC
 }
 
 

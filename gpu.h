@@ -1,17 +1,26 @@
 #if ENABLE_LCD
 // MARK: DPI TIMINGS
+#define H_ACTIVE 320
+#define H_PULSE 12
+#define H_F_PORCH 68
+#define H_B_PORCH 100
+
+#define V_ACTIVE 320
+#define V_PULSE 12
+#define V_F_PORCH 68
+#define V_B_PORCH 100
+
 const scanvideo_timing_t tft_timing_320x320_60 = {
-    //pclk multiple of 2 in reference to system clock 150mhz
-    .clock_freq      = 10 * 1000 * 1000,   // ↓ now 12 MHz (within your panel’s 20 MHz max)
-    .h_active        = 320,
-    .v_active        = 288,
-    .h_front_porch   =   10,
-    .h_pulse         =    128,
-    .h_total         = 320 + 10 + 128 + 10,  // back porch = 20
+    .clock_freq      = 15 * 1000 * 1000,  // 15 MHz
+    .h_active        = H_ACTIVE,
+    .v_active        = V_ACTIVE,
+    .h_front_porch   =   H_F_PORCH,
+    .h_pulse         =    H_PULSE,
+    .h_total         = H_ACTIVE + H_F_PORCH + H_PULSE + H_B_PORCH,  // back porch = 20
     .h_sync_polarity =    1,
-    .v_front_porch   =    20,
-    .v_pulse         =    128,
-    .v_total         = 288 + 28 + 128 + 20,    // back porch = 8
+    .v_front_porch   =    V_F_PORCH,
+    .v_pulse         =    V_PULSE,
+    .v_total         = V_ACTIVE + V_F_PORCH + V_PULSE + V_B_PORCH,    // back porch = 8
     .v_sync_polarity =    1,
     .enable_clock    =    1,
     .clock_polarity  =    1,
@@ -35,7 +44,8 @@ static void frame_update_logic();
 static void scanline_update_logic();
 static void render_scanline(struct scanvideo_scanline_buffer *dest, int core, const uint16_t *fb);
 uint16_t shift_components(uint16_t pixel);
-
+static uint16_t black_fb[LCD_WIDTH] = {0}; // all black
+uint line = 0;
 // MARK: - RENDER LOOP
 // "Worker thread" for each core
 void render_loop() {
@@ -87,22 +97,26 @@ void render_loop() {
 		}
         for (int x = 0; x < DISPLAY_SCALE; x++) {
             struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
-            // mutex_enter_blocking(&frame_logic_mutex);
-            uint32_t frame_num = scanvideo_frame_number(scanline_buffer->scanline_id);
-            // Frame and scanline update logic within mutex
-            // if (frame_num != last_frame_num) {
-            //     last_frame_num = frame_num;
-            //     frame_update_logic();
-            // }
-            // scanline_update_logic();
-            // mutex_exit(&frame_logic_mutex);
-
+            
             render_scanline(scanline_buffer, core_num, fb);
 
             // Release the rendered buffer into the wild
             scanvideo_end_scanline_generation(scanline_buffer);
         }
         // lcd line no longer busy
+        // if its the last line...
+        line++;
+        if (line >= LCD_HEIGHT) {
+            line = 0;
+            for (int i = 0; i < V_ACTIVE - (LCD_HEIGHT*DISPLAY_SCALE); i++) {
+                struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
+                // printf("Skipping scanline %d on core %d\n", line, core_num);
+                render_scanline(scanline_buffer, core_num, black_fb);
+
+                // Release the rendered buffer into the wild
+                scanvideo_end_scanline_generation(scanline_buffer);
+            }
+        }
         __atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
     }
 }

@@ -175,6 +175,18 @@ int main(void)
 while(true)
 {
 	// MARK: - ROM File selector
+	// lvgl_setup();
+
+    // // Create a simple test UI
+    // lv_obj_t *label = lv_label_create(lv_scr_act());
+    // lv_label_set_text(label, "Hello LVGL!");
+    // lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+
+    // while (1) {
+    //     lv_timer_handler();
+    //     sleep_ms(5);
+    // }
+
 #if ENABLE_LCD
 #if ENABLE_SDCARD
 #if USE_IPS_LCD

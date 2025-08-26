@@ -1,17 +1,17 @@
 #if ENABLE_LCD
 // MARK: DPI TIMINGS
 #define H_ACTIVE 320
-#define H_PULSE 12
-#define H_F_PORCH 68
-#define H_B_PORCH 100
+#define H_PULSE 128
+#define H_F_PORCH 10
+#define H_B_PORCH 10
 
-#define V_ACTIVE 320
-#define V_PULSE 12
-#define V_F_PORCH 68
-#define V_B_PORCH 100
+#define V_ACTIVE 288
+#define V_PULSE 128
+#define V_F_PORCH 20
+#define V_B_PORCH 20
 
 const scanvideo_timing_t tft_timing_320x320_60 = {
-    .clock_freq      = 15 * 1000 * 1000,  // 15 MHz
+    .clock_freq      = 10 * 1000 * 1000,  // 15 MHz
     .h_active        = H_ACTIVE,
     .v_active        = V_ACTIVE,
     .h_front_porch   =   H_F_PORCH,
@@ -38,6 +38,8 @@ const scanvideo_mode_t tft_mode_320x320_60 = {
     .yscale_denominator = 1
 };
 #define VGA_MODE tft_mode_320x320_60
+
+#define ADD_BLACK_BAR 0
 
 static struct mutex frame_logic_mutex;
 static void frame_update_logic();
@@ -105,6 +107,7 @@ void render_loop() {
         }
         // lcd line no longer busy
         // if its the last line...
+#if ADD_BLACK_BAR
         line++;
         if (line >= LCD_HEIGHT) {
             line = 0;
@@ -117,6 +120,7 @@ void render_loop() {
                 scanvideo_end_scanline_generation(scanline_buffer);
             }
         }
+#endif
         __atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
     }
 }
@@ -391,4 +395,137 @@ static inline uint16_t rgb565_to_bgr565(uint16_t rgb) {
     // Re-pack into BGR565 format
     return (r << 11) | (g << 5) | b;
 }
+
+
+
+
+
+// #define LVGL_WIDTH  320
+// #define LVGL_HEIGHT 320
+
+// static lv_color_t lvgl_buf1[LVGL_WIDTH * 20]; // partial buffer: 20 rows
+// static lv_color_t lvgl_buf2[LVGL_WIDTH * 20]; // second buf for double buffering
+// static lv_disp_draw_buf_t draw_buf;
+
+// static void my_lvgl_flush(lv_disp_drv_t *drv,
+//                           const lv_area_t *area,
+//                           lv_color_t *color_p)
+// {
+//     int32_t x1 = area->x1;
+//     int32_t y1 = area->y1;
+//     int32_t x2 = area->x2;
+//     int32_t y2 = area->y2;
+
+//     for (int y = y1; y <= y2; y++) {
+//         // Wait for previous scanline to finish if needed
+//         while(__atomic_load_n(&lcd_line_busy, __ATOMIC_SEQ_CST))
+//             tight_loop_contents();
+
+//         // copy row from LVGL buffer into pixels_buffer
+//         for (int x = x1; x <= x2; x++) {
+//             uint16_t px = color_p->full; // already RGB565
+//             pixels_buffer[x] = px;
+//             color_p++;
+//         }
+
+//         // send to your pipeline (like lcd_draw_line does)
+//         union core_cmd cmd;
+//         cmd.cmd = CORE_CMD_LCD_LINE;
+//         cmd.data = y;
+//         __atomic_store_n(&lcd_line_busy, 1, __ATOMIC_SEQ_CST);
+//         multicore_fifo_push_blocking(cmd.full);
+//     }
+
+//     lv_disp_flush_ready(drv);
+// }
+
+
+// void lvgl_init() {
+//     // Initialize LVGL
+//     lv_init();
+
+//     // Initialize display buffer
+//     lv_disp_draw_buf_init(&draw_buf, lvgl_buf1, lvgl_buf2, LVGL_WIDTH * 20);
+
+//     // Initialize and register the display driver
+//     static lv_disp_drv_t disp_drv;
+//     lv_disp_drv_init(&disp_drv);
+//     disp_drv.hor_res = LVGL_WIDTH;
+//     disp_drv.ver_res = LVGL_HEIGHT;
+//     disp_drv.flush_cb = my_lvgl_flush;
+//     disp_drv.draw_buf = &draw_buf;
+//     lv_disp_drv_register(&disp_drv);
+// }
+
+// void lvgl_test() {
+//     lv_obj_t *list = lv_list_create(lv_scr_act());
+//     lv_obj_set_size(list, 200, 200);
+//     lv_obj_center(list);
+
+//     lv_list_add_text(list, "ROMs");
+//     lv_list_add_btn(list, NULL, "Pokemon Red");
+//     lv_list_add_btn(list, NULL, "Zelda: Oracle of Ages");
+//     lv_list_add_btn(list, NULL, "Tetris");
+// }
+
+// Replace with your panel's width/height
+#define DISP_HOR_RES 320
+#define DISP_VER_RES 320
+
+static void lvgl_flush_cb(lv_disp_t * disp, const lv_area_t * area, lv_color_t * color_p) {
+    int32_t x1 = area->x1;
+    int32_t y1 = area->y1;
+    int32_t x2 = area->x2;
+    int32_t y2 = area->y2;
+
+    for (int y = y1; y <= y2; y++) {
+        // Wait for LVGL to give scanline for this row
+        struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
+
+        uint16_t *dst = (uint16_t *)scanline_buffer->data;
+        // Fill the region (x1..x2) with LVGL's color data
+        // color_p holds the line data row by row
+        for (int x = x1; x <= x2; x++) {
+            dst[x] = color_p->full;  // Adjust depending on your RGB565/other format
+            color_p++;
+        }
+
+        // If the rest of the scanline outside x1..x2 should stay black or unchanged,
+        // fill dst[0..x1-1] and dst[x2+1..end] accordingly.
+
+        scanvideo_end_scanline_generation(scanline_buffer);
+    }
+
+    lv_disp_flush_ready(disp);
+}
+
+// Allocate draw buffers (double buffer, partial height to save RAM)
+#define LV_BUF_LINES 20  // Number of lines per buffer chunk
+
+static lv_color_t lv_buf1[DISP_HOR_RES * LV_BUF_LINES];
+static lv_color_t lv_buf2[DISP_HOR_RES * LV_BUF_LINES];
+
+void lvgl_setup(void)
+{
+    lv_init();
+
+    static lv_disp_draw_buf_t draw_buf;
+    lv_disp_draw_buf_init(&draw_buf, lv_buf1, lv_buf2, DISP_HOR_RES * LV_BUF_LINES);
+
+    static lv_disp_drv_t disp_drv;
+    lv_disp_drv_init(&disp_drv);
+    disp_drv.hor_res = DISP_HOR_RES;
+    disp_drv.ver_res = DISP_VER_RES;
+    disp_drv.flush_cb = lvgl_flush_cb;
+    disp_drv.draw_buf = &draw_buf;
+
+    lv_disp_drv_register(&disp_drv);
+}
+
+void lvgl_task_handler(void)
+{
+    lv_timer_handler();
+    // call periodically, e.g., every 5–10ms
+}
+
 #endif // ENABLE_LCD

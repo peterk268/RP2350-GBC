@@ -2,13 +2,13 @@
 // MARK: DPI TIMINGS
 #define H_ACTIVE 320
 #define H_PULSE 12
-#define H_F_PORCH 67
+#define H_F_PORCH 45
 #define H_B_PORCH 100
 
 #define V_ACTIVE 320
-#define V_PULSE 3
-#define V_F_PORCH 5
-#define V_B_PORCH 6
+#define V_PULSE 6
+#define V_F_PORCH 10
+#define V_B_PORCH 15
 
 const scanvideo_timing_t tft_timing_320x320_60 = {
     .clock_freq      =  20 * 1000 * 1000,  // 15 MHz
@@ -58,10 +58,12 @@ static uint16_t (*front_fb)[LCD_WIDTH] = fb;
 // Back buffer (being written by CPU/emulator)
 static uint16_t (*back_fb)[LCD_WIDTH] = fb2;
 
-static uint32_t y = 0;
+bool frame_doubled = 0;
 
 void render_loop() {
     static uint32_t last_frame_num = 0;
+    static uint32_t y = 0;
+
     while (true) {
         // Wait for scanvideo to be ready for next scanline
         struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
@@ -70,9 +72,15 @@ void render_loop() {
         // Only update frame pointer when a new frame is ready
         if (frame_num != last_frame_num) {
             last_frame_num = frame_num;
-            // while(!__atomic_load_n(&lcd_fb_ready, __ATOMIC_SEQ_CST)) tight_loop_contents();
-            y = 0;
+            if (frame_doubled) {
+                uint16_t (*tmp)[LCD_WIDTH] = front_fb;
+                front_fb = back_fb;
+                back_fb  = tmp;
+            }
+            frame_doubled = !frame_doubled;
+            y = 0;   
         }
+        #warning "GB Games don't have this issue... so the opposite happens on them"
         int src_y = (y + LCD_HEIGHT - 1) % LCD_HEIGHT;
         // Render scanline
         render_scanline(scanline_buffer, (y < LCD_HEIGHT) ? front_fb[src_y] : black_fb);
@@ -198,11 +206,6 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
     fb_line++;
     if (fb_line >= LCD_HEIGHT) {
         fb_line = 0;
-        // Swap front and back buffers atomically
-        uint16_t (*tmp)[LCD_WIDTH] = front_fb;
-        front_fb = back_fb;
-        back_fb = tmp;
-        __atomic_store_n(&lcd_fb_ready, 1, __ATOMIC_SEQ_CST);
     }
 
 }

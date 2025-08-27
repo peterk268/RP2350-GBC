@@ -2,16 +2,16 @@
 // MARK: DPI TIMINGS
 #define H_ACTIVE 320
 #define H_PULSE 12
-#define H_F_PORCH 50
-#define H_B_PORCH 95
+#define H_F_PORCH 67
+#define H_B_PORCH 100
 
 #define V_ACTIVE 320
-#define V_PULSE 6
-#define V_F_PORCH 10
-#define V_B_PORCH 15
+#define V_PULSE 3
+#define V_F_PORCH 5
+#define V_B_PORCH 6
 
 const scanvideo_timing_t tft_timing_320x320_60 = {
-    .clock_freq      =  10 * 1000 * 1000,  // 15 MHz
+    .clock_freq      =  20 * 1000 * 1000,  // 15 MHz
     .h_active        =  H_ACTIVE,
     .v_active        =  V_ACTIVE,
     .h_front_porch   =  H_F_PORCH,

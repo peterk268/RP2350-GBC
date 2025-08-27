@@ -68,33 +68,18 @@ void render_loop() {
         // Command processing from core 0
         union core_cmd cmd;
 		cmd.full = multicore_fifo_pop_blocking();
-        for (int y = 0; y < LCD_HEIGHT; y++) {
+        for (int y = 0; y < V_ACTIVE / DISPLAY_SCALE; y++) {
             for (int x = 0; x < DISPLAY_SCALE; x++) {
                 struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
                 
-                render_scanline(scanline_buffer, core_num, front_fb[y]);
+                render_scanline(scanline_buffer, core_num, (y < LCD_HEIGHT) ? front_fb[y] : black_fb);
                 
                 // Release the rendered buffer into the wild
                 scanvideo_end_scanline_generation(scanline_buffer);
             }
         }
         // lcd line no longer busy
-        // if its the last line...
         __atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
-#if ADD_BLACK_BAR
-        line++;
-        if (line >= LCD_HEIGHT) {
-            line = 0;
-            for (int i = 0; i < V_ACTIVE - (LCD_HEIGHT*DISPLAY_SCALE); i++) {
-                struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
-                // printf("Skipping scanline %d on core %d\n", line, core_num);
-                render_scanline(scanline_buffer, core_num, black_fb);
-
-                // Release the rendered buffer into the wild
-                scanvideo_end_scanline_generation(scanline_buffer);
-            }
-        }
-#endif
     }
 }
 

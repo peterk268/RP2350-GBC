@@ -3,28 +3,28 @@
 #define H_ACTIVE 320
 #define H_PULSE 12
 #define H_F_PORCH 50
-#define H_B_PORCH 82
+#define H_B_PORCH 95
 
 #define V_ACTIVE 320
 #define V_PULSE 6
 #define V_F_PORCH 10
-#define V_B_PORCH 25
+#define V_B_PORCH 15
 
 const scanvideo_timing_t tft_timing_320x320_60 = {
-    .clock_freq      = 10 * 1000 * 1000,  // 15 MHz
-    .h_active        = H_ACTIVE,
-    .v_active        = V_ACTIVE,
-    .h_front_porch   =   H_F_PORCH,
-    .h_pulse         =    H_PULSE,
-    .h_total         = H_ACTIVE + H_F_PORCH + H_PULSE + H_B_PORCH,  // back porch = 20
-    .h_sync_polarity =    1,
-    .v_front_porch   =    V_F_PORCH,
-    .v_pulse         =    V_PULSE,
-    .v_total         = V_ACTIVE + V_F_PORCH + V_PULSE + V_B_PORCH,    // back porch = 8
-    .v_sync_polarity =    1,
-    .enable_clock    =    1,
-    .clock_polarity  =    1,
-    .enable_den      =    1
+    .clock_freq      =  10 * 1000 * 1000,  // 15 MHz
+    .h_active        =  H_ACTIVE,
+    .v_active        =  V_ACTIVE,
+    .h_front_porch   =  H_F_PORCH,
+    .h_pulse         =  H_PULSE,
+    .h_total         =  H_ACTIVE + H_F_PORCH + H_PULSE + H_B_PORCH,  // back porch = 20
+    .h_sync_polarity =  1,
+    .v_front_porch   =  V_F_PORCH,
+    .v_pulse         =  V_PULSE,
+    .v_total         =  V_ACTIVE + V_F_PORCH + V_PULSE + V_B_PORCH,    // back porch = 8
+    .v_sync_polarity =  1,
+    .enable_clock    =  1,
+    .clock_polarity  =  1,
+    .enable_den      =  1
 };
 
 extern const struct scanvideo_pio_program video_24mhz_composable;  // ← swap in 12 MHz
@@ -70,17 +70,12 @@ void render_loop() {
         // Only update frame pointer when a new frame is ready
         if (frame_num != last_frame_num) {
             last_frame_num = frame_num;
-
-            // Wait until emulator finished writing back_fb
-            while(!__atomic_load_n(&lcd_line_busy, __ATOMIC_SEQ_CST))
-                tight_loop_contents();
-
-            // Frame swap already happened in lcd_draw_line, so just reset y
+            // while(!__atomic_load_n(&lcd_fb_ready, __ATOMIC_SEQ_CST)) tight_loop_contents();
             y = 0;
         }
-
+        int src_y = (y + LCD_HEIGHT - 1) % LCD_HEIGHT;
         // Render scanline
-        render_scanline(scanline_buffer, (y < LCD_HEIGHT) ? front_fb[y] : black_fb);
+        render_scanline(scanline_buffer, (y < LCD_HEIGHT) ? front_fb[src_y] : black_fb);
 
         scanvideo_end_scanline_generation(scanline_buffer);
 
@@ -203,17 +198,11 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
     fb_line++;
     if (fb_line >= LCD_HEIGHT) {
         fb_line = 0;
-        /* Wait until previous line is sent. */
-        // while(__atomic_load_n(&lcd_line_busy, __ATOMIC_SEQ_CST))
-		// tight_loop_contents();
-
         // Swap front and back buffers atomically
         uint16_t (*tmp)[LCD_WIDTH] = front_fb;
         front_fb = back_fb;
         back_fb = tmp;
-
-        // Signal rendering core to start with the new frame
-        __atomic_store_n(&lcd_line_busy, 1, __ATOMIC_SEQ_CST);
+        __atomic_store_n(&lcd_fb_ready, 1, __ATOMIC_SEQ_CST);
     }
 
 }

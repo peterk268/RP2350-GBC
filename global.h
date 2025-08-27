@@ -21,7 +21,7 @@ const uint8_t *rom = (const uint8_t *) (XIP_BASE + FLASH_TARGET_OFFSET);
 static unsigned char rom_bank0[65536];
 
 static uint8_t ram[32768];
-static int lcd_line_busy = 0;
+static int lcd_fb_ready = 0;
 static palette_t palette;	// Colour palette
 static int8_t manual_palette_selected=-1;
 

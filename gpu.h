@@ -31,10 +31,10 @@ extern const struct scanvideo_pio_program video_24mhz_composable;  // ← swap i
 const scanvideo_mode_t tft_mode_320x320_60 = {
     .default_timing     = &tft_timing_320x320_60,
     .pio_program        = &video_24mhz_composable, 
-    .width              = 320,
-    .height             = 320,
-    .xscale             = 1,
-    .yscale             = 1,
+    .width              = 160,
+    .height             = 160,
+    .xscale             = 2,
+    .yscale             = 2,
     .yscale_denominator = 1
 };
 #define VGA_MODE tft_mode_320x320_60
@@ -44,12 +44,9 @@ const scanvideo_mode_t tft_mode_320x320_60 = {
 static struct mutex frame_logic_mutex;
 static void frame_update_logic();
 static void scanline_update_logic();
-static void render_scanline(struct scanvideo_scanline_buffer *dest, int core, const uint16_t *fb);
+static void render_scanline(struct scanvideo_scanline_buffer *dest, const uint16_t *fb);
 uint16_t shift_components(uint16_t pixel);
 static uint16_t black_fb[LCD_WIDTH] = {0}; // all black
-uint line = 0;
-uint fb_line = 0;
-uint fb2_line = 0;
 // MARK: - RENDER LOOP
 // "Worker thread" for each core
 static uint16_t fb[LCD_HEIGHT][LCD_WIDTH];
@@ -61,25 +58,33 @@ static uint16_t (*front_fb)[LCD_WIDTH] = fb;
 // Back buffer (being written by CPU/emulator)
 static uint16_t (*back_fb)[LCD_WIDTH] = fb2;
 
+static uint32_t y = 0;
+
 void render_loop() {
-    int core_num = get_core_num();
-    printf("Rendering on core %d\n", core_num);
+    static uint32_t last_frame_num = 0;
     while (true) {
-        // Command processing from core 0
-        union core_cmd cmd;
-		cmd.full = multicore_fifo_pop_blocking();
-        for (int y = 0; y < V_ACTIVE / DISPLAY_SCALE; y++) {
-            for (int x = 0; x < DISPLAY_SCALE; x++) {
-                struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
-                
-                render_scanline(scanline_buffer, core_num, (y < LCD_HEIGHT) ? front_fb[y] : black_fb);
-                
-                // Release the rendered buffer into the wild
-                scanvideo_end_scanline_generation(scanline_buffer);
-            }
+        // Wait for scanvideo to be ready for next scanline
+        struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
+        uint32_t frame_num = scanvideo_frame_number(scanline_buffer->scanline_id);
+
+        // Only update frame pointer when a new frame is ready
+        if (frame_num != last_frame_num) {
+            last_frame_num = frame_num;
+
+            // Wait until emulator finished writing back_fb
+            while(!__atomic_load_n(&lcd_line_busy, __ATOMIC_SEQ_CST))
+                tight_loop_contents();
+
+            // Frame swap already happened in lcd_draw_line, so just reset y
+            y = 0;
         }
-        // lcd line no longer busy
-        __atomic_store_n(&lcd_line_busy, 0, __ATOMIC_SEQ_CST);
+
+        // Render scanline
+        render_scanline(scanline_buffer, (y < LCD_HEIGHT) ? front_fb[y] : black_fb);
+
+        scanvideo_end_scanline_generation(scanline_buffer);
+
+        y++;
     }
 }
 
@@ -108,15 +113,6 @@ void setup_dpi() {
     scanvideo_timing_enable(true);
 
     sem_release(&video_setup_complete);
-}
-
-// MARK: FRAME LOGIC
-void frame_update_logic() {
-    // here i will need to let the frame set its position. by setting the black lines or idk...
-}
-
-// MARK: SCANLINE LOGIC
-void scanline_update_logic() {
 }
 
 #define MIN_COLOR_RUN 3
@@ -164,74 +160,52 @@ static inline void raw_scanline_finish(struct scanvideo_scanline_buffer *dest) {
 
 
 // MARK: RENDER SCANLINE
-void render_scanline(struct scanvideo_scanline_buffer *dest, int core, const uint16_t *fb) {
+void render_scanline(struct scanvideo_scanline_buffer *dest, const uint16_t *fb) {
     uint16_t *colour_buf = raw_scanline_prepare(dest, VGA_MODE.width); // VGA_MODE.width = 320
 
-    for (int x = 0; x < LCD_WIDTH; x++) {  // LCD_WIDTH = 160
-        uint16_t px = fb[x];
-        colour_buf[2*x]     = px;  // left pixel
-        colour_buf[2*x + 1] = px;  // right pixel (duplicate)
-    }
+    memcpy(colour_buf, fb, LCD_WIDTH * sizeof(uint16_t));
 
     raw_scanline_finish(dest);
     dest->status = SCANLINE_OK;
 }
 
 #if ENABLE_LCD
+uint fb_line = 0;
 // MARK: CORE0 LCD RETRIEVE LINE
 void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
 		   const uint_fast8_t line)
 {
-    union core_cmd cmd;
-
 	gbc = gb;
-	memcpy(pixels_buffer, pixels, LCD_WIDTH);
-
-    /* Populate command. */
-    cmd.cmd = CORE_CMD_LCD_LINE;
-    cmd.data = line;
-
-    switch(cmd.cmd) {
-    case CORE_CMD_LCD_LINE:
 #if PEANUT_FULL_GBC_SUPPORT
-        if (gbc->cgb.cgbMode) {
-            // user has not assigned palette.
-            if (manual_palette_selected == -1) {
-                for(unsigned int x = 0; x < LCD_WIDTH; x++){
-                    back_fb[fb_line][x] = shift_components(gbc->cgb.fixPalette[pixels_buffer[x]]);
-                }
-            } else {
-                for(unsigned int x = 0; x < LCD_WIDTH; x++){
-                    back_fb[fb_line][x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
-                            [pixels_buffer[x] & 3];
-                }
-            }
-        }
-        else {
-#endif
+    if (gbc->cgb.cgbMode) {
+        // user has not assigned palette.
+        if (manual_palette_selected == -1) {
             for(unsigned int x = 0; x < LCD_WIDTH; x++){
-                back_fb[fb_line][x] = palette[(pixels_buffer[x] & LCD_PALETTE_ALL) >> 4]
-                        [pixels_buffer[x] & 3];
+                back_fb[fb_line][x] = shift_components(gbc->cgb.fixPalette[pixels[x]]);
             }
-#if PEANUT_FULL_GBC_SUPPORT
+        } else {
+            for(unsigned int x = 0; x < LCD_WIDTH; x++){
+                back_fb[fb_line][x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4]
+                        [pixels[x] & 3];
+            }
         }
-#endif	
-
-        break;
-    case CORE_CMD_IDLE_SET:
-        break;
-    case CORE_CMD_NOP:
-        break;
-    default:
-        break;
     }
+    else {
+#endif
+        for(unsigned int x = 0; x < LCD_WIDTH; x++){
+            back_fb[fb_line][x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4]
+                    [pixels[x] & 3];
+        }
+#if PEANUT_FULL_GBC_SUPPORT
+    }
+#endif	
 
     fb_line++;
     if (fb_line >= LCD_HEIGHT) {
         fb_line = 0;
         /* Wait until previous line is sent. */
-        while(__atomic_load_n(&lcd_line_busy, __ATOMIC_SEQ_CST))
-		tight_loop_contents();
+        // while(__atomic_load_n(&lcd_line_busy, __ATOMIC_SEQ_CST))
+		// tight_loop_contents();
 
         // Swap front and back buffers atomically
         uint16_t (*tmp)[LCD_WIDTH] = front_fb;
@@ -240,7 +214,6 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
 
         // Signal rendering core to start with the new frame
         __atomic_store_n(&lcd_line_busy, 1, __ATOMIC_SEQ_CST);
-        multicore_fifo_push_blocking(cmd.full);
     }
 
 }

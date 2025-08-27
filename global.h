@@ -57,7 +57,6 @@ union core_cmd {
 };
 
 /* Pixel data is stored in here. */
-static uint8_t pixels_buffer[LCD_WIDTH];
 static struct gb_s *gbc;
 
 #define putstdio(x) write(1, x, strlen(x))

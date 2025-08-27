@@ -54,11 +54,8 @@ static uint16_t fb2[LCD_HEIGHT][LCD_WIDTH];
 
 // Front buffer (being displayed)
 static uint16_t (*front_fb)[LCD_WIDTH] = fb;
-
 // Back buffer (being written by CPU/emulator)
 static uint16_t (*back_fb)[LCD_WIDTH] = fb2;
-
-bool frame_doubled = 0;
 
 void render_loop() {
     static uint32_t last_frame_num = 0;
@@ -72,12 +69,6 @@ void render_loop() {
         // Only update frame pointer when a new frame is ready
         if (frame_num != last_frame_num) {
             last_frame_num = frame_num;
-            if (frame_doubled) {
-                uint16_t (*tmp)[LCD_WIDTH] = front_fb;
-                front_fb = back_fb;
-                back_fb  = tmp;
-            }
-            frame_doubled = !frame_doubled;
             y = 0;   
         }
         #warning "GB Games don't have this issue... so the opposite happens on them"
@@ -206,6 +197,10 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
     fb_line++;
     if (fb_line >= LCD_HEIGHT) {
         fb_line = 0;
+        scanvideo_wait_for_vblank();
+        uint16_t (*tmp)[LCD_WIDTH] = front_fb;
+        front_fb = back_fb;
+        back_fb  = tmp;
     }
 
 }

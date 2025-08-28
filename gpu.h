@@ -10,6 +10,8 @@
 #define V_F_PORCH 10
 #define V_B_PORCH 15
 
+#define ENABLE_SCANLINES 0
+
 const scanvideo_timing_t tft_timing_320x320_60 = {
     .clock_freq      =  20 * 1000 * 1000,  // 15 MHz
     .h_active        =  H_ACTIVE,
@@ -32,9 +34,9 @@ const scanvideo_mode_t tft_mode_320x320_60 = {
     .default_timing     = &tft_timing_320x320_60,
     .pio_program        = &video_24mhz_composable, 
     .width              = 160,
-    .height             = 160,
+    .height             = ENABLE_SCANLINES ? 320 : 160,
     .xscale             = 2,
-    .yscale             = 2,
+    .yscale             = ENABLE_SCANLINES ? 1 : 2,
     .yscale_denominator = 1
 };
 #define VGA_MODE tft_mode_320x320_60
@@ -64,6 +66,8 @@ bool double_frame_needs_bfi = 0;
 // Keep track of previous brightness level
 static uint8_t strobe_brightness = 0;
 
+#define ENABLE_INTERLACING ENABLE_SCANLINES && 0
+bool interlacing_field = 1; // 0 = even, 1 = odd
 #if !USE_DUMB_BACKLIGHT_STROBING
 #define STROBE_DELAY_US   1500  // wait after vblank (settle)
 #define STROBE_WIDTH_US   2000  // ON pulse length
@@ -95,6 +99,7 @@ void backlight_strobe_start(uint8_t duty_cycle) {
     add_alarm_in_us(STROBE_DELAY_US, backlight_on_callback, NULL, true);
 }
 #endif
+uint16_t scanline_count = 0;
 void render_loop() {
     static uint32_t last_frame_num = 0;
     static uint32_t y = 0;
@@ -108,6 +113,12 @@ void render_loop() {
         if (frame_num != last_frame_num) {
             last_frame_num = frame_num;
             y = 0;   
+#if ENABLE_SCANLINES
+            scanline_count = 0;
+#endif
+#if ENABLE_INTERLACING
+            interlacing_field = !interlacing_field;
+#endif
 #if ENABLE_BACKLIGHT_STROBING
 #if USE_DUMB_BACKLIGHT_STROBING
             if (double_frame_needs_bfi) {
@@ -127,11 +138,13 @@ void render_loop() {
         #warning "GB Games don't have this issue... so the opposite happens on them"
         int src_y = (y + LCD_HEIGHT - 1) % LCD_HEIGHT;
         // Render scanline
-        render_scanline(scanline_buffer, (y < LCD_HEIGHT) && (!ENABLE_BFI || !double_frame_needs_bfi || gb.direct.frame_skip == 1) ? front_fb[src_y] : black_fb);
+        render_scanline(scanline_buffer, (y < LCD_HEIGHT) && (!ENABLE_BFI || !double_frame_needs_bfi || gb.direct.frame_skip == 1) && (!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field)) ? front_fb[src_y] : black_fb);
 
         scanvideo_end_scanline_generation(scanline_buffer);
-
-        y++;
+        scanline_count++;
+        if (!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field)) {
+            y++;
+        }
     }
 }
 

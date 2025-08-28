@@ -57,7 +57,7 @@ union core_cmd {
 };
 
 /* Pixel data is stored in here. */
-static struct gb_s *gbc;
+static struct gb_s gb;
 
 #define putstdio(x) write(1, x, strlen(x))
 

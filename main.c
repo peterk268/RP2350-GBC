@@ -53,7 +53,6 @@
 
 int main(void)
 {
-	static struct gb_s gb;
 	enum gb_init_error_e ret;
 	
 	// MARK: - Overclock
@@ -197,7 +196,7 @@ while(true)
 #endif
 #endif
 #endif
-#if ENABLE_SDCARD
+#if ENABLE_SDCARD && ENABLE_ROM_SELECTOR
 	rom_file_selector();
 #endif
 

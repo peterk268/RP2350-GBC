@@ -57,6 +57,8 @@ static uint16_t (*front_fb)[LCD_WIDTH] = fb;
 // Back buffer (being written by CPU/emulator)
 static uint16_t (*back_fb)[LCD_WIDTH] = fb2;
 
+bool double_frame_needs_bfi = 0;
+
 void render_loop() {
     static uint32_t last_frame_num = 0;
     static uint32_t y = 0;
@@ -70,11 +72,12 @@ void render_loop() {
         if (frame_num != last_frame_num) {
             last_frame_num = frame_num;
             y = 0;   
+            double_frame_needs_bfi = !double_frame_needs_bfi;
         }
         #warning "GB Games don't have this issue... so the opposite happens on them"
         int src_y = (y + LCD_HEIGHT - 1) % LCD_HEIGHT;
         // Render scanline
-        render_scanline(scanline_buffer, (y < LCD_HEIGHT) ? front_fb[src_y] : black_fb);
+        render_scanline(scanline_buffer, (y < LCD_HEIGHT) && (!double_frame_needs_bfi || gb.direct.frame_skip == 1) ? front_fb[src_y] : black_fb);
 
         scanvideo_end_scanline_generation(scanline_buffer);
 
@@ -169,13 +172,12 @@ uint fb_line = 0;
 void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
 		   const uint_fast8_t line)
 {
-	gbc = gb;
 #if PEANUT_FULL_GBC_SUPPORT
-    if (gbc->cgb.cgbMode) {
+    if (gb->cgb.cgbMode) {
         // user has not assigned palette.
         if (manual_palette_selected == -1) {
             for(unsigned int x = 0; x < LCD_WIDTH; x++){
-                back_fb[fb_line][x] = shift_components(gbc->cgb.fixPalette[pixels[x]]);
+                back_fb[fb_line][x] = shift_components(gb->cgb.fixPalette[pixels[x]]);
             }
         } else {
             for(unsigned int x = 0; x < LCD_WIDTH; x++){

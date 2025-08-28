@@ -58,7 +58,43 @@ static uint16_t (*front_fb)[LCD_WIDTH] = fb;
 static uint16_t (*back_fb)[LCD_WIDTH] = fb2;
 
 bool double_frame_needs_bfi = 0;
+#define ENABLE_BFI 0
+#define ENABLE_BACKLIGHT_STROBING 1
+#define USE_DUMB_BACKLIGHT_STROBING 1
+// Keep track of previous brightness level
+static uint8_t strobe_brightness = 0;
 
+#if !USE_DUMB_BACKLIGHT_STROBING
+#define STROBE_DELAY_US   1500  // wait after vblank (settle)
+#define STROBE_WIDTH_US   2000  // ON pulse length
+
+
+// Forward declarations
+int64_t backlight_on_callback(alarm_id_t id, void *user_data);
+int64_t backlight_off_callback(alarm_id_t id, void *user_data);
+
+int64_t backlight_on_callback(alarm_id_t id, void *user_data) {
+    #warning "This might need fixing"
+    increase_lcd_brightness(strobe_brightness); 
+    // schedule OFF pulse after STROBE_WIDTH_US
+    add_alarm_in_us(STROBE_WIDTH_US, backlight_off_callback, NULL, true);
+    return 0;
+}
+
+int64_t backlight_off_callback(alarm_id_t id, void *user_data) {
+    decrease_lcd_brightness(255); // off
+    return 0; // no repeat
+}
+
+// Call this once per frame at vblank
+void backlight_strobe_start(uint8_t duty_cycle) {
+    strobe_brightness = duty_cycle;
+    // Immediately OFF at frame start
+    decrease_lcd_brightness(255);
+    // Schedule ON pulse after delay
+    add_alarm_in_us(STROBE_DELAY_US, backlight_on_callback, NULL, true);
+}
+#endif
 void render_loop() {
     static uint32_t last_frame_num = 0;
     static uint32_t y = 0;
@@ -72,12 +108,26 @@ void render_loop() {
         if (frame_num != last_frame_num) {
             last_frame_num = frame_num;
             y = 0;   
+#if ENABLE_BACKLIGHT_STROBING
+#if USE_DUMB_BACKLIGHT_STROBING
+            if (double_frame_needs_bfi) {
+                strobe_brightness = lcd_led_duty_cycle;
+                decrease_lcd_brightness(MAX_BRIGHTNESS);
+            } else {
+                increase_lcd_brightness(strobe_brightness);
+            }
+#else
+            backlight_strobe_start(lcd_led_duty_cycle);
+#endif
+#endif
+#if ENABLE_BACKLIGHT_STROBING || ENABLE_BFI
             double_frame_needs_bfi = !double_frame_needs_bfi;
+#endif
         }
         #warning "GB Games don't have this issue... so the opposite happens on them"
         int src_y = (y + LCD_HEIGHT - 1) % LCD_HEIGHT;
         // Render scanline
-        render_scanline(scanline_buffer, (y < LCD_HEIGHT) && (!double_frame_needs_bfi || gb.direct.frame_skip == 1) ? front_fb[src_y] : black_fb);
+        render_scanline(scanline_buffer, (y < LCD_HEIGHT) && (!ENABLE_BFI || !double_frame_needs_bfi || gb.direct.frame_skip == 1) ? front_fb[src_y] : black_fb);
 
         scanvideo_end_scanline_generation(scanline_buffer);
 

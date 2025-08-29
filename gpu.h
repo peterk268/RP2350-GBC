@@ -11,6 +11,7 @@
 #define V_B_PORCH 15
 
 #define ENABLE_SCANLINES 0
+#define ENABLE_V_SCANLINES 0
 
 const scanvideo_timing_t tft_timing_320x320_60 = {
     .clock_freq      =  20 * 1000 * 1000,  // 15 MHz
@@ -33,9 +34,9 @@ extern const struct scanvideo_pio_program video_24mhz_composable;  // ← swap i
 const scanvideo_mode_t tft_mode_320x320_60 = {
     .default_timing     = &tft_timing_320x320_60,
     .pio_program        = &video_24mhz_composable, 
-    .width              = 160,
+    .width              = ENABLE_V_SCANLINES ? 320 : 160,
     .height             = ENABLE_SCANLINES ? 320 : 160,
-    .xscale             = 2,
+    .xscale             = ENABLE_V_SCANLINES ? 1 : 2,
     .yscale             = ENABLE_SCANLINES ? 1 : 2,
     .yscale_denominator = 1
 };
@@ -61,7 +62,7 @@ static uint16_t (*back_fb)[LCD_WIDTH] = fb2;
 
 bool double_frame_needs_bfi = 0;
 #define ENABLE_BFI 0
-#define ENABLE_BACKLIGHT_STROBING 1
+#define ENABLE_BACKLIGHT_STROBING 0
 #define USE_DUMB_BACKLIGHT_STROBING 1
 // Keep track of previous brightness level
 static uint8_t strobe_brightness = 0;
@@ -141,7 +142,10 @@ void render_loop() {
         render_scanline(scanline_buffer, (y < LCD_HEIGHT) && (!ENABLE_BFI || !double_frame_needs_bfi || gb.direct.frame_skip == 1) && (!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field)) ? front_fb[src_y] : black_fb);
 
         scanvideo_end_scanline_generation(scanline_buffer);
+
+#if ENABLE_SCANLINES
         scanline_count++;
+#endif
         if (!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field)) {
             y++;
         }
@@ -223,7 +227,14 @@ static inline void raw_scanline_finish(struct scanvideo_scanline_buffer *dest) {
 void render_scanline(struct scanvideo_scanline_buffer *dest, const uint16_t *fb) {
     uint16_t *colour_buf = raw_scanline_prepare(dest, VGA_MODE.width); // VGA_MODE.width = 320
 
+#if ENABLE_V_SCANLINES
+    for (int x = 0; x < LCD_WIDTH; x++) {
+        colour_buf[x * 2]     = fb[x];     // original pixel
+        colour_buf[x * 2 + 1] = 0x0000;    // black pixel
+    }
+#else
     memcpy(colour_buf, fb, LCD_WIDTH * sizeof(uint16_t));
+#endif
 
     raw_scanline_finish(dest);
     dest->status = SCANLINE_OK;

@@ -179,21 +179,6 @@ void setup_dpi() {
     sem_release(&video_setup_complete);
 }
 
-#define MIN_COLOR_RUN 3
-
-int32_t single_color_scanline(uint32_t *buf, size_t buf_length, int width, uint32_t color16) {
-    assert(buf_length >= 2);
-
-    assert(width >= MIN_COLOR_RUN);
-    // | jmp color_run | color | count-3 |  buf[0] =
-    buf[0] = COMPOSABLE_COLOR_RUN | (color16 << 16);
-    buf[1] = (width - MIN_COLOR_RUN) | (COMPOSABLE_RAW_1P << 16);
-    // note we must end with a black pixel
-    buf[2] = 0 | (COMPOSABLE_EOL_ALIGN << 16);
-
-    return 3;
-}
-
 #define VISIBLE_HEIGHT 288
 #define VERTICAL_OFFSET 2
 
@@ -233,11 +218,10 @@ void render_scanline(struct scanvideo_scanline_buffer *dest, const uint16_t *fb)
         colour_buf[x * 2 + 1] = 0x0000;    // black pixel
     }
 #else
-    memcpy(colour_buf, fb, LCD_WIDTH * sizeof(uint16_t));
+    memcpy(colour_buf, fb, VGA_MODE.width * sizeof(uint16_t));
 #endif
 
     raw_scanline_finish(dest);
-    dest->status = SCANLINE_OK;
 }
 
 #if ENABLE_LCD

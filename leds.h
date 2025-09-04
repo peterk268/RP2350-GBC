@@ -3,7 +3,7 @@
 
 // Duty Cycle Values
 #warning "Make these flash variables"
-uint8_t lcd_led_duty_cycle = MAX_BRIGHTNESS/8;   
+uint8_t lcd_led_duty_cycle = MAX_BRIGHTNESS/3;   
 uint8_t pwr_led_duty_cycle = MAX_BRIGHTNESS/8;  
 uint8_t button_led_duty_cycle = MAX_BRIGHTNESS/8; 
 

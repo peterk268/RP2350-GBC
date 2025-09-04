@@ -493,48 +493,75 @@ static inline uint16_t rgb565_to_bgr565(uint16_t rgb) {
 // }
 
 // Replace with your panel's width/height
-#define DISP_HOR_RES 320
-#define DISP_VER_RES 320
+#define DISP_HOR_RES 160
+#define DISP_VER_RES 160
 
-static void lvgl_flush_cb(lv_disp_t * disp, const lv_area_t * area, lv_color_t * color_p) {
+static uint16_t lvgl_fb[DISP_HOR_RES][DISP_VER_RES];
+
+static void lvgl_flush_cb(struct _lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p) {
     int32_t x1 = area->x1;
     int32_t y1 = area->y1;
     int32_t x2 = area->x2;
     int32_t y2 = area->y2;
 
+    scanvideo_wait_for_vblank();
     for (int y = y1; y <= y2; y++) {
-        // Wait for LVGL to give scanline for this row
-        struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
-
-        uint16_t *dst = (uint16_t *)scanline_buffer->data;
         // Fill the region (x1..x2) with LVGL's color data
         // color_p holds the line data row by row
         for (int x = x1; x <= x2; x++) {
-            dst[x] = color_p->full;  // Adjust depending on your RGB565/other format
+            lvgl_fb[y][x] = color_p->full;  // Adjust depending on your RGB565/other format
             color_p++;
         }
 
         // If the rest of the scanline outside x1..x2 should stay black or unchanged,
         // fill dst[0..x1-1] and dst[x2+1..end] accordingly.
-
-        scanvideo_end_scanline_generation(scanline_buffer);
     }
 
-    lv_disp_flush_ready(disp);
+    lv_disp_flush_ready(disp_drv);
+}
+
+void lvgl_render_loop() {
+    static uint32_t last_frame_num = 0;
+    static uint32_t y = 0;
+
+    while (true) {
+        // Wait for scanvideo to be ready for next scanline
+        struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
+        uint32_t frame_num = scanvideo_frame_number(scanline_buffer->scanline_id);
+
+        // Only update frame pointer when a new frame is ready
+        if (frame_num != last_frame_num) {
+            last_frame_num = frame_num;
+            y = 0;   
+        }
+        // Render scanline
+        render_scanline(scanline_buffer, lvgl_fb[y]);
+
+        scanvideo_end_scanline_generation(scanline_buffer);
+
+        y++;
+    }
+}
+
+_Noreturn
+void lvgl_core1(void) {
+    sem_acquire_blocking(&video_setup_complete);
+    lvgl_render_loop();
+    HEDLEY_UNREACHABLE();
 }
 
 // Allocate draw buffers (double buffer, partial height to save RAM)
-#define LV_BUF_LINES 20  // Number of lines per buffer chunk
+#define LV_BUF_LINES DISP_VER_RES  // Number of lines per buffer chunk
 
 static lv_color_t lv_buf1[DISP_HOR_RES * LV_BUF_LINES];
-static lv_color_t lv_buf2[DISP_HOR_RES * LV_BUF_LINES];
+// static lv_color_t lv_buf2[DISP_HOR_RES * LV_BUF_LINES];
 
 void lvgl_setup(void)
 {
     lv_init();
 
     static lv_disp_draw_buf_t draw_buf;
-    lv_disp_draw_buf_init(&draw_buf, lv_buf1, lv_buf2, DISP_HOR_RES * LV_BUF_LINES);
+    lv_disp_draw_buf_init(&draw_buf, lv_buf1, NULL, DISP_HOR_RES * LV_BUF_LINES);
 
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);

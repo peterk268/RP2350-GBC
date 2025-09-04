@@ -173,18 +173,30 @@ int main(void)
 // MARK: - Infinite Loop
 while(true)
 {
+	multicore_launch_core1(lvgl_core1);
 	// MARK: - ROM File selector
-	// lvgl_setup();
+	lvgl_setup();
 
-    // // Create a simple test UI
-    // lv_obj_t *label = lv_label_create(lv_scr_act());
-    // lv_label_set_text(label, "Hello LVGL!");
-    // lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+	// Create a container to hold UI
+	lv_obj_t *cont = lv_obj_create(lv_scr_act());
+	lv_obj_set_size(cont, 160, 160);
+	lv_obj_center(cont);
 
-    // while (1) {
-    //     lv_timer_handler();
-    //     sleep_ms(5);
-    // }
+	// Title label
+	lv_obj_t *title = lv_label_create(cont);
+	lv_label_set_text(title, "Starlight Test UI");
+	lv_obj_set_style_text_font(title, &lv_font_montserrat_10, 0);
+	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
+
+	// Slider
+	lv_obj_t *slider = lv_slider_create(cont);
+	lv_obj_set_width(slider, 120);
+	lv_obj_align(slider, LV_ALIGN_CENTER, 0, 0);
+
+    while (1) {
+    	lv_timer_handler();
+        sleep_ms(5);
+    }
 
 #if ENABLE_LCD
 #if ENABLE_SDCARD

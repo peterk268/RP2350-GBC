@@ -44,6 +44,7 @@
         "gpio.h": "c",
         "cstdint": "cpp",
         "rtc.h": "c",
-        "sleep.h": "c"
+        "sleep.h": "c",
+        "malloc.h": "c"
     }
 }

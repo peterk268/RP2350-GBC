@@ -195,7 +195,7 @@ void setup_dac() {
     dac_i2c_write(1, 0x20, 0b11000110); // Class-D Amplifier powered on
 
     // Wait for drivers to stabilize and ramp up
-    sleep_ms(600); 
+    sleep_ms(100); 
 
     // Unmute drivers and dacs after power up ramp
     unmute_drivers();

@@ -106,6 +106,11 @@ void render_loop() {
     static uint32_t y = 0;
 
     while (true) {
+        if(sd_busy) {
+            // sleep until an event (wakes on SEV)
+            __wfe();
+            continue; // check again after waking
+        }
         // Wait for scanvideo to be ready for next scanline
         struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
         uint32_t frame_num = scanvideo_frame_number(scanline_buffer->scanline_id);
@@ -494,9 +499,20 @@ static inline uint16_t rgb565_to_bgr565(uint16_t rgb) {
 
 // Replace with your panel's width/height
 #define DISP_HOR_RES 160
-#define DISP_VER_RES 160
+#define DISP_VER_RES 144
 
-static uint16_t lvgl_fb[DISP_HOR_RES][DISP_VER_RES];
+// static uint16_t lvgl_fb[DISP_HOR_RES][DISP_VER_RES];
+// Alias with 2D array syntax
+static uint16_t (*lvgl_fb)[LCD_WIDTH] = fb;
+
+// Allocate draw buffers (double buffer, partial height to save RAM)
+#define LV_BUF_LINES DISP_VER_RES  // Number of lines per buffer chunk
+
+// static lv_color_t lv_buf1[DISP_HOR_RES * LV_BUF_LINES];
+// static lv_color_t lv_buf2[DISP_HOR_RES * LV_BUF_LINES];
+
+// Alias backbuffer as 1D LVGL buffer
+static lv_color_t *lv_buf1 = (lv_color_t *)fb2;
 
 static void lvgl_flush_cb(struct _lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p) {
     int32_t x1 = area->x1;
@@ -512,9 +528,6 @@ static void lvgl_flush_cb(struct _lv_disp_drv_t * disp_drv, const lv_area_t * ar
             lvgl_fb[y][x] = color_p->full;  // Adjust depending on your RGB565/other format
             color_p++;
         }
-
-        // If the rest of the scanline outside x1..x2 should stay black or unchanged,
-        // fill dst[0..x1-1] and dst[x2+1..end] accordingly.
     }
 
     lv_disp_flush_ready(disp_drv);
@@ -535,7 +548,7 @@ void lvgl_render_loop() {
             y = 0;   
         }
         // Render scanline
-        render_scanline(scanline_buffer, lvgl_fb[y]);
+        render_scanline(scanline_buffer, y < DISP_VER_RES ? lvgl_fb[y] : black_fb);
 
         scanvideo_end_scanline_generation(scanline_buffer);
 
@@ -550,11 +563,7 @@ void lvgl_core1(void) {
     HEDLEY_UNREACHABLE();
 }
 
-// Allocate draw buffers (double buffer, partial height to save RAM)
-#define LV_BUF_LINES DISP_VER_RES  // Number of lines per buffer chunk
-
-static lv_color_t lv_buf1[DISP_HOR_RES * LV_BUF_LINES];
-// static lv_color_t lv_buf2[DISP_HOR_RES * LV_BUF_LINES];
+static lv_disp_drv_t disp_drv;
 
 void lvgl_setup(void)
 {
@@ -563,7 +572,6 @@ void lvgl_setup(void)
     static lv_disp_draw_buf_t draw_buf;
     lv_disp_draw_buf_init(&draw_buf, lv_buf1, NULL, DISP_HOR_RES * LV_BUF_LINES);
 
-    static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res = DISP_HOR_RES;
     disp_drv.ver_res = DISP_VER_RES;
@@ -577,6 +585,24 @@ void lvgl_task_handler(void)
 {
     lv_timer_handler();
     // call periodically, e.g., every 5–10ms
+}
+
+void lvgl_test(void) {
+    // Create a container to hold UI
+	lv_obj_t *cont = lv_obj_create(lv_scr_act());
+	lv_obj_set_size(cont, DISP_HOR_RES, DISP_VER_RES);
+	lv_obj_center(cont);
+
+	// Title label
+	lv_obj_t *title = lv_label_create(cont);
+	lv_label_set_text(title, "Starlight Test UI");
+	lv_obj_set_style_text_font(title, &lv_font_montserrat_10, 0);
+	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
+
+	// Slider
+	lv_obj_t *slider = lv_slider_create(cont);
+	lv_obj_set_width(slider, 120);
+	lv_obj_align(slider, LV_ALIGN_CENTER, 0, 0);
 }
 
 #endif // ENABLE_LCD

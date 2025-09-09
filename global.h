@@ -65,3 +65,5 @@ repeating_timer_t timer;
 
 bool low_power = false;
 bool low_power_shutdown = false;
+
+volatile bool sd_busy = false;

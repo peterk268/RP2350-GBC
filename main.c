@@ -78,9 +78,9 @@ int main(void)
 	// MARK: - I2C INIT
 	init_i2c();
 
-	#if ENABLE_RTC
+#if ENABLE_RTC
 	initialize_rtc(RTC_DEFAULT_VALUE);
-	#endif
+#endif
 	
 	sleep_ms(10);
 
@@ -95,21 +95,21 @@ int main(void)
 	sleep_ms(10);
 
 	#warning "Hold off on battery monitor"
-	#if ENABLE_BAT_MONITORING
+#if ENABLE_BAT_MONITORING
 	// Trigger the battery check immediately
     process_bat_percent();
 	// Set up a repeating timer for 10 seconds
     if (!add_repeating_timer_ms(10000, battery_timer_callback, NULL, &timer)) {
         printf("Failed to add repeating timer\n");
     }
-	#endif
+#endif
 	// Initialize the ADC for GPIO_AUD_POT_ADC and nHP_DETECT
     init_adc(GPIO_AUD_POT_ADC);
 
 	// MARK: - PWM Set up
 	config_leds();
 
-	#if ENABLE_LCD && USE_IPS_LCD
+#if ENABLE_LCD && USE_IPS_LCD
 	lcd_power_on_reset();
 	init_spi_lcd();
 	gpio_write(IOX_LCD_nCS, 0);
@@ -121,16 +121,22 @@ int main(void)
 	gpio_deinit(GPIO_SPI0_MOSI);
 	gpio_deinit(GPIO_SPI0_MISO);
 	setup_dpi();
-    #endif
+
+	/* Start Core1, which processes requests to the LCD. */
+	putstdio("CORE1 ");
+	multicore_launch_core1(main_core1);
+	putstdio("LCD ");
+
+#endif
 
 	// Enable Audio and SD Card
-	#if ENABLE_SDCARD || ENABLE_SOUND
+#if ENABLE_SDCARD || ENABLE_SOUND
 	write_iox_port1(NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, 1, 0, NO_UPDATE);
-	sleep_ms(2000);
+	sleep_ms(10);
 	gpio_write(IOX_AUDIO_EN, 0);
 	sleep_ms(10);
 	gpio_write(IOX_AUDIO_EN, 1);
-	#endif
+#endif
 
 	// SD WILL HANDLE SPI INIT
 	// gpio_set_function(GPIO_SPI0_SCK, GPIO_FUNC_SPI);
@@ -173,30 +179,7 @@ int main(void)
 // MARK: - Infinite Loop
 while(true)
 {
-	multicore_launch_core1(lvgl_core1);
 	// MARK: - ROM File selector
-	lvgl_setup();
-
-	// Create a container to hold UI
-	lv_obj_t *cont = lv_obj_create(lv_scr_act());
-	lv_obj_set_size(cont, 160, 160);
-	lv_obj_center(cont);
-
-	// Title label
-	lv_obj_t *title = lv_label_create(cont);
-	lv_label_set_text(title, "Starlight Test UI");
-	lv_obj_set_style_text_font(title, &lv_font_montserrat_10, 0);
-	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
-
-	// Slider
-	lv_obj_t *slider = lv_slider_create(cont);
-	lv_obj_set_width(slider, 120);
-	lv_obj_align(slider, LV_ALIGN_CENTER, 0, 0);
-
-    while (1) {
-    	lv_timer_handler();
-        sleep_ms(5);
-    }
 
 #if ENABLE_LCD
 #if ENABLE_SDCARD
@@ -235,12 +218,6 @@ while(true)
     // MARK: - GPU Init
 #if ENABLE_LCD
 	gb_init_lcd(&gb, &lcd_draw_line);
-
-	/* Start Core1, which processes requests to the LCD. */
-	putstdio("CORE1 ");
-	multicore_launch_core1(main_core1);
-
-	putstdio("LCD ");
 #endif
 
     // MARK: - Audio Init
@@ -330,13 +307,13 @@ while(true)
 			if(!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
 				/* select + up: increase sound volume */
 				// i2s_increase_volume(&i2s_config);
-				increase_lcd_brightness(16);
+				increase_lcd_brightness(4);
 				increase_pwr_brightness(4);
 			}
 			if(!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
 				/* select + down: decrease sound volume */
 				// i2s_decrease_volume(&i2s_config);
-				decrease_lcd_brightness(16);
+				decrease_lcd_brightness(4);
 				decrease_pwr_brightness(4);
 			}
 #endif

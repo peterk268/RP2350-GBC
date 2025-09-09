@@ -3,7 +3,7 @@
 #define ENABLE_RTC 0
 #define ENABLE_SOUND	1
 #define ENABLE_SDCARD	1
-#define ENABLE_ROM_SELECTOR	0
+#define ENABLE_ROM_SELECTOR	1
 #define PEANUT_GB_HIGH_LCD_ACCURACY 1
 #define PEANUT_GB_USE_BIOS 0
 #define PEANUT_FULL_GBC_SUPPORT 1
@@ -25,3 +25,30 @@
 #define DISPLAY_SCALE 2
 #define USE_IPS_LCD 1
 #define ENABLE_BAT_MONITORING 0
+
+
+#include <malloc.h>
+
+
+uint32_t _getTotalHeap()
+{
+    extern char __StackLimit, __bss_end__;
+    return &__StackLimit - &__bss_end__;
+}
+uint32_t getFreeHeap()
+{
+    struct mallinfo m = mallinfo();
+    return _getTotalHeap() - m.uordblks;
+}
+
+void print_memory_usage() {
+    struct mallinfo info = mallinfo();
+
+    printf("Total allocated: %d bytes\n", info.uordblks);
+    printf("Total free: %d bytes\n", info.fordblks);
+    printf("Total heap size: %d bytes\n", info.arena);
+    printf("Largest free block: %d bytes\n", info.ordblks);
+    printf("Total Heap: %d bytes\n", _getTotalHeap());
+    printf("Free Heap: %d bytes\n", getFreeHeap());
+
+}

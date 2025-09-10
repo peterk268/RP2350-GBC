@@ -101,6 +101,11 @@ void backlight_strobe_start(uint8_t duty_cycle) {
 }
 #endif
 uint16_t scanline_count = 0;
+
+#define ADD_TOP_PADDING 1
+#define TOP_PADDING 3
+uint16_t top_padding_counter = 0;
+
 void render_loop() {
     static uint32_t last_frame_num = 0;
     static uint32_t y = 0;
@@ -140,20 +145,32 @@ void render_loop() {
 #if ENABLE_BACKLIGHT_STROBING || ENABLE_BFI
             double_frame_needs_bfi = !double_frame_needs_bfi;
 #endif
+
+#if ADD_TOP_PADDING
+            top_padding_counter = 0;
+#endif
         }
         #warning "GB Games don't have this issue... so the opposite happens on them"
         int src_y = (y + LCD_HEIGHT - 1) % LCD_HEIGHT;
         // Render scanline
-        render_scanline(scanline_buffer, (y < LCD_HEIGHT) && (!ENABLE_BFI || !double_frame_needs_bfi || gb.direct.frame_skip == 1) && (!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field)) ? front_fb[src_y] : black_fb);
+        render_scanline(scanline_buffer, (y < LCD_HEIGHT) 
+        && (!ENABLE_BFI || !double_frame_needs_bfi || gb.direct.frame_skip == 1) 
+        && (!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field)) 
+        && (!ADD_TOP_PADDING || (top_padding_counter > TOP_PADDING))
+        ? front_fb[src_y] : black_fb);
 
         scanvideo_end_scanline_generation(scanline_buffer);
 
+        if ((!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field))  
+        && (!ADD_TOP_PADDING || (top_padding_counter > TOP_PADDING))) {
+            y++;
+        }
+#if ADD_TOP_PADDING
+        top_padding_counter++;
+#endif
 #if ENABLE_SCANLINES
         scanline_count++;
 #endif
-        if (!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field)) {
-            y++;
-        }
     }
 }
 

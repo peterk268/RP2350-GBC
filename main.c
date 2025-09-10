@@ -136,6 +136,7 @@ int main(void)
 	gpio_write(IOX_AUDIO_EN, 0);
 	sleep_ms(10);
 	gpio_write(IOX_AUDIO_EN, 1);
+	sleep_ms(10); // this is needed or audio won't work sometimes
 #endif
 
 	// SD WILL HANDLE SPI INIT
@@ -319,25 +320,21 @@ while(true)
 #endif
 			if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
 				/* select + right: select the next manual color palette */
-				// config_led(GPIO_BUTTON_LED, button_led_duty_cycle, true);
-				// sleep_ms(10);
-				// increase_button_brightness(32);
-				if(manual_palette_selected<12) {
-					manual_palette_selected++;
-					manual_assign_palette(palette,manual_palette_selected);
-				}	
+				increase_button_brightness(16);
+				// if(manual_palette_selected<12) {
+				// 	manual_palette_selected++;
+				// 	manual_assign_palette(palette,manual_palette_selected);
+				// }	
 			}
 			if(!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
 				/* select + left: select the previous manual color palette */
-				// config_led(GPIO_BUTTON_LED, button_led_duty_cycle, true);
-				// sleep_ms(10);
-				// decrease_button_brightness(32);
-				if(manual_palette_selected>-1) {
-					manual_palette_selected--;
-					if (manual_palette_selected != -1) {
-						manual_assign_palette(palette,manual_palette_selected);
-					}
-				}
+				decrease_button_brightness(16);
+				// if(manual_palette_selected>-1) {
+				// 	manual_palette_selected--;
+				// 	if (manual_palette_selected != -1) {
+				// 		manual_assign_palette(palette,manual_palette_selected);
+				// 	}
+				// }
 			}
 			if(!gb.direct.joypad_bits.start && prev_joypad_bits.start) {
 				/* select + start: save ram and resets to the game selection menu */

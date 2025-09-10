@@ -15,7 +15,7 @@ void read_cart_ram_file(struct gb_s *gb) {
 	gb_get_rom_name(gb,filename);
 	save_size=gb_get_save_size(gb);
 	if(save_size>0) {
-		set_sd_busy(true);
+		// set_sd_busy(true);
 
 		sd_card_t *pSD=sd_get_by_num(0);
 		FRESULT fr=f_mount(&pSD->fatfs,pSD->pcName,1);
@@ -38,7 +38,7 @@ void read_cart_ram_file(struct gb_s *gb) {
 		}
 		f_unmount(pSD->pcName);	
 
-		set_sd_busy(false);
+		// set_sd_busy(false);
 	}
 	printf("I read_cart_ram_file(%s) COMPLETE (%lu bytes)\n",filename,save_size);
 }
@@ -54,7 +54,7 @@ void write_cart_ram_file(struct gb_s *gb) {
 	gb_get_rom_name(gb,filename);
 	save_size=gb_get_save_size(gb);
 	if(save_size>0) {
-		set_sd_busy(true);
+		// set_sd_busy(true);
 
 		sd_card_t *pSD=sd_get_by_num(0);
 		FRESULT fr=f_mount(&pSD->fatfs,pSD->pcName,1);
@@ -77,7 +77,7 @@ void write_cart_ram_file(struct gb_s *gb) {
 		}
 		f_unmount(pSD->pcName);
 
-		set_sd_busy(false);
+		// set_sd_busy(false);
 	}
 	printf("I write_cart_ram_file(%s) COMPLETE (%lu bytes)\n",filename,save_size);
 }

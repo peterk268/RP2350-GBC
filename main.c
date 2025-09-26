@@ -249,9 +249,24 @@ while(true)
     }
 	#endif
 
+#if ENABLE_SAVE_ON_POWER_OFF
+	hold_power(); // keep power on for gameplay
+#endif
     // MARK: - Game Play
 	while(1)
 	{
+	
+#if ENABLE_SAVE_ON_POWER_OFF
+		// power switch off
+		if (!gpio_read(GPIO_SW_OUT)) {
+			// save to sd card
+#if ENABLE_SDCARD				
+			write_cart_ram_file(&gb);
+#endif			
+			sleep_ms(5);
+			release_power(); // turn power off
+		}
+#endif
 		int input;
 
 		gb.gb_frame = 0;

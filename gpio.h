@@ -118,7 +118,11 @@ void setup_hold_power() {
     gpio_set_function(GPIO_PWR_HOLD, GPIO_FUNC_SIO);
 	gpio_set_dir(GPIO_PWR_HOLD, true);
     gpio_write(GPIO_PWR_HOLD, false);
+
+    gpio_init(GPIO_SW_OUT);
+    gpio_set_dir(GPIO_SW_OUT, GPIO_IN);
 }
+
 void hold_power() {
     gpio_write(GPIO_PWR_HOLD, true);
 }

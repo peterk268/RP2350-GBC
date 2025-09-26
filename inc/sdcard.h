@@ -34,7 +34,7 @@ static spi_t spis[]={
         .miso_gpio=GPIO_SPI0_MISO,
         .mosi_gpio=GPIO_SPI0_MOSI,
         .sck_gpio=GPIO_SPI0_SCK,
-        .baud_rate=400*1000,
+        .baud_rate=10*1000*1000,
         .dma_isr=spi_dma_isr
     }
 };

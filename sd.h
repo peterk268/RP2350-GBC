@@ -556,6 +556,7 @@ void rom_file_selector() {
 	}
 }
 */
+uint16_t get_bat_charge_percent();
 
 void rom_file_selector() {	
     // Create list
@@ -585,6 +586,14 @@ void rom_file_selector() {
 	lv_label_set_text(title, filename[selected]);
 	lv_obj_set_style_text_font(title, &lv_font_montserrat_10, 0);
 	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
+
+	uint16_t bat_percent = get_bat_charge_percent();
+	lv_obj_t *percent = lv_label_create(cont);
+	char percent_text[32];
+	snprintf(percent_text, sizeof(percent_text), "Battery: %d%%", bat_percent);
+	lv_label_set_text(percent, percent_text);
+	lv_obj_set_style_text_font(percent, &lv_font_montserrat_10, 0);
+	lv_obj_align(percent, LV_ALIGN_BOTTOM_MID, 0, 5);
 	
 
 	// input loop

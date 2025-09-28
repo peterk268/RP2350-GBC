@@ -106,14 +106,28 @@ uint16_t scanline_count = 0;
 #define TOP_PADDING 3
 uint16_t top_padding_counter = 0;
 
+
+bool watchdog_feed_cb(struct repeating_timer *t) {
+    watchdog_update();
+    return true;
+}
+
 void render_loop() {
     static uint32_t last_frame_num = 0;
     static uint32_t y = 0;
 
+    struct repeating_timer timer;
+    add_repeating_timer_ms(500, watchdog_feed_cb, NULL, &timer);
+
+
     while (true) {
         if(sd_busy) {
+            uint8_t duty_cycle = lcd_led_duty_cycle;
+            // Immediately OFF at frame start
+            decrease_lcd_brightness(MAX_BRIGHTNESS);
             // sleep until an event (wakes on SEV)
             __wfe();
+            increase_lcd_brightness(duty_cycle);
             continue; // check again after waking
         }
         // Wait for scanvideo to be ready for next scanline

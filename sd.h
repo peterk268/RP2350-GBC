@@ -85,136 +85,88 @@ void write_cart_ram_file(struct gb_s *gb) {
 /**
  * Load a .gb rom file in flash from the SD card 
  */ 
-void load_cart_rom_file(char *filename) {
-	UINT br;
-	uint8_t buffer[FLASH_SECTOR_SIZE];
-	// bool mismatch=false;
-	sd_card_t *pSD=sd_get_by_num(0);
-	FRESULT fr=f_mount(&pSD->fatfs,pSD->pcName,1);
-	if (FR_OK!=fr) {
-		printf("E f_mount error: %s (%d)\n",FRESULT_str(fr),fr);
-		return;
-	}
-	FIL fil;
-	fr=f_open(&fil,filename,FA_READ);
-	if (fr==FR_OK) {
-		uint32_t flash_target_offset=FLASH_TARGET_OFFSET;
-		set_sd_busy(true);
-		for(;;) {
-			#warning "DMA/FLASH/RESOURCE CONTENTION WITH SD AND SCANVIDEO, SLEEPING FIXES"
-			sleep_ms(1);
-			f_read(&fil,buffer,sizeof buffer,&br);
-			if(br==0) break; /* end of file */
+#define ERASE_SIZE   (64 * 1024)    // 4 KB minimum erase size (SDK requirement)
+#define PAGE_SIZE    (4 * 1024)    // 4 KB program page
+#define BLOCK_SIZE   (64 * 1024)   // SD read buffer size (big enough but not too big)
 
-			uint32_t ints = save_and_disable_interrupts();
 
-			// printf("I Erasing target region...\n");
-			flash_range_erase(flash_target_offset,FLASH_SECTOR_SIZE);
-			// printf("I Programming target region...\n");
-			flash_range_program(flash_target_offset,buffer,FLASH_SECTOR_SIZE);
+void load_cart_rom_file(const char *filename) {
+    FRESULT fr;
+    FIL fil;
+    UINT br;
+    sd_card_t *pSD = sd_get_by_num(0);
 
-			restore_interrupts (ints);
-			
-			/* Read back target region and check programming */
-			// printf("I Done. Reading back target region...\n");
-			// for(uint32_t i=0;i<FLASH_SECTOR_SIZE;i++) {
-			// 	if(rom[flash_target_offset+i]!=buffer[i]) {
-			// 		mismatch=true;
-			// 	}
-			// }
+	set_sd_busy(true);
 
-			/* Next sector */
-			flash_target_offset+=FLASH_SECTOR_SIZE;
-			#warning "Implement this soon"
-			// CHATGPT OPTIMIZATION
-			/*
-			#define BLOCK_SIZE 65536  // 64KB
-			uint8_t buffer[BLOCK_SIZE];  // Needs enough RAM (check stack usage)
+    // Mount SD card
+    fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+    if (fr != FR_OK) {
+        printf("E f_mount error: %s (%d)\n", FRESULT_str(fr), fr);
+        return;
+    }
 
-			for (;;) {
-				f_read(&fil, buffer, BLOCK_SIZE, &br);
-				if (br == 0) break;
+    fr = f_open(&fil, filename, FA_READ);
+    if (fr != FR_OK) {
+        printf("E f_open(%s) error: %s (%d)\n", filename, FRESULT_str(fr), fr);
+        f_unmount(pSD->pcName);
+        return;
+    }
 
-				// Erase all sectors in this block
-				for (uint32_t i = 0; i < br; i += FLASH_SECTOR_SIZE)
-					flash_range_erase(flash_target_offset + i, FLASH_SECTOR_SIZE);
+	watchdog_disable();
 
-				// Program in 256-byte chunks (page size)
-				for (uint32_t i = 0; i < br; i += FLASH_PAGE_SIZE)
-					flash_range_program(flash_target_offset + i, buffer + i, FLASH_PAGE_SIZE);
+    // Get file size
+    uint32_t rom_size = f_size(&fil);
+    printf("I ROM size = %lu bytes\n", rom_size);
 
-				flash_target_offset += br;
-			}
-			*/
-		
-			/*64KB Sector erase FUKYES
-			void load_cart_rom_file(char *filename) {
-				UINT br;
-				const uint32_t BLOCK_SIZE = 64 * 1024;  // 64KB
-				const uint32_t PAGE_SIZE = 256;
-				uint8_t buffer[BLOCK_SIZE];  // Ensure you have enough stack or use malloc
-				sd_card_t *pSD = sd_get_by_num(0);
-				FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
-				if (FR_OK != fr) {
-					printf("E f_mount error: %s (%d)\n", FRESULT_str(fr), fr);
-					return;
-				}
+    // // Round erase size up to nearest 4 KB
+    uint32_t erase_size = (rom_size + ERASE_SIZE - 1) & ~(ERASE_SIZE - 1);
+    // Erase flash region up front
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase(FLASH_TARGET_OFFSET, erase_size);
+    restore_interrupts(ints);
+    printf("I Erased %lu KB flash\n", erase_size / 1024);
+    // Allocate buffer (not on stack)
+    static uint8_t *buffer = NULL;
+    if (!buffer) {
+        buffer = malloc(BLOCK_SIZE);
+        if (!buffer) {
+            printf("E malloc failed\n");
+            f_close(&fil);
+            f_unmount(pSD->pcName);
+            return;
+        }
+    }
 
-				FIL fil;
-				fr = f_open(&fil, filename, FA_READ);
-				if (fr == FR_OK) {
-					uint32_t flash_target_offset = FLASH_TARGET_OFFSET;
+    // Stream ROM file into flash
+    uint32_t flash_target_offset = FLASH_TARGET_OFFSET;
+    for (;;) {
+		#warning "DMA/FLASH/RESOURCE CONTENTION WITH SD AND SCANVIDEO, SLEEPING FIXES"
+		// sleep_ms(1);
+        fr = f_read(&fil, buffer, BLOCK_SIZE, &br);
+        if (fr != FR_OK) {
+            printf("E f_read error: %s (%d)\n", FRESULT_str(fr), fr);
+            break;
+        }
+        if (br == 0) break; // EOF
 
-					for (;;) {
-						f_read(&fil, buffer, BLOCK_SIZE, &br);
-						if (br == 0) break;
+        // Program flash in 256-byte pages
+        for (uint32_t i = 0; i < br; i += PAGE_SIZE) {
+            uint32_t write_len = (br - i >= PAGE_SIZE) ? PAGE_SIZE : (br - i);
 
-						uint32_t ints = save_and_disable_interrupts();
+            ints = save_and_disable_interrupts();
+            flash_range_program(flash_target_offset + i, buffer + i, write_len);
+            restore_interrupts(ints);
+        }
 
-						// Erase one 64KB block
-						flash_do_cmd_addr(FUNC_XIP_SSI, 0xD8, flash_target_offset);
-						// Wait until erase is complete (WIP bit in status reg cleared)
-						while (flash_get_cmd(FUNC_XIP_SSI, 0x05) & 0x01);
+        flash_target_offset += br;
+    }
+	set_sd_busy(false);
+	watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
 
-						// Program in 256-byte chunks (page size)
-						for (uint32_t i = 0; i < br; i += PAGE_SIZE) {
-							flash_range_program(flash_target_offset + i, buffer + i, PAGE_SIZE);
-						}
+    f_close(&fil);
+    f_unmount(pSD->pcName);
 
-						restore_interrupts(ints);
-						flash_target_offset += br;
-					}
-				} else {
-					printf("E f_open(%s) error: %s (%d)\n", filename, FRESULT_str(fr), fr);
-				}
-
-				fr = f_close(&fil);
-				if (fr != FR_OK) {
-					printf("E f_close error: %s (%d)\n", FRESULT_str(fr), fr);
-				}
-				f_unmount(pSD->pcName);
-				printf("I load_cart_rom_file(%s) COMPLETE\n", filename);
-			}
-
-			*/
-		}
-		// if(mismatch) {
-	    //     printf("I Programming successful!\n");
-		// } else {
-		// 	printf("E Programming failed!\n");
-		// }
-		set_sd_busy(false);
-	} else {
-		printf("E f_open(%s) error: %s (%d)\n",filename,FRESULT_str(fr),fr);
-	}
-	
-	fr=f_close(&fil);
-	if(fr!=FR_OK) {
-		printf("E f_close error: %s (%d)\n", FRESULT_str(fr), fr);
-	}
-	f_unmount(pSD->pcName);
-
-	printf("I load_cart_rom_file(%s) COMPLETE (%lu bytes)\n",filename,br);
+    printf("I load_cart_rom_file(%s) COMPLETE (%lu bytes written)\n", filename, rom_size);
 }
 
 /**
@@ -557,6 +509,9 @@ void rom_file_selector() {
 }
 */
 uint16_t get_bat_charge_percent();
+uint16_t get_remaining_bat_capacity_mAh();
+uint16_t get_full_bat_capacity_mAh();
+uint16_t read_voltage_mV();
 
 void rom_file_selector() {	
     // Create list
@@ -588,9 +543,15 @@ void rom_file_selector() {
 	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
 
 	uint16_t bat_percent = get_bat_charge_percent();
+	uint16_t remaining_cap = get_remaining_bat_capacity_mAh();
+	uint16_t full_cap = get_full_bat_capacity_mAh();
+	uint16_t voltage_mV = read_voltage_mV();
+
 	lv_obj_t *percent = lv_label_create(cont);
-	char percent_text[32];
-	snprintf(percent_text, sizeof(percent_text), "Battery: %d%%", bat_percent);
+	char percent_text[64];  // increased size for multiple lines
+	snprintf(percent_text, sizeof(percent_text),
+			"Battery: %d%%\nRemaining: %dmAh\nFull: %dmAh\nVoltage: %.2fV",
+			bat_percent, remaining_cap, full_cap, voltage_mV / 1000.0);
 	lv_label_set_text(percent, percent_text);
 	lv_obj_set_style_text_font(percent, &lv_font_montserrat_10, 0);
 	lv_obj_align(percent, LV_ALIGN_BOTTOM_MID, 0, 5);

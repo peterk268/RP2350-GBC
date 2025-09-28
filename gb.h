@@ -26,6 +26,7 @@ void gb_cart_ram_write(struct gb_s *gb, const uint_fast32_t addr,
 		       const uint8_t val)
 {
 	ram[addr] = val;
+	ram_changed = true;
 }
 
 /**

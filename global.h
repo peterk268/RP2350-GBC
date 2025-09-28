@@ -67,3 +67,5 @@ bool low_power = false;
 bool low_power_shutdown = false;
 
 volatile bool sd_busy = false;
+
+bool ram_changed = false;

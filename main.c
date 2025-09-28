@@ -53,6 +53,8 @@
 
 int main(void)
 {
+	watchdog_enable(WATCHDOG_TIMEOUT_MS, true); // 2 second timeout, pause-on-debug = true
+	
 	enum gb_init_error_e ret;
 	
 	// MARK: - Overclock
@@ -252,6 +254,8 @@ while(true)
 #if ENABLE_SAVE_ON_POWER_OFF
 	hold_power(); // keep power on for gameplay
 #endif
+	uint8_t save_wait_counter = 0;
+
     // MARK: - Game Play
 	while(1)
 	{
@@ -283,6 +287,22 @@ while(true)
 		if (frames >= fps) {
 			gb_tick_rtc(&gb);
 			frames = 0; // Reset counter
+
+#if ENABLE_AUTO_SAVE
+			save_wait_counter++;
+			// Auto-save every 30 seconds if there is a change in RAM
+			if (save_wait_counter >= 30) {
+				save_wait_counter = 0;
+				if (ram_changed) {
+					printf("RAM changed, saving...\n");
+					ram_changed = false;
+					// save to sd card
+#if ENABLE_SDCARD				
+					write_cart_ram_file(&gb);
+#endif
+				}
+			}
+#endif
 		}
 
 #if ENABLE_SOUND

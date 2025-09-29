@@ -22,6 +22,19 @@ uint16_t read_register(uint8_t reg) {
     return (buffer[1] << 8) | buffer[0];
 }
 
+uint8_t read_register_8(uint8_t reg) {
+    uint8_t val;
+
+    // Write the register address (no stop)
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, &reg, 1, true);
+
+    // Read 1 byte from the register
+    i2c_read_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, &val, 1, false);
+
+    return val;
+}
+
+
 uint16_t read_voltage_mV() {
     return read_register(0x04);
 }
@@ -151,9 +164,82 @@ void change_bat_chem_to_lipo() {
     soft_reset_bat_monitor();
 }
 
+void set_design_capacity(uint16_t cap_mah) {
+    uint8_t data[2];
+
+    // --- Step 1: Enter CFGUPDATE mode ---
+    subcommand_control(0x0013);  // SET_CFGUPDATE
+    printf("Entered CFGUPDATE mode.\n");
+
+    // --- Step 2: Enable Block Data Memory control ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x61, 0x00}, 2, false);
+    printf("Block data memory control enabled.\n");
+
+    // --- Step 3: Select State subclass (0x52) ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x3E, 0x52}, 2, false);
+    printf("State subclass 0x52 selected.\n");
+
+    // --- Step 4: Set block offset to 0 ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x3F, 0x00}, 2, false);
+    printf("Block offset set to 0.\n");
+
+    // --- Step 5: Read old checksum and old capacity/energy bytes ---
+    uint8_t old_csum   = read_register_8(0x60);
+    uint8_t old_cap_msb = read_register_8(0x46);
+    uint8_t old_cap_lsb = read_register_8(0x47);
+    uint8_t old_energy_msb = read_register_8(0x48);
+    uint8_t old_energy_lsb = read_register_8(0x49);
+
+    printf("Old checksum: 0x%02X\n", old_csum);
+    printf("Old Capacity: MSB=0x%02X LSB=0x%02X\n", old_cap_msb, old_cap_lsb);
+    printf("Old Energy: MSB=0x%02X LSB=0x%02X\n", old_energy_msb, old_energy_lsb);
+
+    // --- Step 6: Write new Design Capacity ---
+    uint8_t new_cap_lsb = cap_mah & 0xFF;
+    uint8_t new_cap_msb = (cap_mah >> 8) & 0xFF;
+
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x46, new_cap_msb}, 2, false);
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x47, new_cap_lsb}, 2, false);
+    printf("Wrote new Capacity: MSB=0x%02X LSB=0x%02X\n", new_cap_msb, new_cap_lsb);
+
+    // --- Step 7: Write new Design Energy ---
+    uint16_t design_energy = (uint16_t)(cap_mah * 37 / 10); // 3.7V approximation
+    uint8_t energy_lsb = design_energy & 0xFF;
+    uint8_t energy_msb = (design_energy >> 8) & 0xFF;
+
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x48, energy_msb}, 2, false);
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x49, energy_lsb}, 2, false);
+    printf("Wrote new Energy: MSB=0x%02X LSB=0x%02X\n", energy_msb, energy_lsb);
+
+    // --- Step 8: Compute new checksum (update with capacity and energy) ---
+    uint16_t temp_old_sum = old_cap_lsb + old_cap_msb + old_energy_lsb + old_energy_msb;
+    uint16_t temp_new_sum = new_cap_lsb + new_cap_msb + energy_lsb + energy_msb;
+    uint8_t new_csum = 255 - ((255 - old_csum - temp_old_sum + temp_new_sum) & 0xFF);
+
+    // --- Step 9: Write new checksum ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, &new_csum, 1, false);
+    printf("Wrote new checksum: 0x%02X\n", new_csum);
+
+    // --- Step 10: Soft reset to apply changes ---
+    soft_reset_bat_monitor();
+    printf("Soft reset sent, CFGUPDATE exited.\n");
+
+    // --- Step 11: Confirm values ---
+    uint8_t check_cap_msb = read_register_8(0x46);
+    uint8_t check_cap_lsb = read_register_8(0x47);
+    uint8_t check_energy_msb = read_register_8(0x48);
+    uint8_t check_energy_lsb = read_register_8(0x49);
+    uint8_t check_csum = read_register_8(0x60);
+
+    printf("Confirm Capacity: MSB=0x%02X LSB=0x%02X\n", check_cap_msb, check_cap_lsb);
+    printf("Confirm Energy: MSB=0x%02X LSB=0x%02X\n", check_energy_msb, check_energy_lsb);
+    printf("Confirm Checksum: 0x%02X\n", check_csum);
+}
+
 void config_battery_monitor() {
     reset_bat_monitor();
     sleep_us(100);
+    set_design_capacity(1500);
     change_bat_chem_to_lipo();
 
     // enable bat monitor shutdown when we shutdown peripherals.

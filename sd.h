@@ -3,16 +3,159 @@
  * Load a save file from the SD card
  */
 
+#define MAX_FILES 22
+
+static lv_obj_t *rom_list;
+static uint16_t num_page = 0;
+static uint16_t num_file = 0;
+static char filename[MAX_FILES][256];
+static uint16_t selected = 0;
+
 void set_sd_busy(bool is_sd_busy) {
 	sd_busy = is_sd_busy;
 	__sev();
 }
+
+#define FILENAME_MAX_LEN 256
+
+typedef struct {
+    uint32_t magic;                   // magic number to verify valid data
+    char last_filename[FILENAME_MAX_LEN]; // last ROM loaded
+    uint8_t battery_slot;             // selected battery slot (0,1,...)
+    uint8_t state_slot;               // selected save state slot
+} settings_t;
+
+void save_settings_to_flash(const char *filename, uint8_t battery_slot, uint8_t state_slot) {
+    settings_t buffer;
+    memset(&buffer, 0xFF, sizeof(buffer)); // erased state
+    buffer.magic = 0xA5A5A5A5;             // arbitrary magic number
+    strncpy(buffer.last_filename, filename, FILENAME_MAX_LEN-1);
+    buffer.battery_slot = battery_slot;
+    buffer.state_slot = state_slot;
+
+	uint32_t ints = save_and_disable_interrupts();
+    // erase page
+    flash_range_erase(SETTINGS_OFFSET, FLASH_PAGE_SIZE);
+    // program flash
+    flash_range_program(SETTINGS_OFFSET, (uint8_t*)&buffer, sizeof(buffer));
+	restore_interrupts(ints);
+}
+
+bool read_settings_from_flash(char *out_filename, size_t max_len, uint8_t *battery_slot, uint8_t *state_slot) {
+    const settings_t *flash_ptr = (const settings_t *)(XIP_BASE + SETTINGS_OFFSET);
+
+    // verify magic
+    if (flash_ptr->magic != 0xA5A5A5A5) {
+        return false; // invalid or uninitialized
+    }
+
+    strncpy(out_filename, flash_ptr->last_filename, max_len-1);
+    out_filename[max_len-1] = 0;
+    *battery_slot = flash_ptr->battery_slot;
+    *state_slot = flash_ptr->state_slot;
+    return true;
+}
+
+typedef enum {
+    SAVE_BATTERY,   // .sav
+    SAVE_STATE,     // .sta
+    SAVE_SCREENSHOT // .png
+} save_type_t;
+
+/**
+ * Build a full save path for a ROM, supporting battery saves, states, and screenshots.
+ *
+ * @param rom_filename  The ROM filename
+ * @param type          The type of save
+ * @param slot          For battery: battery slot (0=default save.sav)
+ *                      For state/screenshot: state/screenshot number
+ * @param out_path      Buffer to store the resulting full path
+ * @param out_path_size Size of out_path buffer
+ * @return 0 on success, non-zero on error
+ */
+int build_save_path(const char *rom_filename, save_type_t type, int slot, char *out_path, size_t out_path_size) {
+    char folder[256];
+    char folder_name[256];
+
+    // Copy ROM filename and strip extension
+    strncpy(folder_name, rom_filename, sizeof(folder_name));
+    folder_name[sizeof(folder_name)-1] = 0;
+    char *dot = strrchr(folder_name, '.');
+    if(dot) *dot = 0;
+
+	char safe_name[256];
+	const char *src = folder_name;  // folder_name has extension stripped
+	char *dst = safe_name;
+	while(*src && (dst - safe_name) < sizeof(safe_name)-1) {
+		char c = *src++;
+		if( (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '_' || c == '-' ) { // remove space
+			*dst++ = c;
+		} else {
+			*dst++ = '_';
+		}
+	}
+	*dst = '\0';
+	printf("Creating folder: GBC/Saves/%s\n", safe_name);
+
+
+    // Build folder path
+    snprintf(folder, sizeof(folder), "GBC/Saves/%s", safe_name);
+
+	f_mkdir("GBC");
+	f_mkdir("GBC/Saves");
+    // Make sure folder exists
+    FRESULT fr = f_mkdir(folder);
+    if(fr != FR_OK && fr != FR_EXIST) {
+        printf("E f_mkdir error: %d\n", fr);
+        return fr;
+    }
+
+    // Build file path based on type
+    switch(type) {
+        case SAVE_BATTERY:
+            if(slot <= 0)
+                snprintf(out_path, out_path_size, "%s/save.sav", folder);
+            else
+                snprintf(out_path, out_path_size, "%s/save%d.sav", folder, slot);
+            break;
+        case SAVE_STATE:
+            snprintf(out_path, out_path_size, "%s/state%d.sta", folder, slot);
+            break;
+        case SAVE_SCREENSHOT:
+            snprintf(out_path, out_path_size, "%s/screenshot%d.png", folder, slot);
+            break;
+        default:
+            return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * Build save path using ROM filename and battery slot stored in flash
+ */
+int build_save_path_from_flash(save_type_t type, char *out_path, size_t out_path_size) {
+    char rom_filename[FILENAME_MAX_LEN];
+    uint8_t battery_slot, save_state_slot;
+
+    if(!read_settings_from_flash(rom_filename, sizeof(rom_filename), &battery_slot, &save_state_slot)) {
+        printf("E: No valid flash settings found\n");
+        return -1;
+    }
+
+    // For SAVE_BATTERY, use the flash battery_slot as the "slot" parameter
+    int effective_slot = (type == SAVE_BATTERY) ? battery_slot : save_state_slot;
+
+    return build_save_path(rom_filename, type, effective_slot, out_path, out_path_size);
+}
+
+
 void read_cart_ram_file(struct gb_s *gb) {
-	char filename[16];
+
 	uint_fast32_t save_size;
 	UINT br;
-	
-	gb_get_rom_name(gb,filename);
+
 	save_size=gb_get_save_size(gb);
 	if(save_size>0) {
 		// set_sd_busy(true);
@@ -24,12 +167,15 @@ void read_cart_ram_file(struct gb_s *gb) {
 			return;
 		}
 
+		char save_path[512];
+		build_save_path_from_flash(SAVE_BATTERY, save_path, sizeof(save_path));
+
 		FIL fil;
-		fr=f_open(&fil,filename,FA_READ);
+		fr=f_open(&fil,save_path,FA_READ);
 		if (fr==FR_OK) {
 			f_read(&fil,ram,f_size(&fil),&br);
 		} else {
-			printf("E f_open(%s) error: %s (%d)\n",filename,FRESULT_str(fr),fr);
+			printf("E f_open(%s) error: %s (%d)\n",save_path,FRESULT_str(fr),fr);
 		}
 		
 		fr=f_close(&fil);
@@ -39,19 +185,17 @@ void read_cart_ram_file(struct gb_s *gb) {
 		f_unmount(pSD->pcName);	
 
 		// set_sd_busy(false);
+		printf("I read_cart_ram_file(%s) COMPLETE (%lu bytes)\n",save_path,save_size);
 	}
-	printf("I read_cart_ram_file(%s) COMPLETE (%lu bytes)\n",filename,save_size);
 }
 
 /**
  * Write a save file to the SD card
  */
 void write_cart_ram_file(struct gb_s *gb) {
-	char filename[16];
 	uint_fast32_t save_size;
 	UINT bw;
 	
-	gb_get_rom_name(gb,filename);
 	save_size=gb_get_save_size(gb);
 	if(save_size>0) {
 		// set_sd_busy(true);
@@ -63,12 +207,15 @@ void write_cart_ram_file(struct gb_s *gb) {
 			return;
 		}
 
+		char save_path[512];
+		build_save_path_from_flash(SAVE_BATTERY, save_path, sizeof(save_path));
+
 		FIL fil;
-		fr=f_open(&fil,filename,FA_CREATE_ALWAYS | FA_WRITE);
+		fr=f_open(&fil,save_path,FA_CREATE_ALWAYS | FA_WRITE);
 		if (fr==FR_OK) {
 			f_write(&fil,ram,save_size,&bw);
 		} else {
-			printf("E f_open(%s) error: %s (%d)\n",filename,FRESULT_str(fr),fr);
+			printf("E f_open(%s) error: %s (%d)\n",save_path,FRESULT_str(fr),fr);
 		}
 		
 		fr=f_close(&fil);
@@ -78,8 +225,8 @@ void write_cart_ram_file(struct gb_s *gb) {
 		f_unmount(pSD->pcName);
 
 		// set_sd_busy(false);
+		printf("I write_cart_ram_file(%s) COMPLETE (%lu bytes)\n",save_path,save_size);
 	}
-	printf("I write_cart_ram_file(%s) COMPLETE (%lu bytes)\n",filename,save_size);
 }
 
 /**
@@ -166,6 +313,8 @@ void load_cart_rom_file(const char *filename) {
     f_close(&fil);
     f_unmount(pSD->pcName);
 
+	save_settings_to_flash(filename, 0, 0);
+
     printf("I load_cart_rom_file(%s) COMPLETE (%lu bytes written)\n", filename, rom_size);
 }
 
@@ -231,14 +380,6 @@ uint16_t rom_file_selector_display_page(char filename[22][256],uint16_t num_page
 	#endif
 	return num_file;
 }
-
-#define MAX_FILES 22
-
-static lv_obj_t *rom_list;
-static uint16_t num_page = 0;
-static uint16_t num_file = 0;
-static char filename[MAX_FILES][256];
-static uint16_t selected = 0;
 
 // Forward declaration
 uint16_t rom_file_selector_display_page(char filename[MAX_FILES][256], uint16_t num_page);

@@ -52,9 +52,7 @@
 
 
 int main(void)
-{
-	watchdog_enable(WATCHDOG_TIMEOUT_MS, true); // 2 second timeout, pause-on-debug = true
-	
+{	
 	enum gb_init_error_e ret;
 	
 	// MARK: - Overclock
@@ -251,6 +249,7 @@ while(true)
     }
 	#endif
 
+	watchdog_enable(WATCHDOG_TIMEOUT_MS, true); // 2 second timeout, pause-on-debug = true
 #if ENABLE_SAVE_ON_POWER_OFF
 	hold_power(); // keep power on for gameplay
 #endif

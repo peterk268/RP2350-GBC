@@ -30,6 +30,8 @@
 
 #define WATCHDOG_TIMEOUT_MS 2000
 
+#define SETTINGS_OFFSET (8 * 1024 * 1024)  // 8 MB offset, 4 KB page
+
 #include <malloc.h>
 
 

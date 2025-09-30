@@ -1,3 +1,6 @@
+#include "cgb_boot.h"
+#include "dmg_boot.h"
+
 /**
  * Returns a byte from the ROM file at the given address.
  */
@@ -45,3 +48,12 @@ void gb_error(struct gb_s *gb, const enum gb_error_e gb_err, const uint16_t addr
 //	abort();
 #endif
 }
+
+// Function that reads a byte from the boot ROM array
+static uint8_t cgb_bootrom_read(struct gb_s *gb, const uint_fast16_t addr) {
+    return cgb_boot_bin[addr];
+}
+static uint8_t dmg_bootrom_read(struct gb_s *gb, const uint_fast16_t addr) {
+    return dmg_boot_bin[addr];
+}
+

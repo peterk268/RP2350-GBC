@@ -200,6 +200,12 @@ while(true)
 	memcpy(rom_bank0, rom, sizeof(rom_bank0));
 	ret = gb_init(&gb, &gb_rom_read, &gb_cart_ram_read,
 		      &gb_cart_ram_write, &gb_error, NULL);
+#if ENABLE_BOOTROM
+	printf("Setting Boorom");
+	gb_set_bootrom(&gb, dmg_bootrom_read); // attach boot ROM
+	gb_reset(&gb); // apply boot ROM
+	printf("Resetting GB");
+#endif
 	putstdio("GB ");
 
 	if(ret != GB_INIT_NO_ERROR)

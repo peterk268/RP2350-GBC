@@ -115,7 +115,7 @@ void process_bat_percent() {
 
 // Timer callback function
 bool battery_timer_callback(repeating_timer_t *rt) {
-    process_bat_percent();
+    battery_task_flag = true;
     return true; // Return true to keep the timer running
 }
 

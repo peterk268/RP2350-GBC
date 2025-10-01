@@ -710,6 +710,11 @@ void rom_file_selector() {
 	print_memory_usage();
 
 	while (true) {
+#if ENABLE_BAT_MONITORING
+		if (battery_task_flag) {
+            battery_task_flag = false;
+            process_bat_percent();
+        }
 		if (low_power_shutdown) {
 			release_power(); // Cut power hold
 			sleep_ms(1);
@@ -721,6 +726,7 @@ void rom_file_selector() {
 			process_bat_percent();
 			sleep_ms(BATTERY_TIMER_INTERVAL_MS);
 		}
+#endif
 
 		bool iox_nint = gpio_read(GPIO_IOX_nINT);
 		if (!iox_nint) {

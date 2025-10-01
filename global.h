@@ -62,7 +62,9 @@ static struct gb_s gb;
 #define putstdio(x) write(1, x, strlen(x))
 
 repeating_timer_t battery_timer;
+repeating_timer_t pwr_led_timer;
 
+volatile bool battery_task_flag = false;
 bool low_power = false;
 bool low_power_shutdown = false;
 

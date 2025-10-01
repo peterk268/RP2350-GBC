@@ -262,7 +262,9 @@ while(true)
 #if ENABLE_SAVE_ON_POWER_OFF
 	hold_power(); // keep power on for gameplay
 #endif
+#if ENABLE_AUTO_SAVE
 	uint8_t save_wait_counter = 0;
+#endif
 
     // MARK: - Game Play
 	while(1)
@@ -280,8 +282,16 @@ while(true)
 		}
 #endif
 
+#if ENABLE_BAT_MONITORING
+		// Check battery status periodically
+		if (battery_task_flag) {
+            battery_task_flag = false;
+            process_bat_percent();
+        }
 		if (low_power_shutdown) {
+#if ENABLE_SDCARD
 			write_cart_ram_file(&gb);
+#endif
 			release_power(); // Cut power hold
 			sleep_ms(1);
 			watchdog_disable();
@@ -294,6 +304,7 @@ while(true)
 			process_bat_percent();
 			sleep_ms(BATTERY_TIMER_INTERVAL_MS);
 		}
+#endif
 
 		int input;
 
@@ -421,6 +432,12 @@ while(true)
 #endif				
 			}
 		}
+#if ENABLE_FRAME_DEBUGGING
+		static uint32_t last_ts = 0;
+		uint32_t now = time_us_32();
+		printf("frame time us: %u\n", now - last_ts);
+		last_ts = now;
+#endif
     }
     // MARK: - Ending Emulation
     out:

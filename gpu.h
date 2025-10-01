@@ -14,30 +14,30 @@
 #define ENABLE_V_SCANLINES 0
 
 const scanvideo_timing_t tft_timing_320x320_60 = {
-    .clock_freq      =  20 * 1000 * 1000,  // 15 MHz
+    .clock_freq      =  20 * 1000 * 1000,
     .h_active        =  H_ACTIVE,
     .v_active        =  V_ACTIVE,
     .h_front_porch   =  H_F_PORCH,
     .h_pulse         =  H_PULSE,
-    .h_total         =  H_ACTIVE + H_F_PORCH + H_PULSE + H_B_PORCH,  // back porch = 20
+    .h_total         =  H_ACTIVE + H_F_PORCH + H_PULSE + H_B_PORCH,
     .h_sync_polarity =  1,
     .v_front_porch   =  V_F_PORCH,
     .v_pulse         =  V_PULSE,
-    .v_total         =  V_ACTIVE + V_F_PORCH + V_PULSE + V_B_PORCH,    // back porch = 8
+    .v_total         =  V_ACTIVE + V_F_PORCH + V_PULSE + V_B_PORCH,
     .v_sync_polarity =  1,
     .enable_clock    =  1,
     .clock_polarity  =  1,
     .enable_den      =  1
 };
 
-extern const struct scanvideo_pio_program video_24mhz_composable;  // ← swap in 12 MHz
+extern const struct scanvideo_pio_program video_24mhz_composable;
 const scanvideo_mode_t tft_mode_320x320_60 = {
     .default_timing     = &tft_timing_320x320_60,
     .pio_program        = &video_24mhz_composable, 
     .width              = ENABLE_V_SCANLINES ? 320 : 160,
     .height             = ENABLE_SCANLINES ? 320 : 160,
-    .xscale             = ENABLE_V_SCANLINES ? 1 : 2,
-    .yscale             = ENABLE_SCANLINES ? 1 : 2,
+    .xscale             = ENABLE_V_SCANLINES ? 1 : DISPLAY_SCALE,
+    .yscale             = ENABLE_SCANLINES ? 1 : DISPLAY_SCALE,
     .yscale_denominator = 1
 };
 #define VGA_MODE tft_mode_320x320_60
@@ -106,19 +106,20 @@ uint16_t scanline_count = 0;
 #define TOP_PADDING 3
 uint16_t top_padding_counter = 0;
 
+#define PUSH_LAST_LINE_UP 0
 
 bool watchdog_feed_cb(struct repeating_timer *t) {
     watchdog_update();
     return true;
 }
-
+static volatile bool frame_ready = false;   // producer -> consumer: a new frame is ready
+#if ENABLE_FRAME_DEBUGGING
+static uint32_t fps_last_time = 0;
+static uint32_t fps_counter = 0;
+#endif
 void render_loop() {
     static uint32_t last_frame_num = 0;
     static uint32_t y = 0;
-
-    struct repeating_timer timer;
-    add_repeating_timer_ms(500, watchdog_feed_cb, NULL, &timer);
-
 
     while (true) {
         if(sd_busy) {
@@ -137,7 +138,18 @@ void render_loop() {
         // Only update frame pointer when a new frame is ready
         if (frame_num != last_frame_num) {
             last_frame_num = frame_num;
-            y = 0;   
+            y = 0;
+#if ENABLE_FRAME_DEBUGGING
+            // Only count a frame if we swapped or at least reached a new video frame
+            fps_counter++;
+
+            uint32_t now = time_us_32();
+            if (now - fps_last_time >= 1000000) { // 1 second
+                printf("FPS: %lu\n", fps_counter);
+                fps_counter = 0;
+                fps_last_time = now;
+            }
+#endif
 #if ENABLE_SCANLINES
             scanline_count = 0;
 #endif
@@ -165,7 +177,7 @@ void render_loop() {
 #endif
         }
         #warning "GB Games don't have this issue... so the opposite happens on them"
-        int src_y = (y + LCD_HEIGHT - 1) % LCD_HEIGHT;
+        int src_y = PUSH_LAST_LINE_UP ? (y + LCD_HEIGHT - 1) % LCD_HEIGHT : y;
         // Render scanline
         render_scanline(scanline_buffer, (y < LCD_HEIGHT) 
         && (!ENABLE_BFI || !double_frame_needs_bfi || gb.direct.frame_skip == 1) 
@@ -214,12 +226,6 @@ void setup_dpi() {
 
     sem_release(&video_setup_complete);
 }
-
-#define VISIBLE_HEIGHT 288
-#define VERTICAL_OFFSET 2
-
-#define IMAGE_WIDTH 320
-#define IMAGE_HEIGHT 288
 
 static inline uint16_t *raw_scanline_prepare(struct scanvideo_scanline_buffer *dest, uint width) {
     assert(width >= 3);

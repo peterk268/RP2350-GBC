@@ -94,18 +94,6 @@ void decrease_button_brightness(uint8_t step) {
     adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, step, false, false);
 }
 
-repeating_timer_t pwr_led_timer;
-bool pwr_led_on = false;
-
-// bool pwr_led_timer_callback(repeating_timer_t *rt) {
-//     if (pwr_led_on) {
-//         increase_pwr_brightness(128);
-//     } else {
-//         decrease_pwr_brightness(255);
-//     }
-//     pwr_led_on = !pwr_led_on;
-//     return true; // Return true to keep the timer running
-// }
 // Globals
 bool increasing = true;
 uint8_t step = 5; // Amount to change per tick

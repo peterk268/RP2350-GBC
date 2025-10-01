@@ -60,66 +60,55 @@ uint16_t get_bat_charge_percent() {
 // }
 
 bool is_charging(int16_t current_mA) {
-    return current_mA < 0;
+    return current_mA <= 0;
 }
 void shutdown_peripherals(bool keep_i2c);
 
-#warning "This crashes when power low i think"
+// --- Configurable parameters ---
+#define LOW_POWER_THRESHOLD      20  // Warning threshold
+#define CRITICAL_SHUTDOWN_THRESH 5   // Shutdown threshold
+#define RECOVERY_THRESHOLD       7   // Recovery threshold
+                
+void write_cart_ram_file(struct gb_s *gb);
+
 void process_bat_percent() {
     uint16_t percent = get_bat_charge_percent();
     int16_t current_mA = get_average_current_mA();
 
-    printf("Battery Percent: %d, rem_cap: %d, full_cap: %d, current: %d, voltage: %d\n", percent, get_remaining_bat_capacity_mAh(), get_full_bat_capacity_mAh(), current_mA, read_voltage_mV());
+    printf("Battery Percent: %d, rem_cap: %d, full_cap: %d, current: %d, voltage: %d\n",
+           percent, get_remaining_bat_capacity_mAh(), get_full_bat_capacity_mAh(), current_mA, read_voltage_mV());
 
-    // False data
-    // if (percent == 0) { printf("fail"); return;};
-
-
-    if (percent <= 20) {
-        // if first time seeing low power.
+    // --- Low-power warning ---
+    if (percent <= LOW_POWER_THRESHOLD) {
         if (!low_power) {
-            // flash led
-            setup_pwr_led_flash();
             low_power = true;
-        }
-
-        if (percent <= 5 && !is_charging(current_mA)) {
-            if (!low_power_shutdown) {
-                // first time seeing low power shutdown.
-                low_power_shutdown = true;
-                shutdown_peripherals(true);
-                sleep_ms(1);
-                setup_pwr_led_flash();
-            }
-            sleep_ms(2000);
-
-            // if the switch is low break out the loop and allow the interrupt to shutdown the device.
-            // if not recur the process battery percent.
-            if (!gpio_read(GPIO_SW_OUT)) {
-                return;
-            } else {
-                process_bat_percent();
-            }
-            // sleep_device();
-        } else {
-            // battery starting to charge back up and exit 5% shutdown.
-            // if (percent > 7 && low_power_shutdown) {
-            if (low_power_shutdown) {
-                low_power_shutdown = false;
-                watchdog_reboot(0, SRAM_END, 0); // Reset the Pico
-            }
-        }
-	} else {
-        // if first time exiting low_power state
-        if (low_power) {
-            // increase_pwr_brightness(MAX_BRIGHTNESS/8);
             remove_pwr_led_flash();
-            config_led(GPIO_PWR_LED, pwr_led_duty_cycle, false);
+            setup_pwr_led_flash(40); // Slow pulse for warning
+        }
+
+        // --- Critical shutdown ---
+        if (percent <= CRITICAL_SHUTDOWN_THRESH && !is_charging(current_mA)) {
+            if (!low_power_shutdown) {
+                low_power_shutdown = true;
+                // main loop handles saving
+                // faster pulse seems to mess up w timings
+                // remove_pwr_led_flash();
+                // setup_pwr_led_flash(15); // Fast pulse for critical.. has watchdog
+            }
+        }
+
+    } else {
+        // Battery above low-power warning
+        if (low_power) {
             low_power = false;
+            remove_pwr_led_flash();
         }
-        if (low_power_shutdown) {
-            watchdog_reboot(0, SRAM_END, 0); // Reset the Pico
-        }
+    }
+    // Battery recovering after critical shutdown
+    if (low_power_shutdown && (percent > RECOVERY_THRESHOLD || is_charging(current_mA))) {
+        low_power_shutdown = false;
+        watchdog_reboot(0, 0, 0); // Safe reset
+        #warning "in the future find a way to allow the game to be resumed"
     }
 
 }
@@ -302,18 +291,21 @@ static int powman_example_off(void) {
 }
 
 void shutdown_peripherals(bool keep_i2c) {
-    // gpio_deinit(GPIO_PWR_LED);
-    // gpio_deinit(GPIO_BUTTON_LED);
-    // gpio_deinit(GPIO_LCD_LED);
-    deconfig_leds();
-    decrease_pwr_brightness(255);
-    decrease_lcd_brightness(255);
-    sleep_us(10);
+    if (!keep_i2c) decrease_pwr_brightness(MAX_BRIGHTNESS);
+    sleep_ms(1);
+    decrease_lcd_brightness(MAX_BRIGHTNESS);
+    sleep_ms(1);
+    decrease_button_brightness(MAX_BRIGHTNESS);
+    sleep_ms(1);
+    deconfig_leds(keep_i2c);
+
+    sleep_ms(1);                            // Allow PWM/LED/LCD registers to settle
+
     config_iox_ports();
-    // gpio_write(IOX_n3V3_MCU_EN, true);
 
     if (!keep_i2c) {
         remove_pwr_led_flash();
+        cancel_repeating_timer(&battery_timer);
         enable_bat_monitor_shutdown();
         i2c_deinit(IOX_I2C_PORT);
     }
@@ -322,9 +314,11 @@ void shutdown_peripherals(bool keep_i2c) {
     f_unmount(pSD->pcName);
 
     spi_deinit(LCD_SPI);
-    spi_deinit(SD_SPI);
+    if (LCD_SPI != SD_SPI)
+        spi_deinit(SD_SPI);
 
     pio_sm_set_enabled(I2S_PIO, 0, false);
+    pio_sm_set_enabled(pio0, 0, false);
     for (uint dma_channel = 0; dma_channel < NUM_DMA_CHANNELS; dma_channel++) dma_channel_abort(dma_channel); // Reset DMA
 
     for (uint8_t i = 0; i<48; i++) {
@@ -332,8 +326,6 @@ void shutdown_peripherals(bool keep_i2c) {
             (!keep_i2c || (i != GPIO_I2C1_SCL && i != GPIO_I2C1_SDA && i != GPIO_PWR_LED)))
             gpio_deinit(i);
     }
-    cancel_repeating_timer(&timer);
-
 }
 
 #warning "sleep device currently unstable"

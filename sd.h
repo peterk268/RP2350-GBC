@@ -654,6 +654,8 @@ uint16_t get_remaining_bat_capacity_mAh();
 uint16_t get_full_bat_capacity_mAh();
 uint16_t read_voltage_mV();
 
+static int powman_example_off(void);
+
 void rom_file_selector() {	
     // Create list
     lv_init();
@@ -708,6 +710,17 @@ void rom_file_selector() {
 	print_memory_usage();
 
 	while (true) {
+		if (low_power_shutdown) {
+			release_power(); // Cut power hold
+			sleep_ms(1);
+			watchdog_disable();
+			shutdown_peripherals(true);
+			sleep_ms(10);
+		}
+		while(low_power_shutdown) {
+			process_bat_percent();
+			sleep_ms(BATTERY_TIMER_INTERVAL_MS);
+		}
 
 		bool iox_nint = gpio_read(GPIO_IOX_nINT);
 		if (!iox_nint) {

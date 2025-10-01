@@ -22,10 +22,10 @@ void deconfig_led(uint8_t gpio_num) {
     uint slice_num = pwm_gpio_to_slice_num(gpio_num);
     pwm_set_enabled(slice_num, false);
 }
-void deconfig_leds() {
+void deconfig_leds(bool keep_pwr) {
     deconfig_led(GPIO_BUTTON_LED);
     deconfig_led(GPIO_LCD_LED);
-    deconfig_led(GPIO_PWR_LED);
+    if (!keep_pwr) deconfig_led(GPIO_PWR_LED);
 }
 
 // Function to set up a fast blinking LED with PWM
@@ -97,35 +97,50 @@ void decrease_button_brightness(uint8_t step) {
 repeating_timer_t pwr_led_timer;
 bool pwr_led_on = false;
 
+// bool pwr_led_timer_callback(repeating_timer_t *rt) {
+//     if (pwr_led_on) {
+//         increase_pwr_brightness(128);
+//     } else {
+//         decrease_pwr_brightness(255);
+//     }
+//     pwr_led_on = !pwr_led_on;
+//     return true; // Return true to keep the timer running
+// }
+// Globals
+bool increasing = true;
+uint8_t step = 5; // Amount to change per tick
+
 bool pwr_led_timer_callback(repeating_timer_t *rt) {
-    if (pwr_led_on) {
-        increase_pwr_brightness(128);
+    if (increasing) {
+        increase_pwr_brightness(step);
+        if (pwr_led_duty_cycle >= MAX_BRIGHTNESS) {
+            pwr_led_duty_cycle = MAX_BRIGHTNESS;
+            increasing = false;
+        }
     } else {
-        decrease_pwr_brightness(255);
+        decrease_pwr_brightness(step);
+        if (pwr_led_duty_cycle <= MIN_BRIGHTNESS) {
+            pwr_led_duty_cycle = MIN_BRIGHTNESS;
+            increasing = true;
+        }
     }
-    pwr_led_on = !pwr_led_on;
-    return true; // Return true to keep the timer running
+
+    // watchdog_update();
+    return true; // keep running
 }
 
-void setup_pwr_led_flash() {
-    config_led(GPIO_PWR_LED, pwr_led_duty_cycle, false);    // Active High
+uint8_t prev_pwr_led_duty_cycle;  
 
-    // deconfig_led(GPIO_PWR_LED);
-    // // gpio_deinit(GPIO_PWR_LED);
-
-    // sleep_ms(1);
-
-    // // gpio_init(GPIO_PWR_LED);
-    // gpio_set_function(GPIO_PWR_LED, GPIO_FUNC_SIO);
-    // gpio_set_dir(GPIO_PWR_LED, true);
-    // sleep_ms(1);
-    sleep_ms(1);
-
-    if (!add_repeating_timer_ms(250, pwr_led_timer_callback, NULL, &pwr_led_timer)) {
+void setup_pwr_led_flash(uint32_t interval_ms) {
+    prev_pwr_led_duty_cycle = pwr_led_duty_cycle; // Save current brightness
+    if (!add_repeating_timer_ms(interval_ms, pwr_led_timer_callback, NULL, &pwr_led_timer)) {
         printf("Failed to add repeating timer\n");
     }
 }
 
 void remove_pwr_led_flash() {
     cancel_repeating_timer(&pwr_led_timer);
+    decrease_pwr_brightness(MAX_BRIGHTNESS); // Turn off LED
+    pwr_led_duty_cycle = prev_pwr_led_duty_cycle; // Restore previous brightness
+    increase_pwr_brightness(pwr_led_duty_cycle); // Apply restored brightness
 }

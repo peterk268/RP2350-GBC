@@ -27,7 +27,9 @@
 
 #define DISPLAY_SCALE 2
 #define USE_IPS_LCD 1
-#define ENABLE_BAT_MONITORING 0
+#define ENABLE_BAT_MONITORING 1
+#define BAT_IMMEDIATE_CHECK 1
+#define BATTERY_TIMER_INTERVAL_MS 10000
 
 #define WATCHDOG_TIMEOUT_MS 2000
 
@@ -57,4 +59,40 @@ void print_memory_usage() {
     printf("Total Heap: %d bytes\n", _getTotalHeap());
     printf("Free Heap: %d bytes\n", getFreeHeap());
 
+}
+
+void HardFault_Handler(void) {
+    __asm volatile
+    (
+        "TST lr, #4\n"
+        "ITE EQ\n"
+        "MRSEQ r0, MSP\n"
+        "MRSNE r0, PSP\n"
+        "B hardfault_handler_c\n"
+    );
+}
+
+// MARK: - Debugging to see file and line that caused crash with this command
+// arm-none-eabi-addr2line -e RP2350_GBC.elf 0xPCXXXX
+void hardfault_handler_c(uint32_t *sp) {
+    uint32_t stacked_r0 = sp[0];
+    uint32_t stacked_r1 = sp[1];
+    uint32_t stacked_r2 = sp[2];
+    uint32_t stacked_r3 = sp[3];
+    uint32_t stacked_r12 = sp[4];
+    uint32_t stacked_lr = sp[5];
+    uint32_t stacked_pc = sp[6];
+    uint32_t stacked_psr = sp[7];
+
+    printf("\n[HARDFAULT]\n");
+    printf(" R0  = 0x%08lX\n", stacked_r0);
+    printf(" R1  = 0x%08lX\n", stacked_r1);
+    printf(" R2  = 0x%08lX\n", stacked_r2);
+    printf(" R3  = 0x%08lX\n", stacked_r3);
+    printf(" R12 = 0x%08lX\n", stacked_r12);
+    printf(" LR  = 0x%08lX\n", stacked_lr);
+    printf(" PC  = 0x%08lX\n", stacked_pc); // <- This is where it crashed
+    printf(" PSR = 0x%08lX\n", stacked_psr);
+
+    while (1);
 }

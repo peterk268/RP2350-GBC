@@ -96,10 +96,12 @@ int main(void)
 
 	#warning "Hold off on battery monitor"
 #if ENABLE_BAT_MONITORING
+#if BAT_IMMEDIATE_CHECK
 	// Trigger the battery check immediately
     process_bat_percent();
+#endif
 	// Set up a repeating timer for 10 seconds
-    if (!add_repeating_timer_ms(10000, battery_timer_callback, NULL, &timer)) {
+    if (!add_repeating_timer_ms(BATTERY_TIMER_INTERVAL_MS, battery_timer_callback, NULL, &battery_timer)) {
         printf("Failed to add repeating timer\n");
     }
 #endif
@@ -246,14 +248,15 @@ while(true)
 	uint64_t start_time = time_us_64();
 	#warning "fix the led flashing thing at some point"
 	// resetting led timer because of bug
+#if ENABLE_BAT_MONITORING
 	low_power = false;
-	cancel_repeating_timer(&timer);
-	#if ENABLE_BAT_MONITORING
+	low_power_shutdown = false;
+	cancel_repeating_timer(&battery_timer);
 	// Set up a repeating timer for 10 seconds
-    if (!add_repeating_timer_ms(10000, battery_timer_callback, NULL, &timer)) {
+    if (!add_repeating_timer_ms(BATTERY_TIMER_INTERVAL_MS, battery_timer_callback, NULL, &battery_timer)) {
         printf("Failed to add repeating timer\n");
     }
-	#endif
+#endif
 
 	watchdog_enable(WATCHDOG_TIMEOUT_MS, true); // 2 second timeout, pause-on-debug = true
 #if ENABLE_SAVE_ON_POWER_OFF
@@ -276,6 +279,22 @@ while(true)
 			release_power(); // turn power off
 		}
 #endif
+
+		if (low_power_shutdown) {
+			write_cart_ram_file(&gb);
+			release_power(); // Cut power hold
+			sleep_ms(1);
+			watchdog_disable();
+			shutdown_peripherals(true);
+			sleep_ms(10);
+			// powman_example_init(0);
+			// powman_example_off();
+		}
+		while(low_power_shutdown) {
+			process_bat_percent();
+			sleep_ms(BATTERY_TIMER_INTERVAL_MS);
+		}
+
 		int input;
 
 		gb.gb_frame = 0;
@@ -290,6 +309,7 @@ while(true)
 		// Tick RTC approximately once per second (assuming ~60 FPS)
 		uint8_t fps = gb.direct.frame_skip ? 120 : 60;
 		if (frames >= fps) {
+			watchdog_update();
 			gb_tick_rtc(&gb);
 			frames = 0; // Reset counter
 
@@ -319,27 +339,30 @@ while(true)
 #endif
 
 		// MARK: - Update buttons state
-		// Read IOX port 0
-		read_io_expander_states(0);
-		// Store previous joypad states
-		prev_joypad_bits.up      = gb.direct.joypad_bits.up;
-		prev_joypad_bits.down    = gb.direct.joypad_bits.down;
-		prev_joypad_bits.left    = gb.direct.joypad_bits.left;
-		prev_joypad_bits.right   = gb.direct.joypad_bits.right;
-		prev_joypad_bits.a       = gb.direct.joypad_bits.a;
-		prev_joypad_bits.b       = gb.direct.joypad_bits.b;
-		prev_joypad_bits.select  = gb.direct.joypad_bits.select;
-		prev_joypad_bits.start   = gb.direct.joypad_bits.start;
+		bool iox_nint = gpio_read(GPIO_IOX_nINT);
+		if (!iox_nint) {
+			// Read IOX port 0
+			read_io_expander_states(0);
+			// Store previous joypad states
+			prev_joypad_bits.up      = gb.direct.joypad_bits.up;
+			prev_joypad_bits.down    = gb.direct.joypad_bits.down;
+			prev_joypad_bits.left    = gb.direct.joypad_bits.left;
+			prev_joypad_bits.right   = gb.direct.joypad_bits.right;
+			prev_joypad_bits.a       = gb.direct.joypad_bits.a;
+			prev_joypad_bits.b       = gb.direct.joypad_bits.b;
+			prev_joypad_bits.select  = gb.direct.joypad_bits.select;
+			prev_joypad_bits.start   = gb.direct.joypad_bits.start;
 
-		// Update joypad states with values from IOX
-		gb.direct.joypad_bits.up      = gpio_read(IOX_B_UP);
-		gb.direct.joypad_bits.down    = gpio_read(IOX_B_DOWN);
-		gb.direct.joypad_bits.left    = gpio_read(IOX_B_LEFT);
-		gb.direct.joypad_bits.right   = gpio_read(IOX_B_RIGHT);
-		gb.direct.joypad_bits.a       = gpio_read(IOX_B_A);
-		gb.direct.joypad_bits.b       = gpio_read(IOX_B_B);
-		gb.direct.joypad_bits.select  = gpio_read(GPIO_B_SELECT);
-		gb.direct.joypad_bits.start   = gpio_read(IOX_B_START);
+			// Update joypad states with values from IOX
+			gb.direct.joypad_bits.up      = gpio_read(IOX_B_UP);
+			gb.direct.joypad_bits.down    = gpio_read(IOX_B_DOWN);
+			gb.direct.joypad_bits.left    = gpio_read(IOX_B_LEFT);
+			gb.direct.joypad_bits.right   = gpio_read(IOX_B_RIGHT);
+			gb.direct.joypad_bits.a       = gpio_read(IOX_B_A);
+			gb.direct.joypad_bits.b       = gpio_read(IOX_B_B);
+			gb.direct.joypad_bits.select  = gpio_read(GPIO_B_SELECT);
+			gb.direct.joypad_bits.start   = gpio_read(IOX_B_START);
+		}
 
 		// MARK: - Hotkeys
         // (select + * combo)

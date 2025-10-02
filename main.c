@@ -388,29 +388,24 @@ while(true)
 				}
 #endif
 				if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
-					/* select + right: select the next manual color palette */
+					/* select + right: increase button led brightness */
 					increase_button_brightness(16);
-					// if(manual_palette_selected<12) {
-					// 	manual_palette_selected++;
-					// 	manual_assign_palette(palette,manual_palette_selected);
-					// }	
 				}
 				if(!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
-					/* select + left: select the previous manual color palette */
+					/* select + left: decrease button led brightness */
 					decrease_button_brightness(16);
-					// if(manual_palette_selected>-1) {
-					// 	manual_palette_selected--;
-					// 	if (manual_palette_selected != -1) {
-					// 		manual_assign_palette(palette,manual_palette_selected);
-					// 	}
-					// }
 				}
 				if(!gb.direct.joypad_bits.start && prev_joypad_bits.start) {
-					/* select + start: save ram and resets to the game selection menu */
-#if ENABLE_SDCARD				
-					write_cart_ram_file(&gb);
-#endif				
-					goto out;
+					/* cycle the next manual color palette: -1 → 0 → 1 … 12 → -1 */
+					if (manual_palette_selected < 12) {
+						manual_palette_selected++;
+					} else {
+						manual_palette_selected = -1; // wrap around
+					}
+
+					if (manual_palette_selected != -1) {
+						manual_assign_palette(palette, manual_palette_selected);
+					}
 				}
 				if(!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
 					/* select + A: enable/disable frame-skip => fast-forward */

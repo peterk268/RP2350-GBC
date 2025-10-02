@@ -108,10 +108,6 @@ uint16_t top_padding_counter = 0;
 
 #define PUSH_LAST_LINE_UP 0
 
-bool watchdog_feed_cb(struct repeating_timer *t) {
-    watchdog_update();
-    return true;
-}
 static volatile bool frame_ready = false;   // producer -> consumer: a new frame is ready
 #if ENABLE_FRAME_DEBUGGING
 static uint32_t fps_last_time = 0;

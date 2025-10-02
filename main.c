@@ -429,10 +429,25 @@ while(true)
 			}
 		}
 #if ENABLE_FRAME_DEBUGGING
-		static uint32_t last_ts = 0;
-		uint32_t now = time_us_32();
-		printf("frame time us: %u\n", now - last_ts);
-		last_ts = now;
+    static uint32_t last_ts = 0;
+    uint32_t now = time_us_32();
+    if (last_ts != 0) {
+        printf("frame time us: %u\n", now - last_ts);
+    }
+    last_ts = now;
+#endif
+
+#if ENABLE_FPS_MONITORING
+    static uint32_t fps_counter = 0;
+    static uint32_t fps_last_time = 0;
+
+    fps_counter++;
+    uint32_t now = time_us_32();
+    if (now - fps_last_time >= 1000000) { // 1 second
+        printf("FPS: %lu\n", fps_counter);
+        fps_counter = 0;
+        fps_last_time = now;
+    }
 #endif
     }
     // MARK: - Ending Emulation

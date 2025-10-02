@@ -71,3 +71,8 @@ bool low_power_shutdown = false;
 volatile bool sd_busy = false;
 
 bool ram_changed = false;
+
+#if ENABLE_FPS_MONITORING
+static uint32_t fps_counter = 0;
+static uint32_t fps_last_time = 0;
+#endif

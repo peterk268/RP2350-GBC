@@ -308,12 +308,8 @@ while(true)
 
 		int input;
 
-		gb.gb_frame = 0;
-        // Stepping cpu instruction
-		do {
-			__gb_step_cpu(&gb);
-			tight_loop_contents();
-		} while(HEDLEY_LIKELY(gb.gb_frame == 0));
+        // Stepping cpu instructions for frame
+		gb_run_frame(&gb);
 
 		frames++;
 
@@ -373,63 +369,63 @@ while(true)
 			gb.direct.joypad_bits.b       = gpio_read(IOX_B_B);
 			gb.direct.joypad_bits.select  = gpio_read(GPIO_B_SELECT);
 			gb.direct.joypad_bits.start   = gpio_read(IOX_B_START);
-		}
 
-		// MARK: - Hotkeys
-        // (select + * combo)
-		if(!gb.direct.joypad_bits.select) {
+			// MARK: - Hotkeys
+			// (select + * combo)
+			if(!gb.direct.joypad_bits.select) {
 #if ENABLE_SOUND
-			if(!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
-				/* select + up: increase sound volume */
-				// i2s_increase_volume(&i2s_config);
-				increase_lcd_brightness(4);
-				increase_pwr_brightness(4);
-			}
-			if(!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
-				/* select + down: decrease sound volume */
-				// i2s_decrease_volume(&i2s_config);
-				decrease_lcd_brightness(4);
-				decrease_pwr_brightness(4);
-			}
+				if(!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
+					/* select + up: increase sound volume */
+					// i2s_increase_volume(&i2s_config);
+					increase_lcd_brightness(4);
+					increase_pwr_brightness(4);
+				}
+				if(!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
+					/* select + down: decrease sound volume */
+					// i2s_decrease_volume(&i2s_config);
+					decrease_lcd_brightness(4);
+					decrease_pwr_brightness(4);
+				}
 #endif
-			if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
-				/* select + right: select the next manual color palette */
-				increase_button_brightness(16);
-				// if(manual_palette_selected<12) {
-				// 	manual_palette_selected++;
-				// 	manual_assign_palette(palette,manual_palette_selected);
-				// }	
-			}
-			if(!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
-				/* select + left: select the previous manual color palette */
-				decrease_button_brightness(16);
-				// if(manual_palette_selected>-1) {
-				// 	manual_palette_selected--;
-				// 	if (manual_palette_selected != -1) {
-				// 		manual_assign_palette(palette,manual_palette_selected);
-				// 	}
-				// }
-			}
-			if(!gb.direct.joypad_bits.start && prev_joypad_bits.start) {
-				/* select + start: save ram and resets to the game selection menu */
+				if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
+					/* select + right: select the next manual color palette */
+					increase_button_brightness(16);
+					// if(manual_palette_selected<12) {
+					// 	manual_palette_selected++;
+					// 	manual_assign_palette(palette,manual_palette_selected);
+					// }	
+				}
+				if(!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
+					/* select + left: select the previous manual color palette */
+					decrease_button_brightness(16);
+					// if(manual_palette_selected>-1) {
+					// 	manual_palette_selected--;
+					// 	if (manual_palette_selected != -1) {
+					// 		manual_assign_palette(palette,manual_palette_selected);
+					// 	}
+					// }
+				}
+				if(!gb.direct.joypad_bits.start && prev_joypad_bits.start) {
+					/* select + start: save ram and resets to the game selection menu */
 #if ENABLE_SDCARD				
-				write_cart_ram_file(&gb);
+					write_cart_ram_file(&gb);
 #endif				
-				goto out;
-			}
-			if(!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
-				/* select + A: enable/disable frame-skip => fast-forward */
-				gb.direct.frame_skip=!gb.direct.frame_skip;
-				#if ENABLE_SOUND
-				i2s_set_sample_freq(&i2s_config, 44100, gb.direct.frame_skip);
-				#endif
-				printf("I gb.direct.frame_skip = %d\n",gb.direct.frame_skip);
-			}
-			if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
-				/* select + B: Save game ram*/
+					goto out;
+				}
+				if(!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
+					/* select + A: enable/disable frame-skip => fast-forward */
+					gb.direct.frame_skip=!gb.direct.frame_skip;
+#if ENABLE_SOUND
+					i2s_set_sample_freq(&i2s_config, 44100, gb.direct.frame_skip);
+#endif
+					printf("I gb.direct.frame_skip = %d\n",gb.direct.frame_skip);
+				}
+				if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
+					/* select + B: Save game ram*/
 #if ENABLE_SDCARD				
-				write_cart_ram_file(&gb);
+					write_cart_ram_file(&gb);
 #endif				
+				}
 			}
 		}
 #if ENABLE_FRAME_DEBUGGING

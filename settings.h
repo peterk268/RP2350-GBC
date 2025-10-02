@@ -7,7 +7,8 @@
 #define ENABLE_SAVE_ON_POWER_OFF 1
 #define ENABLE_AUTO_SAVE 0
 #define ENABLE_BOOTROM 0
-#define PEANUT_GB_HIGH_LCD_ACCURACY 1
+#warning "Keep monitoring this, I prefer not to use it for efficiency and I don't quite see the difference."
+#define PEANUT_GB_HIGH_LCD_ACCURACY 0
 #define PEANUT_GB_USE_BIOS 0
 #define PEANUT_FULL_GBC_SUPPORT 1
 /* Use DMA for all drawing to LCD. Benefits aren't fully realised at the moment

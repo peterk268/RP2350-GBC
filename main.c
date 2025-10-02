@@ -409,11 +409,15 @@ while(true)
 				}
 				if(!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
 					/* select + A: enable/disable frame-skip => fast-forward */
-					gb.direct.frame_skip=!gb.direct.frame_skip;
+					// Peanut GB frame skip toggle puts it at 30 fps..
+					// My implementation runs at 120 fps.
+					// gb.direct.frame_skip=!gb.direct.frame_skip;
+					static bool frame_skip = false;
+					frame_skip = !frame_skip;
 #if ENABLE_SOUND
-					i2s_set_sample_freq(&i2s_config, 44100, gb.direct.frame_skip);
+					i2s_set_sample_freq(&i2s_config, 44100, frame_skip);
 #endif
-					printf("I gb.direct.frame_skip = %d\n",gb.direct.frame_skip);
+					printf("Frame Skip = %d\n", frame_skip);
 				}
 				if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
 					/* select + B: Save game ram*/

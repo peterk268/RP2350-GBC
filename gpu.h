@@ -114,7 +114,7 @@ uint16_t scanline_count = 0;
 #define TOP_PADDING 3
 uint16_t top_padding_counter = 0;
 
-#define PUSH_LAST_LINE_UP 0
+#define PUSH_LAST_LINE_UP 1
 
 #if ENABLE_FRAME_DEBUGGING
 static uint32_t fps_last_time = 0;

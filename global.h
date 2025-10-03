@@ -81,6 +81,9 @@ static uint32_t fps_last_time = 0;
 #define SAFE_OVERCLOCK 1
 void overclock_cpu(bool enable) {
     if (enable) {
+#if !SAFE_OVERCLOCK
+		vreg_disable_voltage_limit();
+#endif
         // Going up: raise voltage first, then frequency
         vreg_set_voltage(SAFE_OVERCLOCK ? VREG_VOLTAGE_1_30 : VREG_VOLTAGE_1_70);
         sleep_ms(10);

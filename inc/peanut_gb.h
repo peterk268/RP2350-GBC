@@ -3937,8 +3937,10 @@ void gb_run_frame(struct gb_s *gb)
 {
 	gb->gb_frame = false;
 
-	while(!gb->gb_frame)
+	while(!gb->gb_frame) {
 		__gb_step_cpu(gb);
+		tight_loop_contents();
+	}
 }
 
 int gb_get_save_size_s(struct gb_s *gb, size_t *ram_size)

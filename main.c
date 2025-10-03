@@ -53,25 +53,14 @@
 
 int main(void)
 {	
+	set_up_select();
 	enum gb_init_error_e ret;
-	
-	// MARK: - Overclock
-    const unsigned vco = 1500 * 1000 * 1000;  // VCO frequency: 1500 MHz
-    const unsigned div1 = 5;  // Post-divider 1
-    const unsigned div2 = 1;  // Post-divider 2
 
-    // Increase voltage to support higher clock speeds
-    vreg_set_voltage(VREG_VOLTAGE_1_15);
-    sleep_ms(2);  // Wait for voltage to stabilize
-    // Configure system clock to 300 MHz using the PLL
-    set_sys_clock_pll(vco, div1, div2);
-    sleep_ms(2);  // Wait for clock to stabilize
-
+	overclock_cpu(true);
 
 	/* Initialise USB serial connection for debugging. */
 	setup_default_uart();
 	stdio_init_all();
-    set_up_select();
     setup_hold_power();
 
 	// sleep_ms(3000);
@@ -177,6 +166,12 @@ int main(void)
 	#warning "I should really have diagnostics for all my peripherals on start up"
 	// sleep_ms(10);
 	// check_dac();
+#endif
+
+	// CPU Starts overclocked then goes back to normal after initializing DPI
+	// This is to prevent a bug where overclocking messes DPI timings.
+#if UNDERCLOCK_CPU_IN_NORMAL_EMULATION
+	overclock_cpu(false);
 #endif
 
 // MARK: - Infinite Loop
@@ -379,10 +374,13 @@ while(true)
 				}
 				if(!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
 					/* select + A: enable/disable frame-skip => fast-forward */
-					// Peanut GB frame skip toggle puts it at 30 fps..
+					// Peanut GB frame skip toggle puts it at 60 fps.. skipping 1 frame every other frame
 					// My implementation runs at 120 fps.
 					static bool frame_skip = false;
 					frame_skip = !frame_skip;
+#if UNDERCLOCK_CPU_IN_NORMAL_EMULATION
+					overclock_cpu(frame_skip);
+#endif
 #if !ENABLE_120FPS_FASTFORWARD
 					gb.direct.frame_skip = frame_skip;
 #endif

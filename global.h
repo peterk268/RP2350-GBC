@@ -76,3 +76,23 @@ bool ram_changed = false;
 static uint32_t fps_counter = 0;
 static uint32_t fps_last_time = 0;
 #endif
+
+// MARK: - Overclock
+#define SAFE_OVERCLOCK 1
+void overclock_cpu(bool enable) {
+    if (enable) {
+        // Going up: raise voltage first, then frequency
+        vreg_set_voltage(SAFE_OVERCLOCK ? VREG_VOLTAGE_1_30 : VREG_VOLTAGE_1_70);
+        sleep_ms(10);
+
+        set_sys_clock_khz((SAFE_OVERCLOCK ? 380 : 520) * 1000, true);
+        sleep_ms(10);
+    } else {
+        // Going down: lower frequency first, then voltage
+        set_sys_clock_khz(300 * 1000, true);
+        sleep_ms(10);
+
+        vreg_set_voltage(VREG_VOLTAGE_1_15);
+        sleep_ms(10);
+    }
+}

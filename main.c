@@ -411,9 +411,11 @@ while(true)
 					/* select + A: enable/disable frame-skip => fast-forward */
 					// Peanut GB frame skip toggle puts it at 30 fps..
 					// My implementation runs at 120 fps.
-					// gb.direct.frame_skip=!gb.direct.frame_skip;
 					static bool frame_skip = false;
 					frame_skip = !frame_skip;
+#if !ENABLE_120FPS_FASTFORWARD
+					gb.direct.frame_skip = frame_skip;
+#endif
 #if ENABLE_SOUND
 					i2s_set_sample_freq(&i2s_config, 44100, frame_skip);
 #endif

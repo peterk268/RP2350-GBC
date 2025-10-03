@@ -243,10 +243,6 @@ while(true)
 #endif
 
 	putstdio("\n> ");
-	// RTC tick counter
-	uint_fast8_t frames = 0;
-	uint64_t start_time = time_us_64();
-	#warning "fix the led flashing thing at some point"
 	// resetting led timer because of bug
 #if ENABLE_BAT_MONITORING
 	low_power = false;
@@ -310,32 +306,6 @@ while(true)
 
         // Stepping cpu instructions for frame
 		gb_run_frame(&gb);
-
-		frames++;
-
-		// Tick RTC approximately once per second (assuming ~60 FPS)
-		uint8_t fps = gb.direct.frame_skip ? 120 : 60;
-		if (frames >= fps) {
-			watchdog_update();
-			gb_tick_rtc(&gb);
-			frames = 0; // Reset counter
-
-#if ENABLE_AUTO_SAVE
-			save_wait_counter++;
-			// Auto-save every 30 seconds if there is a change in RAM
-			if (save_wait_counter >= 30) {
-				save_wait_counter = 0;
-				if (ram_changed) {
-					printf("RAM changed, saving...\n");
-					ram_changed = false;
-					// save to sd card
-#if ENABLE_SDCARD				
-					write_cart_ram_file(&gb);
-#endif
-				}
-			}
-#endif
-		}
 
 #if ENABLE_SOUND
 		// if(!gb.direct.frame_skip) {
@@ -438,18 +408,36 @@ while(true)
     last_ts = now;
 #endif
 
-#if ENABLE_FPS_MONITORING
     static uint32_t fps_counter = 0;
     static uint32_t fps_last_time = 0;
 
     fps_counter++;
     uint32_t now = time_us_32();
     if (now - fps_last_time >= 1000000) { // 1 second
+		watchdog_update();
+#if ENABLE_AUTO_SAVE
+		save_wait_counter++;
+		// Auto-save every 30 seconds if there is a change in RAM
+		if (save_wait_counter >= 30) {
+			save_wait_counter = 0;
+			if (ram_changed) {
+				printf("RAM changed, saving...\n");
+				ram_changed = false;
+				// save to sd card
+#if ENABLE_SDCARD				
+				write_cart_ram_file(&gb);
+#endif
+			}
+		}
+#endif
+
+
+#if ENABLE_FPS_MONITORING
         printf("FPS: %lu\n", fps_counter);
+#endif
         fps_counter = 0;
         fps_last_time = now;
     }
-#endif
     }
     // MARK: - Ending Emulation
     out:

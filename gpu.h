@@ -52,13 +52,21 @@ uint16_t shift_components(uint16_t pixel);
 static uint16_t black_fb[LCD_WIDTH] = {0}; // all black
 // MARK: - RENDER LOOP
 // "Worker thread" for each core
-static uint16_t fb[LCD_HEIGHT][LCD_WIDTH];
-static uint16_t fb2[LCD_HEIGHT][LCD_WIDTH];
 
-// Front buffer (being displayed)
-static uint16_t (*front_fb)[LCD_WIDTH] = fb;
-// Back buffer (being written by CPU/emulator)
-static uint16_t (*back_fb)[LCD_WIDTH] = fb2;
+typedef enum { FB_FREE, FB_READY, FB_DISPLAYED } fb_state_t;
+
+typedef struct {
+    uint16_t data[LCD_HEIGHT][LCD_WIDTH];
+    fb_state_t state;
+} framebuffer_t;
+
+// three buffers
+static framebuffer_t fb0, fb1, fb2;
+
+// pointers for convenience
+static framebuffer_t *front_fb;  // displayed by core1
+static framebuffer_t *back_fb;   // being written by core0
+static framebuffer_t *spare_fb;  // free buffer
 
 bool double_frame_needs_bfi = 0;
 #define ENABLE_BFI 0
@@ -139,6 +147,33 @@ void render_loop() {
         if (frame_num != last_frame_num) {
             last_frame_num = frame_num;
             y = 0;
+#if SKIP_FRAMES
+            fps_skip_counter++;
+            if (fps_skip_counter == fps_divider) {
+#endif
+                // pick newest READY buffer
+                framebuffer_t *next_fb = NULL;
+                if (back_fb->state == FB_READY)
+                    next_fb = back_fb;
+                else if (spare_fb->state == FB_READY)
+                    next_fb = spare_fb;
+
+                if (next_fb) {
+                    // swap front_fb with the ready buffer
+                    framebuffer_t *old_front = front_fb;
+                    front_fb = next_fb;
+                    next_fb->state = FB_DISPLAYED;
+                    old_front->state = FB_FREE;
+
+                    // update back_fb/spare_fb pointers if needed
+                    if (next_fb == back_fb)
+                        back_fb = spare_fb;
+                    else
+                        spare_fb = back_fb;
+                }
+#if SKIP_FRAMES
+            }
+#endif
 #if ENABLE_FRAME_DEBUGGING
             // Only count a frame if we swapped or at least reached a new video frame
             fps_counter++;
@@ -183,7 +218,7 @@ void render_loop() {
         && (!ENABLE_BFI || !double_frame_needs_bfi || gb.direct.frame_skip == 1) 
         && (!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field)) 
         && (!ADD_TOP_PADDING || (top_padding_counter > TOP_PADDING))
-        ? front_fb[src_y] : black_fb);
+        ? front_fb->data[src_y] : black_fb);
 
         scanvideo_end_scanline_generation(scanline_buffer);
 
@@ -216,10 +251,19 @@ void main_core1(void) {
     HEDLEY_UNREACHABLE();
 }
 
+// MARK: - DPI SETUP
 // Must be done before sd and i2s init
 void setup_dpi() {
     mutex_init(&frame_logic_mutex);
     sem_init(&video_setup_complete, 0, 1);
+
+    fb0.state = FB_DISPLAYED;
+    fb1.state = FB_FREE;
+    fb2.state = FB_FREE;
+
+    front_fb = &fb0;
+    back_fb  = &fb1;
+    spare_fb = &fb2;
 
     scanvideo_setup(&VGA_MODE);
     scanvideo_timing_enable(true);
@@ -277,11 +321,11 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
         // user has not assigned palette.
         if (manual_palette_selected == -1) {
             for(unsigned int x = 0; x < LCD_WIDTH; x++){
-                back_fb[fb_line][x] = shift_components(gb->cgb.fixPalette[pixels[x]]);
+                back_fb->data[fb_line][x] = shift_components(gb->cgb.fixPalette[pixels[x]]);
             }
         } else {
             for(unsigned int x = 0; x < LCD_WIDTH; x++){
-                back_fb[fb_line][x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4]
+                back_fb->data[fb_line][x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4]
                         [pixels[x] & 3];
             }
         }
@@ -289,7 +333,7 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
     else {
 #endif
         for(unsigned int x = 0; x < LCD_WIDTH; x++){
-            back_fb[fb_line][x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4]
+            back_fb->data[fb_line][x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4]
                     [pixels[x] & 3];
         }
 #if PEANUT_FULL_GBC_SUPPORT
@@ -299,17 +343,31 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
     fb_line++;
     if (fb_line >= LCD_HEIGHT) {
         fb_line = 0;
-        scanvideo_wait_for_vblank();
-#if SKIP_FRAMES
-        fps_skip_counter++;
-        if (fps_skip_counter == fps_divider) {
-#endif
-        uint16_t (*tmp)[LCD_WIDTH] = front_fb;
-        front_fb = back_fb;
-        back_fb  = tmp;
-#if SKIP_FRAMES
+
+        framebuffer_t *fb_to_write = NULL;
+
+        // pick a free buffer to write
+        if (back_fb->state == FB_FREE) {
+            fb_to_write = back_fb;
+            // printf("BACK\n");
         }
-#endif
+        else if (spare_fb->state == FB_FREE) {
+            fb_to_write = spare_fb;
+            // printf("SPARE\n");
+        }
+        else {
+            // all buffers busy, overwrite back_fb as fallback
+            fb_to_write = back_fb;
+        }
+
+        // --- write your frame into fb_to_write->data ---
+        fb_to_write->state = FB_READY;
+
+        // --- rotate back_fb/spare_fb pointers unconditionally ---
+        framebuffer_t *tmp = back_fb;
+        back_fb = spare_fb;
+        spare_fb = tmp;
+
     }
 
 }
@@ -547,7 +605,7 @@ static inline uint16_t rgb565_to_bgr565(uint16_t rgb) {
 
 // static uint16_t lvgl_fb[DISP_HOR_RES][DISP_VER_RES];
 // Alias with 2D array syntax
-static uint16_t (*lvgl_fb)[LCD_WIDTH] = fb;
+static uint16_t (*lvgl_fb)[LCD_WIDTH] = fb0.data;
 
 // Allocate draw buffers (double buffer, partial height to save RAM)
 #define LV_BUF_LINES DISP_VER_RES  // Number of lines per buffer chunk
@@ -556,7 +614,7 @@ static uint16_t (*lvgl_fb)[LCD_WIDTH] = fb;
 // static lv_color_t lv_buf2[DISP_HOR_RES * LV_BUF_LINES];
 
 // Alias backbuffer as 1D LVGL buffer
-static lv_color_t *lv_buf1 = (lv_color_t *)fb2;
+static lv_color_t *lv_buf1 = (lv_color_t *)fb1.data;
 
 static void lvgl_flush_cb(struct _lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p) {
     int32_t x1 = area->x1;

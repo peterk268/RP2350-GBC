@@ -108,11 +108,15 @@ uint16_t top_padding_counter = 0;
 
 #define PUSH_LAST_LINE_UP 0
 
-static volatile bool frame_ready = false;   // producer -> consumer: a new frame is ready
 #if ENABLE_FRAME_DEBUGGING
 static uint32_t fps_last_time = 0;
 static uint32_t fps_counter = 0;
 #endif
+#if SKIP_FRAMES
+uint8_t fps_divider = 4;
+uint8_t fps_skip_counter = 0;
+#endif
+
 void render_loop() {
     static uint32_t last_frame_num = 0;
     static uint32_t y = 0;
@@ -296,9 +300,16 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
     if (fb_line >= LCD_HEIGHT) {
         fb_line = 0;
         scanvideo_wait_for_vblank();
+#if SKIP_FRAMES
+        fps_skip_counter++;
+        if (fps_skip_counter == fps_divider) {
+#endif
         uint16_t (*tmp)[LCD_WIDTH] = front_fb;
         front_fb = back_fb;
         back_fb  = tmp;
+#if SKIP_FRAMES
+        }
+#endif
     }
 
 }

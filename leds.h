@@ -132,3 +132,59 @@ void remove_pwr_led_flash() {
     pwr_led_duty_cycle = prev_pwr_led_duty_cycle; // Restore previous brightness
     increase_pwr_brightness(pwr_led_duty_cycle); // Apply restored brightness
 }
+
+
+// LED Fade in on start up here
+// Target brightness for each LED at startup
+#define LCD_TARGET_BRIGHTNESS    (MAX_BRIGHTNESS/8)
+#define PWR_TARGET_BRIGHTNESS    (MAX_BRIGHTNESS/8)
+#define BUTTON_TARGET_BRIGHTNESS (MAX_BRIGHTNESS/8)
+
+static repeating_timer_t led_ramp_timer;
+volatile bool led_ramp_done = false; // flag you can check in main()
+
+#define BRIGHTNESS_STEP  1
+#define RAMP_INTERVAL_MS 25
+
+typedef struct {
+    uint gpio;
+    uint8_t *duty;
+    uint8_t target;
+    bool is_active_low;
+} led_ramp_t;
+
+static led_ramp_t led_ramps[] = {
+    { GPIO_LCD_LED,    &lcd_led_duty_cycle,    LCD_TARGET_BRIGHTNESS,    false },
+    { GPIO_PWR_LED,    &pwr_led_duty_cycle,    PWR_TARGET_BRIGHTNESS,    false },
+    { GPIO_BUTTON_LED, &button_led_duty_cycle, BUTTON_TARGET_BRIGHTNESS, false },
+};
+
+bool led_ramp_timer_callback(repeating_timer_t *rt) {
+    bool all_done = true;
+    for (size_t i = 0; i < sizeof(led_ramps)/sizeof(led_ramps[0]); ++i) {
+        led_ramp_t *l = &led_ramps[i];
+        if (*(l->duty) < l->target) {
+            adjust_brightness(l->gpio, l->duty, BRIGHTNESS_STEP, true, l->is_active_low);
+            if (*(l->duty) < l->target) all_done = false;
+        }
+    }
+
+    if (all_done) {
+        led_ramp_done = true;   // safe to inspect from main()
+        return false;           // stop the repeating timer
+    }
+    return true; // keep running
+}
+
+void fade_in_leds_startup(void) {
+    // start from zero
+    lcd_led_duty_cycle = MIN_BRIGHTNESS;
+    pwr_led_duty_cycle = MIN_BRIGHTNESS;
+    button_led_duty_cycle = MIN_BRIGHTNESS;
+
+    config_leds(); // configure PWM channels at 0
+
+    if (!add_repeating_timer_ms(RAMP_INTERVAL_MS, led_ramp_timer_callback, NULL, &led_ramp_timer)) {
+        printf("Failed to add led ramp timer\n");
+    }
+}

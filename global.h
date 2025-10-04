@@ -78,6 +78,7 @@ static uint32_t fps_last_time = 0;
 #endif
 
 // MARK: - Overclock
+// Not stable. Unpredictable and heat is a problem. 300MHz is most I'll go.
 #define SAFE_OVERCLOCK 1
 void overclock_cpu(bool enable) {
     if (enable) {
@@ -85,10 +86,10 @@ void overclock_cpu(bool enable) {
 		vreg_disable_voltage_limit();
 #endif
         // Going up: raise voltage first, then frequency
-        vreg_set_voltage(SAFE_OVERCLOCK ? VREG_VOLTAGE_1_30 : VREG_VOLTAGE_1_70);
+        vreg_set_voltage(SAFE_OVERCLOCK ? VREG_VOLTAGE_1_25 : VREG_VOLTAGE_1_70);
         sleep_ms(10);
 
-        set_sys_clock_khz((SAFE_OVERCLOCK ? 380 : 520) * 1000, true);
+        set_sys_clock_khz((SAFE_OVERCLOCK ? 360 : 520) * 1000, true);
         sleep_ms(10);
     } else {
         // Going down: lower frequency first, then voltage
@@ -98,4 +99,19 @@ void overclock_cpu(bool enable) {
         vreg_set_voltage(VREG_VOLTAGE_1_15);
         sleep_ms(10);
     }
+}
+
+// Clocking CPU to 260MHz similar to an earlier version of the Pico Pal with the RP2040
+// More advanced GBC games will not reach 60fps with this and need 300MHz.
+// This does save good power, up to 100mW which equates to ~1.75h more battery life at mid level consumption,
+//  so it's useful in a low power mode for non-demanding games like Pokemon.
+// VREG_VOLTAGE_DEFAULT is 1.1V and gave the best power consumption. Going lower doesn't help.
+// I'd also prefer to keep the default voltage for stability. Default clock speed is 150MHz.
+void underclock_cpu() {
+	// Going down: lower frequency first, then voltage
+	set_sys_clock_khz(260 * 1000, true);
+	sleep_ms(10);
+
+	vreg_set_voltage(VREG_VOLTAGE_DEFAULT);
+	sleep_ms(10);
 }

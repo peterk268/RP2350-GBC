@@ -56,7 +56,7 @@ int main(void)
 	set_up_select();
 	enum gb_init_error_e ret;
 
-	overclock_cpu(true);
+	overclock_cpu(UNDERCLOCK_CPU_IN_NORMAL_EMULATION);
 
 	/* Initialise USB serial connection for debugging. */
 	setup_default_uart();
@@ -98,7 +98,7 @@ int main(void)
     init_adc(GPIO_AUD_POT_ADC);
 
 	// MARK: - PWM Set up
-	config_leds();
+	fade_in_leds_startup();
 
 #if ENABLE_LCD && USE_IPS_LCD
 	lcd_power_on_reset();

@@ -114,8 +114,6 @@ uint16_t scanline_count = 0;
 #define TOP_PADDING 3
 uint16_t top_padding_counter = 0;
 
-#define PUSH_LAST_LINE_UP 1
-
 #if ENABLE_FRAME_DEBUGGING
 static uint32_t fps_last_time = 0;
 static uint32_t fps_counter = 0;
@@ -212,13 +210,12 @@ void render_loop() {
 #endif
         }
         #warning "GB Games don't have this issue... so the opposite happens on them"
-        int src_y = PUSH_LAST_LINE_UP ? (y + LCD_HEIGHT - 1) % LCD_HEIGHT : y;
         // Render scanline
         render_scanline(scanline_buffer, (y < LCD_HEIGHT) 
         && (!ENABLE_BFI || !double_frame_needs_bfi || gb.direct.frame_skip == 1) 
         && (!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field)) 
         && (!ADD_TOP_PADDING || (top_padding_counter > TOP_PADDING))
-        ? front_fb->data[src_y] : black_fb);
+        ? front_fb->data[y] : black_fb);
 
         scanvideo_end_scanline_generation(scanline_buffer);
 
@@ -311,7 +308,6 @@ void render_scanline(struct scanvideo_scanline_buffer *dest, const uint16_t *fb)
 }
 
 #if ENABLE_LCD
-uint fb_line = 0;
 // MARK: CORE0 LCD RETRIEVE LINE
 void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
 		   const uint_fast8_t line)
@@ -321,11 +317,11 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
         // user has not assigned palette.
         if (manual_palette_selected == -1) {
             for(unsigned int x = 0; x < LCD_WIDTH; x++){
-                back_fb->data[fb_line][x] = shift_components(gb->cgb.fixPalette[pixels[x]]);
+                back_fb->data[line][x] = shift_components(gb->cgb.fixPalette[pixels[x]]);
             }
         } else {
             for(unsigned int x = 0; x < LCD_WIDTH; x++){
-                back_fb->data[fb_line][x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4]
+                back_fb->data[line][x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4]
                         [pixels[x] & 3];
             }
         }
@@ -333,17 +329,14 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
     else {
 #endif
         for(unsigned int x = 0; x < LCD_WIDTH; x++){
-            back_fb->data[fb_line][x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4]
+            back_fb->data[line][x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4]
                     [pixels[x] & 3];
         }
 #if PEANUT_FULL_GBC_SUPPORT
     }
 #endif	
 
-    fb_line++;
-    if (fb_line >= LCD_HEIGHT) {
-        fb_line = 0;
-
+    if (line >= LCD_HEIGHT-1) {
         framebuffer_t *fb_to_write = NULL;
 
         // pick a free buffer to write
@@ -367,9 +360,7 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
         framebuffer_t *tmp = back_fb;
         back_fb = spare_fb;
         spare_fb = tmp;
-
     }
-
 }
 #endif
 

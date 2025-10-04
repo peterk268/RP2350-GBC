@@ -468,49 +468,36 @@ void lcd_config() {
     sleep_ms(1);
     writecommand(0x2C);
 }
+// MARK: - WASH OUT
+uint8_t wash_out_level = 0;
+static inline void washed_desaturate_level(uint8_t *r, uint8_t *g, uint8_t *b, uint8_t level) {
+    // level = 0   -> no change (full vibrant)
+    // level = 255 -> full grayscale
+    if (level == 0) return;
+
+    uint8_t gray = (*r + *g + *b) / 3;
+
+    *r = (*r * (255 - level) + gray * level) / 255;
+    *g = (*g * (255 - level) + gray * level) / 255;
+    *b = (*b * (255 - level) + gray * level) / 255;
+}
 
 // MARK: Shift GBC Color
 uint16_t shift_components(uint16_t pixel) {
-    // Green component: Extract (bits 5–10) -> 6 bits
-    uint16_t green_mask = 0b0000011111100000; // Green mask (6 bits)
-    uint16_t green = (pixel & green_mask) >> 5;
+    // Extract components
+    uint8_t blue  =  pixel        & 0x1F;   // 5 bits
+    uint8_t green = (pixel >> 5)  & 0x1F;   // 5 bits (GBC actually stores 5 here, not 6)
+    uint8_t red   = (pixel >> 10) & 0x1F;   // 5 bits
 
-    // Shift the green component forward by 1, preserving the 6-bit range
-    green = (green << 1) & 0b111111;  // Ensuring we stay within 6 bits (0-63)
+    // Scale to 8-bit
+    uint8_t r8 = (red   << 3) | (red   >> 2);
+    uint8_t g8 = (green << 3) | (green >> 2);
+    uint8_t b8 = (blue  << 3) | (blue  >> 2);
 
-    // Clear the old green bits in the original pixel
-    pixel &= ~green_mask;
+    washed_desaturate_level(&r8, &g8, &b8, wash_out_level);
 
-    // Insert the shifted green back into the pixel
-    pixel |= (green << 5);
-
-    // Red component: Extract (bits 11–15) -> 5 bits
-    uint16_t red_mask = 0b1111100000000000; // Red mask (5 bits)
-    uint16_t red = (pixel & red_mask) >> 11;
-
-    // Shift the red component forward by 1, preserving the 5-bit range
-    red = (red << 1) & 0b11111;  // Ensuring we stay within 5 bits (0-31)
-
-    // Clear the old red bits in the original pixel
-    pixel &= ~red_mask;
-
-    // Insert the shifted red back into the pixel
-    pixel |= (red << 11);
-
-    // Blue component: Extract (bits 0–4) -> 5 bits
-    uint16_t blue_mask = 0b0000000000011111; // Blue mask (5 bits)
-    uint16_t blue = pixel & blue_mask;
-
-    // Shift the blue component forward by 1, preserving the 5-bit range
-    blue = (blue << 1) & 0b11111;  // Ensuring we stay within 5 bits (0-31)
-
-    // Clear the old blue bits in the original pixel
-    pixel &= ~blue_mask;
-
-    // Insert the shifted blue back into the pixel
-    pixel |= blue;
-
-    return pixel;
+    // Pack into RGB565
+    return ((r8 & 0xF8) << 8) | ((g8 & 0xFC) << 3) | (b8 >> 3);
 }
 
 // MARK: RGB TO BGR

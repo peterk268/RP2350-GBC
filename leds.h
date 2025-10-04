@@ -52,6 +52,16 @@ void setup_fast_blink(uint8_t gpio_num, uint16_t blink_period_ms, bool is_active
     pwm_set_clkdiv(slice_num, clock_divider);
 }
 
+uint8_t increase_clamp(uint8_t val, uint8_t step) {
+    if (val > 255 - step) return 255;
+    return val + step;
+}
+
+uint8_t decrease_clamp(uint8_t val, uint8_t step) {
+    if (val < step) return 0;
+    return val - step;
+}
+
 // Function to Adjust Brightness
 void adjust_brightness(uint8_t gpio_num, uint8_t *current_duty_cycle, uint8_t step, bool increase, bool is_active_low) {
     uint8_t new_duty_cycle = increase

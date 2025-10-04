@@ -396,6 +396,17 @@ while(true)
 #endif				
 				}
 			}
+			// Start + combo
+			if(!gb.direct.joypad_bits.start) {
+				// Step up wash out
+				if (!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
+					wash_out_level = increase_clamp(wash_out_level, 16);
+				}
+				// Step down wash out 
+				if (!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
+					wash_out_level = decrease_clamp(wash_out_level, 16);
+				}
+			}
 		}
 #if ENABLE_FRAME_DEBUGGING
     static uint32_t last_ts = 0;

@@ -336,7 +336,7 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
     }
 #endif	
 
-    if (line >= LCD_HEIGHT-1) {
+    if (line == LCD_HEIGHT - 1) {
         framebuffer_t *fb_to_write = NULL;
 
         // pick a free buffer to write

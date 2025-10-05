@@ -303,11 +303,9 @@ while(true)
 		gb_run_frame(&gb);
 
 #if ENABLE_SOUND
-		// if(!gb.direct.frame_skip) {
-			read_volume(&i2s_config);
-			audio_callback(NULL, stream, AUDIO_BUFFER_SIZE_BYTES);
-			i2s_dma_write(&i2s_config, stream);
-		// }
+		read_volume(&i2s_config);
+		audio_callback(NULL, stream, AUDIO_BUFFER_SIZE_BYTES);
+		i2s_dma_write(&i2s_config, stream);
 #endif
 
 		// MARK: - Update buttons state
@@ -354,11 +352,11 @@ while(true)
 #endif
 				if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
 					/* select + right: increase button led brightness */
-					increase_button_brightness(16);
+					increase_button_brightness(8);
 				}
 				if(!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
 					/* select + left: decrease button led brightness */
-					decrease_button_brightness(16);
+					decrease_button_brightness(8);
 				}
 				if(!gb.direct.joypad_bits.start && prev_joypad_bits.start) {
 					/* cycle the next manual color palette: -1 → 0 → 1 … 12 → -1 */

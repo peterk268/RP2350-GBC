@@ -273,10 +273,9 @@ while(true)
 			// save to sd card
 			write_cart_ram_file(&gb);
 #endif			
-			save_system_settings(lcd_led_duty_cycle, button_led_duty_cycle, pwr_led_duty_cycle, manual_palette_selected, wash_out_level);
+			save_system_settings_if_changed(lcd_led_duty_cycle, button_led_duty_cycle, pwr_led_duty_cycle, manual_palette_selected, wash_out_level);
 			printf("Done");
 
-			sleep_ms(5);
 			release_power(); // turn power off
 		}
 #endif

@@ -780,6 +780,8 @@ typedef struct {
     uint8_t wash_out_level;
 } system_settings_t;
 
+system_settings_t g_saved_settings = {0};
+
 typedef struct {
     uint32_t magic;
     char last_filename[FILENAME_MAX_LEN];
@@ -834,11 +836,15 @@ bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
 
     if (fr != FR_OK || br != sizeof(s) || s.magic != SYSTEM_MAGIC) return false;
 
-    *lcd_brightness = s.lcd_brightness;
+    // Copy to output params
+    *lcd_brightness    = s.lcd_brightness;
     *button_brightness = s.button_brightness;
-    *power_brightness = s.power_brightness;
-    *selected_palette = s.selected_palette;
-    *wash_out_level = s.wash_out_level;
+    *power_brightness  = s.power_brightness;
+    *selected_palette  = s.selected_palette;
+    *wash_out_level    = s.wash_out_level;
+
+    // Save to global
+    g_saved_settings = s;
 
     return true;
 }
@@ -876,6 +882,38 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
     }
 
     f_unmount(pSD->pcName);
+}
+
+static inline bool system_settings_equal(const system_settings_t *a, const system_settings_t *b) {
+    return a->lcd_brightness     == b->lcd_brightness &&
+           a->button_brightness  == b->button_brightness &&
+           a->power_brightness   == b->power_brightness &&
+           a->selected_palette   == b->selected_palette &&
+           a->wash_out_level     == b->wash_out_level;
+}
+
+void save_system_settings_if_changed(uint8_t lcd_brightness, uint8_t button_brightness,
+                                     uint8_t power_brightness, int8_t selected_palette,
+                                     uint8_t wash_out_level) {
+
+	system_settings_t current = {
+        .magic = SYSTEM_MAGIC,
+        .lcd_brightness = lcd_brightness,
+        .button_brightness = button_brightness,
+        .power_brightness = power_brightness,
+        .selected_palette = selected_palette,
+        .wash_out_level = wash_out_level
+    };
+
+    if (!system_settings_equal(&g_saved_settings, &current)) {
+        printf("Settings changed, saving...\n");
+        save_system_settings(lcd_brightness,
+                             button_brightness,
+                             power_brightness,
+                             selected_palette,
+                             wash_out_level);
+        g_saved_settings = current;
+    }
 }
 
 // --- ROM settings ---

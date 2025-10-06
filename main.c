@@ -97,12 +97,6 @@ int main(void)
 	// Initialize the ADC for GPIO_AUD_POT_ADC and nHP_DETECT
     init_adc(GPIO_AUD_POT_ADC);
 
-
-	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level);
-
-	// MARK: - PWM Set up
-	fade_in_leds_startup();
-
 #if ENABLE_LCD && USE_IPS_LCD
 	lcd_power_on_reset();
 	init_spi_lcd();
@@ -132,6 +126,11 @@ int main(void)
 	gpio_write(IOX_AUDIO_EN, 1);
 	sleep_ms(10); // this is needed or audio won't work sometimes
 #endif
+
+	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level);
+
+	// MARK: - PWM Set up
+	fade_in_leds_startup();
 
 	// SD WILL HANDLE SPI INIT
 	// gpio_set_function(GPIO_SPI0_SCK, GPIO_FUNC_SPI);
@@ -270,16 +269,11 @@ while(true)
 #if ENABLE_SAVE_ON_POWER_OFF
 		// power switch off
 		if (!gpio_read(GPIO_SW_OUT)) {
-			uint8_t temp_lcd_brightness = lcd_led_duty_cycle;
-			sd_busy = true;	
-
-			uint8_t temp_button_brightness = button_led_duty_cycle;
-            decrease_button_brightness(MAX_BRIGHTNESS);
 #if ENABLE_SDCARD
 			// save to sd card
 			write_cart_ram_file(&gb);
 #endif			
-			save_system_settings_if_changed(temp_lcd_brightness, temp_button_brightness, pwr_led_duty_cycle, manual_palette_selected, wash_out_level);
+			save_system_settings(lcd_led_duty_cycle, button_led_duty_cycle, pwr_led_duty_cycle, manual_palette_selected, wash_out_level);
 			printf("Done");
 
 			sleep_ms(5);

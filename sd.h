@@ -100,7 +100,7 @@ int build_save_path_from_flash(save_type_t type, char *out_path, size_t out_path
     char rom_filename[FILENAME_MAX_LEN];
     uint8_t battery_slot, save_state_slot;
 
-    if(!read_rom_settings(rom_filename, sizeof(rom_filename), &battery_slot, &save_state_slot)) {
+    if(!read_rom_settings(rom_filename, sizeof(rom_filename), &battery_slot, &save_state_slot, false)) {
         printf("E: No valid flash settings found\n");
         return -1;
     }
@@ -268,13 +268,13 @@ void load_cart_rom_file(const char *filename) {
 
         flash_target_offset += br;
     }
-	set_sd_busy(false);
-	watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
-
     f_close(&fil);
     f_unmount(pSD->pcName);
 
 	save_rom_settings(filename, 0, 0);
+
+	set_sd_busy(false);
+	watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
 
     printf("I load_cart_rom_file(%s) COMPLETE (%lu bytes written)\n", filename, rom_size);
 }
@@ -767,3 +767,210 @@ void rom_file_selector() {
 }
 
 #endif
+
+// MARK: SETTINGS
+// --- System settings ---
+
+typedef struct {
+    uint32_t magic;
+    uint8_t lcd_brightness;
+    uint8_t button_brightness;
+    uint8_t power_brightness;
+    int8_t selected_palette;
+    uint8_t wash_out_level;
+} system_settings_t;
+
+typedef struct {
+    uint32_t magic;
+    char last_filename[FILENAME_MAX_LEN];
+    uint8_t battery_slot;
+    uint8_t state_slot;
+} rom_settings_t;
+
+#define SYSTEM_MAGIC 0xCAFEBABE
+#define ROM_MAGIC    0xA5A5A5A5
+
+// --- Helpers ---
+static bool ensure_settings_dir(void) {
+    FRESULT fr;
+    DIR dir;
+    fr = f_opendir(&dir, SETTINGS_DIR);
+    if (fr == FR_NO_PATH) {
+        fr = f_mkdir(SETTINGS_DIR);
+        if (fr != FR_OK) {
+            printf("E Failed to create settings dir: %s (%d)\n", FRESULT_str(fr), fr);
+            return false;
+        }
+    } else if (fr != FR_OK) {
+        printf("E Failed to open settings dir: %s (%d)\n", FRESULT_str(fr), fr);
+        return false;
+    } else {
+        f_closedir(&dir);
+    }
+    return true;
+}
+
+// --- System settings ---
+bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
+                          uint8_t *power_brightness, int8_t *selected_palette,
+                          uint8_t *wash_out_level) {
+    FIL fil;
+    UINT br;
+    system_settings_t s = {0};
+
+    sd_card_t *pSD = sd_get_by_num(0);
+    FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+    if (fr != FR_OK) return false;
+
+    fr = f_open(&fil, SYSTEM_FILE_PATH, FA_READ);
+    if (fr != FR_OK) {
+        f_unmount(pSD->pcName);
+        return false;
+    }
+
+    fr = f_read(&fil, &s, sizeof(s), &br);
+    f_close(&fil);
+    f_unmount(pSD->pcName);
+
+    if (fr != FR_OK || br != sizeof(s) || s.magic != SYSTEM_MAGIC) return false;
+
+    *lcd_brightness = s.lcd_brightness;
+    *button_brightness = s.button_brightness;
+    *power_brightness = s.power_brightness;
+    *selected_palette = s.selected_palette;
+    *wash_out_level = s.wash_out_level;
+
+    return true;
+}
+
+void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
+                          uint8_t power_brightness, int8_t selected_palette,
+                          uint8_t wash_out_level) {
+    system_settings_t s = {
+        .magic = SYSTEM_MAGIC,
+        .lcd_brightness = lcd_brightness,
+        .button_brightness = button_brightness,
+        .power_brightness = power_brightness,
+        .selected_palette = selected_palette,
+        .wash_out_level = wash_out_level
+    };
+
+    sd_card_t *pSD = sd_get_by_num(0);
+    FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+    if (fr != FR_OK) return;
+
+    if (!ensure_settings_dir()) {
+        f_unmount(pSD->pcName);
+        return;
+    }
+
+    FIL fil;
+    fr = f_open(&fil, SYSTEM_FILE_PATH, FA_CREATE_ALWAYS | FA_WRITE);
+    if (fr == FR_OK) {
+        UINT bw;
+        f_write(&fil, &s, sizeof(s), &bw);
+        f_close(&fil);
+        printf("I Saved system settings (%u bytes)\n", bw);
+    } else {
+        printf("E f_open system settings: %s (%d)\n", FRESULT_str(fr), fr);
+    }
+
+    f_unmount(pSD->pcName);
+}
+
+// --- ROM settings ---
+bool read_rom_settings(char *out_filename, size_t max_len, uint8_t *battery_slot, uint8_t *state_slot, bool unmount) {
+    FIL fil;
+    UINT br;
+    rom_settings_t r = {0};
+
+    sd_card_t *pSD = sd_get_by_num(0);
+    FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+    if (fr != FR_OK) return false;
+
+    fr = f_open(&fil, ROM_FILE_PATH, FA_READ);
+    if (fr != FR_OK) {
+        f_unmount(pSD->pcName);
+        return false;
+    }
+
+    fr = f_read(&fil, &r, sizeof(r), &br);
+    f_close(&fil);
+	if (unmount) {
+		f_unmount(pSD->pcName);
+	}
+
+    if (fr != FR_OK || br != sizeof(r) || r.magic != ROM_MAGIC) return false;
+
+    strncpy(out_filename, r.last_filename, max_len - 1);
+    out_filename[max_len - 1] = '\0';
+    *battery_slot = r.battery_slot;
+    *state_slot = r.state_slot;
+
+	printf("I Loaded ROM settings: %s (battery slot %d, state slot %d)\n",
+		   out_filename, *battery_slot, *state_slot);
+
+    return true;
+}
+
+void save_rom_settings(const char *filename, uint8_t battery_slot, uint8_t state_slot) {
+    rom_settings_t r = {0};
+    r.magic = ROM_MAGIC;
+    strncpy(r.last_filename, filename, FILENAME_MAX_LEN - 1);
+    r.battery_slot = battery_slot;
+    r.state_slot = state_slot;
+
+    sd_card_t *pSD = sd_get_by_num(0);
+    FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+    if (fr != FR_OK) return;
+
+    if (!ensure_settings_dir()) {
+        f_unmount(pSD->pcName);
+        return;
+    }
+
+    FIL fil;
+    fr = f_open(&fil, ROM_FILE_PATH, FA_CREATE_ALWAYS | FA_WRITE);
+    if (fr == FR_OK) {
+        UINT bw;
+        f_write(&fil, &r, sizeof(r), &bw);
+        f_close(&fil);
+        printf("I Saved ROM settings (%u bytes)\n", bw);
+    } else {
+        printf("E f_open ROM settings: %s (%d)\n", FRESULT_str(fr), fr);
+    }
+
+    f_unmount(pSD->pcName);
+}
+
+
+void print_sd_free_space(void) {
+    sd_card_t *pSD = sd_get_by_num(0);
+    FATFS *fs = &pSD->fatfs;
+    DWORD fre_clust, fre_sect, tot_sect;
+    FRESULT fr;
+
+    // Mount SD card
+    fr = f_mount(fs, pSD->pcName, 1);
+    if (fr != FR_OK) {
+        printf("E: SD mount failed: %d\n", fr);
+        return;
+    }
+
+    // Get free clusters
+    fr = f_getfree("", &fre_clust, &fs);
+    if (fr != FR_OK) {
+        printf("E: f_getfree failed: %d\n", fr);
+        f_unmount(pSD->pcName);
+        return;
+    }
+
+    // Calculate total and free space (in bytes)
+    tot_sect = (fs->n_fatent - 2) * fs->csize;
+    fre_sect = fre_clust * fs->csize;
+
+    printf("SD total space: %lu KB\n", tot_sect / 2);  // 512B per sector, so /2 for KB
+    printf("SD free space:  %lu KB\n", fre_sect / 2);
+
+    f_unmount(pSD->pcName);
+}

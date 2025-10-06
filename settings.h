@@ -42,8 +42,6 @@
 
 #define WATCHDOG_TIMEOUT_MS 2000
 
-#define SETTINGS_OFFSET (8 * 1024 * 1024)  // 8 MB offset, 4 KB page
-
 #include <malloc.h>
 
 
@@ -104,4 +102,116 @@ void hardfault_handler_c(uint32_t *sp) {
     printf(" PSR = 0x%08lX\n", stacked_psr);
 
     while (1);
+}
+
+#define SETTINGS_OFFSET (8 * 1024 * 1024)  // 8 MB offset, 4 KB page
+#define SYSTEM_SETTINGS_OFFSET  (SETTINGS_OFFSET)                   // base
+#define ROM_SETTINGS_OFFSET     (SETTINGS_OFFSET + FLASH_PAGE_SIZE) // next page
+
+#define FILENAME_MAX_LEN 256
+
+// --- Structs ---
+typedef struct {
+    uint32_t magic;
+    uint8_t lcd_brightness;
+    uint8_t button_brightness;
+    uint8_t power_brightness;
+    int8_t selected_palette;
+    uint8_t wash_out_level;
+} system_settings_t;
+
+typedef struct {
+    uint32_t magic;
+    char last_filename[FILENAME_MAX_LEN];
+    uint8_t battery_slot;
+    uint8_t state_slot;
+} rom_settings_t;
+
+
+// --- System settings ---
+void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
+                          uint8_t power_brightness, int8_t selected_palette,
+                          uint8_t wash_out_level) {
+    system_settings_t s = {
+        .magic = 0xCAFEBABE,
+        .lcd_brightness = lcd_brightness,
+        .button_brightness = button_brightness,
+        .power_brightness = power_brightness,
+        .selected_palette = selected_palette,
+        .wash_out_level = wash_out_level
+    };
+
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase(SYSTEM_SETTINGS_OFFSET, FLASH_PAGE_SIZE);
+    flash_range_program(SYSTEM_SETTINGS_OFFSET, (uint8_t*)&s, sizeof(s));
+    restore_interrupts(ints);
+}
+
+bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
+                          uint8_t *power_brightness, int8_t *selected_palette,
+                          uint8_t *wash_out_level) {
+    const system_settings_t *s = (const system_settings_t*)(XIP_BASE + SYSTEM_SETTINGS_OFFSET);
+    if (s->magic != 0xCAFEBABE) return false;
+
+    *lcd_brightness = s->lcd_brightness;
+    *button_brightness = s->button_brightness;
+    *power_brightness = s->power_brightness;
+    *selected_palette = s->selected_palette;
+    *wash_out_level = s->wash_out_level;
+    return true;
+}
+
+void save_system_settings_if_changed(uint8_t lcd_brightness,
+                                     uint8_t button_brightness,
+                                     uint8_t power_brightness,
+                                     int8_t selected_palette,
+                                     uint8_t wash_out_level) {
+    uint8_t saved_lcd, saved_button, saved_power;
+    int8_t saved_palette;
+    uint8_t saved_washout;
+
+    // Read current settings from flash
+    bool valid = read_system_settings(&saved_lcd, &saved_button,
+                                      &saved_power, &saved_palette,
+                                      &saved_washout);
+
+    // If invalid or any value changed, save to flash
+    if (!valid ||
+        saved_lcd     != lcd_brightness ||
+        saved_button  != button_brightness ||
+        saved_power   != power_brightness ||
+        saved_palette != selected_palette ||
+        saved_washout != wash_out_level) {
+
+        save_system_settings(lcd_brightness,
+                             button_brightness,
+                             power_brightness,
+                             selected_palette,
+                             wash_out_level);
+    }
+}
+
+// --- ROM settings ---
+void save_rom_settings(const char *filename, uint8_t battery_slot, uint8_t state_slot) {
+    rom_settings_t r = {0};
+    r.magic = 0xA5A5A5A5;
+    strncpy(r.last_filename, filename, FILENAME_MAX_LEN - 1);
+    r.battery_slot = battery_slot;
+    r.state_slot = state_slot;
+
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase(ROM_SETTINGS_OFFSET, FLASH_PAGE_SIZE);
+    flash_range_program(ROM_SETTINGS_OFFSET, (uint8_t*)&r, sizeof(r));
+    restore_interrupts(ints);
+}
+
+bool read_rom_settings(char *out_filename, size_t max_len, uint8_t *battery_slot, uint8_t *state_slot) {
+    const rom_settings_t *r = (const rom_settings_t*)(XIP_BASE + ROM_SETTINGS_OFFSET);
+    if (r->magic != 0xA5A5A5A5) return false;
+
+    strncpy(out_filename, r->last_filename, max_len - 1);
+    out_filename[max_len - 1] = 0;
+    *battery_slot = r->battery_slot;
+    *state_slot = r->state_slot;
+    return true;
 }

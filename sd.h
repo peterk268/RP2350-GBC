@@ -16,45 +16,6 @@ void set_sd_busy(bool is_sd_busy) {
 	__sev();
 }
 
-#define FILENAME_MAX_LEN 256
-
-typedef struct {
-    uint32_t magic;                   // magic number to verify valid data
-    char last_filename[FILENAME_MAX_LEN]; // last ROM loaded
-    uint8_t battery_slot;             // selected battery slot (0,1,...)
-    uint8_t state_slot;               // selected save state slot
-} settings_t;
-
-void save_settings_to_flash(const char *filename, uint8_t battery_slot, uint8_t state_slot) {
-    settings_t buffer;
-    memset(&buffer, 0xFF, sizeof(buffer)); // erased state
-    buffer.magic = 0xA5A5A5A5;             // arbitrary magic number
-    strncpy(buffer.last_filename, filename, FILENAME_MAX_LEN-1);
-    buffer.battery_slot = battery_slot;
-    buffer.state_slot = state_slot;
-
-	uint32_t ints = save_and_disable_interrupts();
-    // erase page
-    flash_range_erase(SETTINGS_OFFSET, FLASH_PAGE_SIZE);
-    // program flash
-    flash_range_program(SETTINGS_OFFSET, (uint8_t*)&buffer, sizeof(buffer));
-	restore_interrupts(ints);
-}
-
-bool read_settings_from_flash(char *out_filename, size_t max_len, uint8_t *battery_slot, uint8_t *state_slot) {
-    const settings_t *flash_ptr = (const settings_t *)(XIP_BASE + SETTINGS_OFFSET);
-
-    // verify magic
-    if (flash_ptr->magic != 0xA5A5A5A5) {
-        return false; // invalid or uninitialized
-    }
-
-    strncpy(out_filename, flash_ptr->last_filename, max_len-1);
-    out_filename[max_len-1] = 0;
-    *battery_slot = flash_ptr->battery_slot;
-    *state_slot = flash_ptr->state_slot;
-    return true;
-}
 
 typedef enum {
     SAVE_BATTERY,   // .sav
@@ -139,7 +100,7 @@ int build_save_path_from_flash(save_type_t type, char *out_path, size_t out_path
     char rom_filename[FILENAME_MAX_LEN];
     uint8_t battery_slot, save_state_slot;
 
-    if(!read_settings_from_flash(rom_filename, sizeof(rom_filename), &battery_slot, &save_state_slot)) {
+    if(!read_rom_settings(rom_filename, sizeof(rom_filename), &battery_slot, &save_state_slot)) {
         printf("E: No valid flash settings found\n");
         return -1;
     }
@@ -313,7 +274,7 @@ void load_cart_rom_file(const char *filename) {
     f_close(&fil);
     f_unmount(pSD->pcName);
 
-	save_settings_to_flash(filename, 0, 0);
+	save_rom_settings(filename, 0, 0);
 
     printf("I load_cart_rom_file(%s) COMPLETE (%lu bytes written)\n", filename, rom_size);
 }

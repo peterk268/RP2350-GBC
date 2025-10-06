@@ -97,6 +97,9 @@ int main(void)
 	// Initialize the ADC for GPIO_AUD_POT_ADC and nHP_DETECT
     init_adc(GPIO_AUD_POT_ADC);
 
+
+	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level);
+
 	// MARK: - PWM Set up
 	fade_in_leds_startup();
 
@@ -222,6 +225,9 @@ while(true)
     // MARK: - GPU Init
 #if ENABLE_LCD
 	gb_init_lcd(&gb, &lcd_draw_line);
+	if (manual_palette_selected != -1) {
+		manual_assign_palette(palette, manual_palette_selected);
+	}
 #endif
 
     // MARK: - Audio Init
@@ -264,10 +270,18 @@ while(true)
 #if ENABLE_SAVE_ON_POWER_OFF
 		// power switch off
 		if (!gpio_read(GPIO_SW_OUT)) {
+			uint8_t temp_lcd_brightness = lcd_led_duty_cycle;
+			sd_busy = true;	
+
+			uint8_t temp_button_brightness = button_led_duty_cycle;
+            decrease_button_brightness(MAX_BRIGHTNESS);
+#if ENABLE_SDCARD
 			// save to sd card
-#if ENABLE_SDCARD				
 			write_cart_ram_file(&gb);
 #endif			
+			save_system_settings_if_changed(temp_lcd_brightness, temp_button_brightness, pwr_led_duty_cycle, manual_palette_selected, wash_out_level);
+			printf("Done");
+
 			sleep_ms(5);
 			release_power(); // turn power off
 		}

@@ -146,9 +146,9 @@ void remove_pwr_led_flash() {
 
 // LED Fade in on start up here
 // Target brightness for each LED at startup
-#define LCD_TARGET_BRIGHTNESS    (MAX_BRIGHTNESS/8)
-#define PWR_TARGET_BRIGHTNESS    (MAX_BRIGHTNESS/8)
-#define BUTTON_TARGET_BRIGHTNESS (MAX_BRIGHTNESS/8)
+uint8_t lcd_target_brightness    = (MAX_BRIGHTNESS/8);
+uint8_t pwr_target_brightness    = (MAX_BRIGHTNESS/8);
+uint8_t button_target_brightness = (MAX_BRIGHTNESS/8);
 
 static repeating_timer_t led_ramp_timer;
 volatile bool led_ramp_done = false; // flag you can check in main()
@@ -159,23 +159,23 @@ volatile bool led_ramp_done = false; // flag you can check in main()
 typedef struct {
     uint gpio;
     uint8_t *duty;
-    uint8_t target;
+    uint8_t *target;
     bool is_active_low;
 } led_ramp_t;
 
 static led_ramp_t led_ramps[] = {
-    { GPIO_LCD_LED,    &lcd_led_duty_cycle,    LCD_TARGET_BRIGHTNESS,    false },
-    { GPIO_PWR_LED,    &pwr_led_duty_cycle,    PWR_TARGET_BRIGHTNESS,    false },
-    { GPIO_BUTTON_LED, &button_led_duty_cycle, BUTTON_TARGET_BRIGHTNESS, false },
+    { GPIO_LCD_LED,    &lcd_led_duty_cycle,    &lcd_target_brightness,    false },
+    { GPIO_PWR_LED,    &pwr_led_duty_cycle,    &pwr_target_brightness,    false },
+    { GPIO_BUTTON_LED, &button_led_duty_cycle, &button_target_brightness, false },
 };
 
 bool led_ramp_timer_callback(repeating_timer_t *rt) {
     bool all_done = true;
     for (size_t i = 0; i < sizeof(led_ramps)/sizeof(led_ramps[0]); ++i) {
         led_ramp_t *l = &led_ramps[i];
-        if (*(l->duty) < l->target) {
+        if (*(l->duty) < *(l->target)) {
             adjust_brightness(l->gpio, l->duty, BRIGHTNESS_STEP, true, l->is_active_low);
-            if (*(l->duty) < l->target) all_done = false;
+            if (*(l->duty) < *(l->target)) all_done = false;
         }
     }
 

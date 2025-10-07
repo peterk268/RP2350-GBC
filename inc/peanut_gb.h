@@ -4314,11 +4314,30 @@ void gb_tick_rtc(struct gb_s *gb)
 
 void gb_set_rtc(struct gb_s *gb, const struct tm * const time)
 {
-	gb->rtc_real.bytes[0] = time->tm_sec;
-	gb->rtc_real.bytes[1] = time->tm_min;
-	gb->rtc_real.bytes[2] = time->tm_hour;
-	gb->rtc_real.bytes[3] = time->tm_yday & 0xFF; /* Low 8 bits of day counter. */
-	gb->rtc_real.bytes[4] = time->tm_yday >> 8; /* High 1 bit of day counter. */
+    struct tm t = *time;
+
+    // Apply hour offset for Peanut GB (observed difference)
+    t.tm_hour = (t.tm_hour + 14) % 24;
+
+    // Compute 9-bit day counter with +3 offset so Monday shows correctly
+    uint16_t day_counter = (t.tm_yday + 3) & 0x1FF;
+
+    gb->rtc_real.bytes[0] = t.tm_sec;
+    gb->rtc_real.bytes[1] = t.tm_min;
+    gb->rtc_real.bytes[2] = t.tm_hour;
+    gb->rtc_real.bytes[3] = day_counter & 0xFF;        // low 8 bits
+    gb->rtc_real.bytes[4] = (day_counter >> 8) & 0x01; // high bit
+
+    // weekday bits derived from day_counter (bit1-2)
+    uint8_t weekday = day_counter % 7;                 // 0 = Saturday
+    gb->rtc_real.bytes[4] |= (weekday & 0x03) << 1;    // bits 1-2 = weekday
+
+    // Debug
+    // printf("GB RTC bytes: ");
+    // for (int i = 0; i < 5; i++) {
+    //     printf("%02X ", gb->rtc_real.bytes[i]);
+    // }
+    // printf("\n");
 }
 #endif // PEANUT_GB_HEADER_ONLY
 

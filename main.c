@@ -262,6 +262,11 @@ while(true)
 	uint8_t save_wait_counter = 0;
 #endif
 
+    rtc_time_t tm = {30, 4, 10, 2, 7, 10, 25}; // 2025-10-07, 10:04:30 Tuesday
+    mcp7940n_init(RTC_I2C_PORT);
+	mcp7940n_set_time_if_unset(RTC_I2C_PORT, &tm);
+
+	sync_gb_rtc(&gb);
     // MARK: - Game Play
 	while(1)
 	{
@@ -283,8 +288,18 @@ while(true)
 #if ENABLE_BAT_MONITORING
 		// Check battery status periodically
 		if (battery_task_flag) {
-            battery_task_flag = false;
-            process_bat_percent();
+			battery_task_flag = false;
+
+			// best to not have too much i2c bus contention in the same frame cycle
+			// so we alternate between rtc and battery checks
+			// each gets called every 20s.
+			if (do_rtc_update) {
+				sync_gb_rtc(&gb);
+			} else {
+				process_bat_percent();
+			}
+
+			do_rtc_update = !do_rtc_update; // toggle for next round
         }
 		if (low_power_shutdown) {
 #if ENABLE_SDCARD

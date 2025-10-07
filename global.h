@@ -109,11 +109,20 @@ void overclock_cpu(bool enable) {
 //  so it's useful in a low power mode for non-demanding games like Pokemon.
 // VREG_VOLTAGE_DEFAULT is 1.1V and gave the best power consumption. Going lower doesn't help.
 // I'd also prefer to keep the default voltage for stability. Default clock speed is 150MHz.
-void underclock_cpu() {
-	// Going down: lower frequency first, then voltage
-	set_sys_clock_khz(260 * 1000, true);
-	sleep_ms(10);
+void underclock_cpu(bool enable) {
+	if (enable) {
+		// Going down: lower frequency first, then voltage
+		set_sys_clock_khz(180 * 1000, true);
+		sleep_ms(10);
 
-	vreg_set_voltage(VREG_VOLTAGE_DEFAULT);
-	sleep_ms(10);
+		vreg_set_voltage(VREG_VOLTAGE_DEFAULT);
+		sleep_ms(10);
+	} else {
+        // Going up: up voltage then frequency
+        vreg_set_voltage(VREG_VOLTAGE_1_15);
+        sleep_ms(10);
+
+        set_sys_clock_khz(300 * 1000, true);
+        sleep_ms(10);
+	}
 }

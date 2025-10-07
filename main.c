@@ -443,6 +443,23 @@ while(true)
 				if (!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
 					wash_out_level = decrease_clamp(wash_out_level, 16);
 				}
+				// This is a work in progress but very promising.. only issue is the heartbeat for the fps..
+				// But currently getting like 125mW down from 195mW so it's a good start.
+				if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
+					/* start + B: Battery Saving Mode*/
+					// read current sys clock in Hz
+					uint32_t freq = clock_get_hz(clk_sys);
+
+					if (freq == 300000000) {
+						// currently 300 MHz → underclock to 180 MHz and turn on frame skip
+						underclock_cpu(true);
+						gb.direct.frame_skip = true;
+					} else {
+						// any other freq → overclock
+						underclock_cpu(false);
+						gb.direct.frame_skip = false;
+					}
+				}
 			}
 		}
 #if ENABLE_FRAME_DEBUGGING

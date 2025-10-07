@@ -198,3 +198,32 @@ void fade_in_leds_startup(void) {
         printf("Failed to add led ramp timer\n");
     }
 }
+
+#define BRIGHTNESS_STEP_DOWN  5
+#define FADE_INTERVAL_MS 1
+// Power-down fade uses the same ramp structure, just decreases
+bool led_fadeout_timer_callback(repeating_timer_t *rt) {
+    bool all_done = true;
+    for (size_t i = 0; i < sizeof(led_ramps)/sizeof(led_ramps[0]); ++i) {
+        led_ramp_t *l = &led_ramps[i];
+        if (*(l->duty) > MIN_BRIGHTNESS) {
+            adjust_brightness(l->gpio, l->duty, BRIGHTNESS_STEP_DOWN, false, l->is_active_low); // decrease
+            if (*(l->duty) > MIN_BRIGHTNESS) all_done = false;
+        }
+    }
+
+    if (all_done) {
+        led_ramp_done = true;       // reuse the same flag
+        deconfig_leds(false);       // optional: turn off LEDs
+        return false;               // stop timer
+    }
+    return true; // keep running
+}
+
+void fade_out_leds_powerdown(void) {
+    led_ramp_done = false;          // reuse flag
+
+    if (!add_repeating_timer_ms(FADE_INTERVAL_MS, led_fadeout_timer_callback, NULL, &led_ramp_timer)) {
+        printf("Failed to add led fadeout timer\n");
+    }
+}

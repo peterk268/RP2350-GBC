@@ -42,6 +42,8 @@
 
 #define WATCHDOG_TIMEOUT_MS 2000
 
+#define LED_PHASE_OUT_PWR_DOWN 0
+
 #include <malloc.h>
 
 

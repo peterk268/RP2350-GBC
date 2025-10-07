@@ -274,11 +274,26 @@ while(true)
 #if ENABLE_SAVE_ON_POWER_OFF
 		// power switch off
 		if (!gpio_read(GPIO_SW_OUT)) {
+			// LED Phase out on power down didn't make any sense with how fast the shutdown is..
+			// Suffering from success I guess but it's fine..
+			// I don't think anyone will miss their Pico Pal taking longer to turn off just for the LEDs to fade out lol.
+			// Power on made sense because that takes like a second to init everything but power off is instant.
+#if LED_PHASE_OUT_PWR_DOWN
+			uint8_t temp_lcd_led = lcd_led_duty_cycle;
+			uint8_t temp_button_led = button_led_duty_cycle;
+			uint8_t temp_pwr_led = pwr_led_duty_cycle;
+			fade_out_leds_powerdown();
+#endif
+
 #if ENABLE_SDCARD
 			// save to sd card
 			write_cart_ram_file(&gb);
 #endif			
+#if LED_PHASE_OUT_PWR_DOWN
+			save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level);
+#else
 			save_system_settings_if_changed(lcd_led_duty_cycle, button_led_duty_cycle, pwr_led_duty_cycle, manual_palette_selected, wash_out_level);
+#endif
 			printf("Done");
 
 			release_power(); // turn power off

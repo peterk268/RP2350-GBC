@@ -122,9 +122,11 @@ int main(void)
 	write_iox_port1(NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, 1, 0, NO_UPDATE);
 	sleep_ms(10);
 	gpio_write(IOX_AUDIO_EN, 0);
+# if ENABLE_SOUND
 	sleep_ms(10);
 	gpio_write(IOX_AUDIO_EN, 1);
 	sleep_ms(10); // this is needed or audio won't work sometimes
+# endif
 #endif
 
 	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level);

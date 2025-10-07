@@ -80,21 +80,26 @@ void read_volume() {
         set_volume(current_volume_level, current_volume_level);
     }
 
+    detect_headphones();
+
     // --- Mute logic with one-time calls and hysteresis ---
-    // can't turn off the drivers because we don't have time to wait to turn them back on.
+    // don't turn off the drivers when headphones in because pop is audible and class ab headphone amp
+    // doesn't consume any idle power due to 100uF dc blocking caps in hp path..
     if (current_volume_level <= MUTE_THRESH && !is_muted) {
         mute_dac();
+        if (!headphones_present) power_off_drivers();
         is_muted = true;
     } 
     else if (current_volume_level >= UNMUTE_THRESH && is_muted) {
+        power_on_drivers();
         unmute_dac();
         is_muted = false;
     }
 
-    detect_headphones();
     if (headphones_present && !prev_headphones_present) {
         dac_i2c_write(1, 0x20, 0x00); // Class-D Amplifier powered off
-    } else if (!headphones_present && prev_headphones_present) {
+    } else if (!headphones_present && prev_headphones_present && !is_muted) {
+        // we don't want to turn on the amp if we're muted.. we'll let the unmute logic handle that
         dac_i2c_write(1, 0x20, 0b11000110); // Class-D Amplifier powered on
     }
     // Update the previous state for next check

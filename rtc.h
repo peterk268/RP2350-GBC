@@ -166,12 +166,21 @@ bool mcp7940n_init(i2c_inst_t *i2c) {
     seconds |= 0x80;
     return mcp7940n_write_register(i2c, MCP7940N_REG_SECONDS, seconds);
 }
+typedef enum {
+    RTC_SUNDAY    = 1,
+    RTC_MONDAY    = 2,
+    RTC_TUESDAY   = 3,
+    RTC_WEDNESDAY = 4,
+    RTC_THURSDAY  = 5,
+    RTC_FRIDAY    = 6,
+    RTC_SATURDAY  = 7
+} rtc_weekday_t;
 
 typedef struct {
     uint8_t seconds;
     uint8_t minutes;
     uint8_t hours;     // 24-hour
-    uint8_t weekday;   // 1=Sunday, 7=Saturday
+    rtc_weekday_t weekday;   // 1=Sunday, 7=Saturday
     uint8_t date;
     uint8_t month;
     uint8_t year;      // 0-99
@@ -190,6 +199,7 @@ bool mcp7940n_set_time(i2c_inst_t *i2c, rtc_time_t *t) {
     
     return i2c_write_blocking(i2c, MCP7940N_I2C_ADDR, buf, 8, false) == 8;
 }
+#warning "Seems like it takes a couple of seconds to set in so keep in mind"
 
 bool mcp7940n_set_time_if_unset(i2c_inst_t *i2c, rtc_time_t *t) {
     bool valid;

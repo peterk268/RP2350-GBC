@@ -617,6 +617,50 @@ uint16_t read_voltage_mV();
 
 static int powman_example_off(void);
 
+#define VISIBLE_ITEMS 9  // depends on your screen height / font
+static uint16_t page_start = 0; // first item currently visible
+// static lv_timer_t *scroll_timer = NULL;
+
+// // callback to start scrolling
+// void start_scroll_cb(lv_timer_t * t) {
+//     lv_obj_t *label = (lv_obj_t *)t->user_data;
+//     lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR); // enable scroll
+//     lv_obj_set_style_anim_speed(label, 20, 0); // adjust speed
+//     lv_timer_del(t); // delete timer after running once
+// }
+
+void draw_rom_list(lv_obj_t *list, char filenames[][256], uint16_t num_file, uint16_t selected, uint16_t page_start) {
+    lv_obj_clean(list);
+
+    for (uint16_t i = 0; i < VISIBLE_ITEMS && (i + page_start) < num_file; i++) {
+        lv_obj_t *list_title = lv_list_add_text(list, filenames[i + page_start]);
+        lv_obj_set_style_text_font(list_title, LV_FONT_DEFAULT, 0);
+        lv_obj_set_style_text_color(list_title, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(list_title, lv_color_hex(0xFFFFFF), 0);
+
+        // lv_obj_set_width(list_title, DISP_HOR_RES - 30); // important for clipping/ellipsis
+        // lv_label_set_long_mode(list_title, LV_LABEL_LONG_CLIP); // clip/ellipsis for others
+
+        if ((i + page_start) == selected) {
+            lv_obj_set_style_bg_color(list_title, lv_color_hex(0x33CC66), LV_PART_MAIN); // faint green.. pure = 0x00C000
+            lv_obj_set_style_text_color(list_title, lv_color_black(), 0);
+            lv_label_set_long_mode(list_title, LV_LABEL_LONG_SCROLL_CIRCULAR); // enable scroll
+            lv_obj_set_style_anim_speed(list_title, 20, 0); // adjust speed
+
+            // create a one-shot timer to wait 500ms before starting scroll
+            // if (scroll_timer) {
+            //     lv_timer_del(scroll_timer);
+            //     scroll_timer = NULL;
+            // }
+            // scroll_timer = lv_timer_create(start_scroll_cb, 500, list_title);
+        } else {
+            lv_obj_set_width(list_title, DISP_HOR_RES - 30); // important for clipping/ellipsis
+            lv_label_set_long_mode(list_title, LV_LABEL_LONG_CLIP); // clip/ellipsis for others
+        }
+    }
+}
+bool mcp7940n_get_tm(i2c_inst_t *i2c, struct tm *out_tm);
+
 void rom_file_selector() {	
     // Create list
     lv_init();
@@ -639,27 +683,112 @@ void rom_file_selector() {
 	lv_obj_t *cont = lv_obj_create(lv_scr_act());
 	lv_obj_set_size(cont, DISP_HOR_RES, DISP_VER_RES);
 	lv_obj_center(cont);
+    lv_obj_set_style_bg_color(cont, lv_color_hex(0xFFFFFF), 0);  // dark gray background
+    lv_obj_set_scrollbar_mode(cont, LV_SCROLLBAR_MODE_OFF);
 
-	// Title label
-	lv_obj_t *title = lv_label_create(cont);
-	lv_label_set_text(title, filename[selected]);
-	lv_obj_set_style_text_font(title, &lv_font_montserrat_10, 0);
-	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
+    lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0xFFFFFF), 0);  // match your container
 
+	// // Title label
+	// lv_obj_t *title = lv_label_create(cont);
+	// lv_label_set_text(title, filename[selected]);
+	// lv_obj_set_style_text_font(title, LV_FONT_DEFAULT, 0);
+	// lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
+    // lv_obj_set_scrollbar_mode(title, LV_SCROLLBAR_MODE_OFF);
+
+
+    // === ROM List ===
+    lv_obj_t *list = lv_list_create(cont);
+    lv_obj_set_size(list, DISP_HOR_RES, DISP_VER_RES - 20);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 7);
+    lv_obj_set_style_bg_color(list, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(list, lv_color_black(), 0);
+    lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+
+    draw_rom_list(list, filename, num_file, selected, page_start);
+        
 	uint16_t bat_percent = get_bat_charge_percent();
-	uint16_t remaining_cap = get_remaining_bat_capacity_mAh();
-	uint16_t full_cap = get_full_bat_capacity_mAh();
-	uint16_t voltage_mV = read_voltage_mV();
+	// uint16_t remaining_cap = get_remaining_bat_capacity_mAh();
+	// uint16_t full_cap = get_full_bat_capacity_mAh();
+	// uint16_t voltage_mV = read_voltage_mV();
 
-	lv_obj_t *percent = lv_label_create(cont);
-	char percent_text[64];  // increased size for multiple lines
-	snprintf(percent_text, sizeof(percent_text),
-			"Battery: %d%%\nRemaining: %dmAh\nFull: %dmAh\nVoltage: %.2fV",
-			bat_percent, remaining_cap, full_cap, voltage_mV / 1000.0);
-	lv_label_set_text(percent, percent_text);
-	lv_obj_set_style_text_font(percent, &lv_font_montserrat_10, 0);
-	lv_obj_align(percent, LV_ALIGN_BOTTOM_MID, 0, 5);
+	// lv_obj_t *percent = lv_label_create(cont);
+	// char percent_text[64];  // increased size for multiple lines
+    // snprintf(percent_text, sizeof(percent_text),
+    //         "%d%% %d/%dmAh %.2fV",
+    //         bat_percent, remaining_cap, full_cap, voltage_mV / 1000.0);
+	// lv_label_set_text(percent, percent_text);
+	// lv_obj_set_style_text_font(percent, LV_FONT_DEFAULT, 0);
+	// lv_obj_align(percent, LV_ALIGN_BOTTOM_MID, 0, 5);
 	
+    // === Top bar ===
+    lv_obj_t *top_bar = lv_obj_create(cont);
+    lv_obj_set_size(top_bar, DISP_HOR_RES, 20);
+    lv_obj_align(top_bar, LV_ALIGN_TOP_MID, 0, -15);
+    lv_obj_set_style_bg_color(top_bar, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_set_style_border_width(top_bar, 0, 0);
+    lv_obj_set_scrollbar_mode(top_bar, LV_SCROLLBAR_MODE_OFF);
+
+    // Top bar bottom line
+    lv_obj_set_style_border_width(top_bar, 1, 0);
+    lv_obj_set_style_border_side(top_bar, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(top_bar, lv_color_hex(0x000000), 0); // 0xC0C0C0
+
+    // Left label (title)
+    lv_obj_t *title_label = lv_label_create(top_bar);
+    lv_label_set_text(title_label, "Pico Pal");
+    lv_obj_set_style_text_font(title_label, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(title_label, lv_color_hex(0x202020), 0);
+    lv_obj_set_style_bg_color(title_label, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_align(title_label, LV_ALIGN_LEFT_MID, 5, 0);
+
+    // Right label (time + battery)
+    struct tm now;
+    mcp7940n_get_tm(RTC_I2C_PORT, &now);  // example RTC read function
+    int hour12 = now.tm_hour % 12;
+    if (hour12 == 0) hour12 = 12;
+    const char *ampm = (now.tm_hour >= 12) ? "PM" : "AM";
+
+    lv_obj_t *status_label = lv_label_create(top_bar);
+    char status_text[32];
+    snprintf(status_text, sizeof(status_text), "%d:%02d%s  %d%%",
+         hour12, now.tm_min, ampm, bat_percent);
+
+    lv_label_set_text(status_label, status_text);
+    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(status_label, lv_color_hex(0x202020), 0);
+    lv_obj_set_style_bg_color(status_label, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_align(status_label, LV_ALIGN_RIGHT_MID, -5, 0);
+
+    // === Bottom hint bar ===
+    lv_obj_t *hint_bar = lv_obj_create(cont);
+    lv_obj_set_size(hint_bar, DISP_HOR_RES, 20);
+    lv_obj_align(hint_bar, LV_ALIGN_BOTTOM_MID, 0, 15);
+    lv_obj_set_style_bg_color(hint_bar, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_set_style_border_width(hint_bar, 0, 0);
+    lv_obj_set_scrollbar_mode(hint_bar, LV_SCROLLBAR_MODE_OFF);
+
+    // Bottom bar top line
+    lv_obj_set_style_border_width(hint_bar, 1, 0);
+    lv_obj_set_style_border_side(hint_bar, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_color(hint_bar, lv_color_hex(0x000000), 0);
+
+    // Left label
+    lv_obj_t *hint_label_left = lv_label_create(hint_bar);
+    lv_label_set_text(hint_label_left, "A: Load");
+    lv_obj_set_style_text_font(hint_label_left, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(hint_label_left, lv_color_hex(0x202020), 0);
+    lv_obj_set_style_bg_color(hint_label_left, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_align(hint_label_left, LV_ALIGN_LEFT_MID, 5, 0);
+
+    // Right label
+    lv_obj_t *hint_label_right = lv_label_create(hint_bar);
+    lv_label_set_text(hint_label_right, "Start: Recent");
+    lv_obj_set_style_text_font(hint_label_right, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(hint_label_right, lv_color_hex(0x202020), 0);
+    lv_obj_set_style_bg_color(hint_label_right, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_align(hint_label_right, LV_ALIGN_RIGHT_MID, -5, 0);
+
 
 	// input loop
     bool up, down, left, right, a, b, select, start;
@@ -702,31 +831,55 @@ void rom_file_selector() {
 		}
 
 		if (!start && prev_start) {   // just pressed
+            // memset(front_fb->data, 0, sizeof(front_fb->data));
+            // printf("Recent game\n");
 			/* re-start the last game (no need to reprogram flash) */
 			break;
 		}
 		if ((!a && prev_a) || (!b && prev_b)) {
 			/* copy the rom from the SD card to flash and start the game */
+            // memset(front_fb->data, 0, sizeof(front_fb->data));
 			printf("LOADING\n");
 			load_cart_rom_file(filename[selected]);
 			break;
 		}
-		if (!down && prev_down) {
-			/* select the next rom */
-			selected++;
-			if(selected>=num_file) selected=0;
-			printf("%s\n", filename[selected]);
-			lv_label_set_text(title, filename[selected]);	
-		}
-		if(!up && prev_up) {
-			/* select the previous rom */
-			if(selected==0) {
-				selected=num_file-1;
-			} else {
-				selected--;
-			}
-			lv_label_set_text(title, filename[selected]);
-		}
+		// if (!down && prev_down) {
+		// 	/* select the next rom */
+		// 	selected++;
+		// 	if(selected>=num_file) selected=0;
+		// 	printf("%s\n", filename[selected]);
+		// 	lv_label_set_text(title, filename[selected]);	
+		// }
+		// if(!up && prev_up) {
+		// 	/* select the previous rom */
+		// 	if(selected==0) {
+		// 		selected=num_file-1;
+		// 	} else {
+		// 		selected--;
+		// 	}
+		// 	lv_label_set_text(title, filename[selected]);
+		// }
+        if (!down && prev_down) {
+            if (selected + 1 < num_file) selected++;
+            else selected = 0; // wrap around
+
+            // scroll if selected goes beyond visible items
+            if (selected >= page_start + VISIBLE_ITEMS) page_start++;
+            else if (selected == 0) page_start = 0; // wrap
+
+            draw_rom_list(list, filename, num_file, selected, page_start);
+        }
+
+        if (!up && prev_up) {
+            if (selected == 0) selected = num_file - 1;
+            else selected--;
+
+            if (selected < page_start) page_start--;
+            else if (selected == num_file - 1) page_start = (num_file > VISIBLE_ITEMS) ? num_file - VISIBLE_ITEMS : 0;
+
+            draw_rom_list(list, filename, num_file, selected, page_start);
+        }
+
 		if (!right && prev_right) {
 			/* select the next page */
 			num_page++;
@@ -738,8 +891,10 @@ void rom_file_selector() {
 			}
 			/* select the first file */
 			selected=0;
-			lv_label_set_text(title, filename[selected]);
-			//mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
+			// lv_label_set_text(title, filename[selected]);
+            page_start = 0;
+            draw_rom_list(list, filename, num_file, selected, page_start);
+
 		}
 		if (!left && prev_left && num_page > 0) {
 			/* select the previous page */
@@ -747,8 +902,10 @@ void rom_file_selector() {
 			num_file=rom_file_selector_display_page(filename,num_page);
 			/* select the first file */
 			selected=0;
-			lv_label_set_text(title, filename[selected]);
-			//mk_ili9225_text(filename[selected],0,selected*8,0xFFFF,0xF800);
+			// lv_label_set_text(title, filename[selected]);
+            page_start = 0;
+            draw_rom_list(list, filename, num_file, selected, page_start);
+
 		}
 		// Save states for edge detection
 		prev_up = up;

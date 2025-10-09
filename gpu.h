@@ -676,7 +676,7 @@ void lvgl_test(void) {
 	// Title label
 	lv_obj_t *title = lv_label_create(cont);
 	lv_label_set_text(title, "Starlight Test UI");
-	lv_obj_set_style_text_font(title, &lv_font_montserrat_10, 0);
+	lv_obj_set_style_text_font(title, LV_FONT_DEFAULT, 0);
 	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
 
 	// Slider

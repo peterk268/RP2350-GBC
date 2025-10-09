@@ -3,7 +3,7 @@
  * Load a save file from the SD card
  */
 
-#define MAX_FILES 22
+#define MAX_FILES 9
 
 static lv_obj_t *rom_list;
 static uint16_t num_page = 0;
@@ -282,7 +282,7 @@ void load_cart_rom_file(const char *filename) {
 /**
  * Function used by the rom file selector to display one page of .gb rom files
  */
-uint16_t rom_file_selector_display_page(char filename[22][256],uint16_t num_page) {
+uint16_t rom_file_selector_display_page(char filename[MAX_FILES][256],uint16_t num_page) {
 	sd_card_t *pSD=sd_get_by_num(0);
     DIR dj;
     FILINFO fno;
@@ -295,7 +295,7 @@ uint16_t rom_file_selector_display_page(char filename[22][256],uint16_t num_page
     }
 
 	/* clear the filenames array */
-	for(uint8_t ifile=0;ifile<22;ifile++) {
+	for(uint8_t ifile=0;ifile<MAX_FILES;ifile++) {
 		strcpy(filename[ifile],"");
 	}
 
@@ -306,7 +306,7 @@ uint16_t rom_file_selector_display_page(char filename[22][256],uint16_t num_page
 
 	/* skip the first N pages */
 	if(num_page>0) {
-		while(num_file<num_page*22 && fr == FR_OK && fno.fname[0]) {
+		while(num_file<num_page*MAX_FILES && fr == FR_OK && fno.fname[0]) {
 			if (fno.fname[0] != '.') {
 				num_file++;
 			}
@@ -316,7 +316,7 @@ uint16_t rom_file_selector_display_page(char filename[22][256],uint16_t num_page
 
 	/* store the filenames of this page */
 	num_file=0;
-    while(num_file<22 && fr == FR_OK && fno.fname[0]) {
+    while(num_file<MAX_FILES && fr == FR_OK && fno.fname[0]) {
 		if (fno.fname[0] != '.') {
 			printf(fno.fname);
 			strcpy(filename[num_file],fno.fname);

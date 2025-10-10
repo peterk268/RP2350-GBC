@@ -154,11 +154,39 @@ void change_bat_chem_to_lipo() {
 }
 
 void set_design_capacity(uint16_t cap_mah) {
+    // --- Step -2: Compute what we would write ---
+    uint8_t new_cap_lsb = cap_mah & 0xFF;
+    uint8_t new_cap_msb = (cap_mah >> 8) & 0xFF;
+    uint16_t design_energy = (uint16_t)(cap_mah * 37 / 10);
+    uint8_t energy_lsb = design_energy & 0xFF;
+    uint8_t energy_msb = (design_energy >> 8) & 0xFF;
+
+    // --- Step -1: Read current values ---
+    uint8_t cur_cap_msb = read_register_8(0x46);
+    uint8_t cur_cap_lsb = read_register_8(0x47);
+    uint8_t cur_energy_msb = read_register_8(0x48);
+    uint8_t cur_energy_lsb = read_register_8(0x49);
+
+    // Compute what checksum would be based on current values
+    uint8_t cur_csum = read_register_8(0x60);
+    uint16_t temp_sum = cur_cap_msb + cur_cap_lsb + cur_energy_msb + cur_energy_lsb;
+    uint8_t expected_csum = 255 - ((255 - cur_csum - temp_sum + (new_cap_msb + new_cap_lsb + energy_msb + energy_lsb)) & 0xFF);
+
+    // --- Step 0: Check if everything matches ---
+    if (cur_cap_msb == new_cap_msb && cur_cap_lsb == new_cap_lsb &&
+        cur_energy_msb == energy_msb && cur_energy_lsb == energy_lsb &&
+        cur_csum == expected_csum) {
+        printf("Design capacity and energy already set. Skipping write.\n");
+        return;
+    }
+
+
     uint8_t data[2];
 
     // --- Step 1: Enter CFGUPDATE mode ---
     subcommand_control(0x0013);  // SET_CFGUPDATE
     printf("Entered CFGUPDATE mode.\n");
+    sleep_ms(1100);
 
     // --- Step 2: Enable Block Data Memory control ---
     i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x61, 0x00}, 2, false);
@@ -184,18 +212,11 @@ void set_design_capacity(uint16_t cap_mah) {
     printf("Old Energy: MSB=0x%02X LSB=0x%02X\n", old_energy_msb, old_energy_lsb);
 
     // --- Step 6: Write new Design Capacity ---
-    uint8_t new_cap_lsb = cap_mah & 0xFF;
-    uint8_t new_cap_msb = (cap_mah >> 8) & 0xFF;
-
     i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x46, new_cap_msb}, 2, false);
     i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x47, new_cap_lsb}, 2, false);
     printf("Wrote new Capacity: MSB=0x%02X LSB=0x%02X\n", new_cap_msb, new_cap_lsb);
 
     // --- Step 7: Write new Design Energy ---
-    uint16_t design_energy = (uint16_t)(cap_mah * 37 / 10); // 3.7V approximation
-    uint8_t energy_lsb = design_energy & 0xFF;
-    uint8_t energy_msb = (design_energy >> 8) & 0xFF;
-
     i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x48, energy_msb}, 2, false);
     i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x49, energy_lsb}, 2, false);
     printf("Wrote new Energy: MSB=0x%02X LSB=0x%02X\n", energy_msb, energy_lsb);
@@ -232,8 +253,7 @@ void set_design_capacity(uint16_t cap_mah) {
 }
 
 void config_battery_monitor() {
-    reset_bat_monitor();
-    sleep_us(100);
+    // reset_bat_monitor();
     set_design_capacity(1500);
     change_bat_chem_to_lipo();
 

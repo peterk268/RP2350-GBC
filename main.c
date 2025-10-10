@@ -134,6 +134,8 @@ int main(void)
 	// MARK: - PWM Set up
 	fade_in_leds_startup();
 
+	mcp7940n_init(RTC_I2C_PORT);
+
 	// SD WILL HANDLE SPI INIT
 	// gpio_set_function(GPIO_SPI0_SCK, GPIO_FUNC_SPI);
 	// gpio_set_function(GPIO_SPI0_MOSI, GPIO_FUNC_SPI);
@@ -263,18 +265,6 @@ while(true)
 #if ENABLE_AUTO_SAVE
 	uint8_t save_wait_counter = 0;
 #endif
-
-	rtc_time_t tm = {
-		.hours = 10,
-		.minutes = 28,
-		.seconds = 0,
-		.weekday = RTC_WEDNESDAY,
-		.date = 8,
-		.month = 10,
-		.year = 25
-	};
-    mcp7940n_init(RTC_I2C_PORT);
-	mcp7940n_set_time_if_unset(RTC_I2C_PORT, &tm);
 
 	sync_gb_rtc(&gb);
     // MARK: - Game Play

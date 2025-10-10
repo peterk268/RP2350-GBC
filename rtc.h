@@ -197,7 +197,9 @@ bool mcp7940n_set_time(i2c_inst_t *i2c, rtc_time_t *t) {
     buf[6] = dec_to_bcd(t->month);
     buf[7] = dec_to_bcd(t->year);
     
-    return i2c_write_blocking(i2c, MCP7940N_I2C_ADDR, buf, 8, false) == 8;
+    bool success = i2c_write_blocking(i2c, MCP7940N_I2C_ADDR, buf, 8, false) == 8;
+    mcp7940n_init(RTC_I2C_PORT);
+    return success;
 }
 #warning "Seems like it takes a couple of seconds to set in so keep in mind"
 
@@ -208,6 +210,31 @@ bool mcp7940n_set_time_if_unset(i2c_inst_t *i2c, rtc_time_t *t) {
     printf("RTC was unset, setting to default time\n");
     return mcp7940n_set_time(i2c, t);
 }
+
+void tm_to_rtc(const struct tm *tm_val, rtc_time_t *rtc) {
+    rtc->seconds = tm_val->tm_sec;
+    rtc->minutes = tm_val->tm_min;
+    rtc->hours   = tm_val->tm_hour;
+    rtc->date    = tm_val->tm_mday;
+    rtc->month   = tm_val->tm_mon + 1;      // tm_mon: 0-11
+    rtc->year    = tm_val->tm_year - 100;   // tm_year: since 1900, RTC uses 0-99
+    rtc->weekday = (tm_val->tm_wday == 0) ? 1 : tm_val->tm_wday; // RTC: 1=Sun
+}
+
+bool mcp7940n_set_tm(i2c_inst_t *i2c, struct tm *in_tm) {
+    rtc_time_t rtc_val;
+
+    // Convert struct tm to RTC format
+    tm_to_rtc(in_tm, &rtc_val);
+
+    // Write to RTC
+    if (!mcp7940n_set_time(i2c, &rtc_val)) {
+        printf("Failed to set RTC time\n");
+        return false;
+    }
+    return true;
+}
+
 bool mcp7940n_get_time(i2c_inst_t *i2c, rtc_time_t *t) {
     uint8_t buf[7];
     if (i2c_write_blocking(i2c, MCP7940N_I2C_ADDR, (uint8_t[]){MCP7940N_REG_SECONDS}, 1, true) != 1) return false;
@@ -224,24 +251,31 @@ bool mcp7940n_get_time(i2c_inst_t *i2c, rtc_time_t *t) {
     return true;
 }
 
+// Function to convert rtc_time_t -> struct tm
+void rtc_to_tm(const rtc_time_t *rtc, struct tm *out_tm) {
+    out_tm->tm_sec  = rtc->seconds;
+    out_tm->tm_min  = rtc->minutes;
+    out_tm->tm_hour = rtc->hours;
+    out_tm->tm_mday = rtc->date;
+    out_tm->tm_mon  = rtc->month - 1;       // tm_mon: 0-11
+    out_tm->tm_year = rtc->year + 100;      // tm_year: years since 1900
+    out_tm->tm_wday = rtc->weekday % 7;     // tm_wday: 0=Sunday, 6=Saturday
+
+    // Normalize and calculate tm_yday, etc.
+    mktime(out_tm);
+}
+
+// Updated function
 bool mcp7940n_get_tm(i2c_inst_t *i2c, struct tm *out_tm) {
     rtc_time_t now;
     if (!mcp7940n_get_time(i2c, &now)) {
         return false; // Failed to read RTC
     }
 
-    // Fill struct tm
-    out_tm->tm_sec  = now.seconds;
-    out_tm->tm_min  = now.minutes;
-    out_tm->tm_hour = now.hours;
-    out_tm->tm_mday = now.date;
-    out_tm->tm_mon  = now.month - 1;   // tm_mon is 0-11
-    out_tm->tm_year = now.year + 100;  // tm_year is years since 1900
+    // Convert RTC time to struct tm
+    rtc_to_tm(&now, out_tm);
 
-    // mktime fills tm_yday and normalizes the structure
-    mktime(out_tm);
-
-    // Print the time
+    // Optional: print for debugging
     printf("RTC Time: %04d-%02d-%02d %02d:%02d:%02d (Day of year: %d)\n",
            out_tm->tm_year + 1900,
            out_tm->tm_mon + 1,

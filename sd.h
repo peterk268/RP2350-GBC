@@ -619,6 +619,13 @@ static int powman_example_off(void);
 
 #define VISIBLE_ITEMS 9  // depends on your screen height / font
 static uint16_t page_start = 0; // first item currently visible
+bool show_settings = false;
+
+bool mcp7940n_get_tm(i2c_inst_t *i2c, struct tm *out_tm);
+bool mcp7940n_set_tm(i2c_inst_t *i2c, struct tm *in_tm);
+uint8_t selected_date_value = 1;  // 0=weekday, 1=month, 2=day, 3=year, 4=hour, 5=minute, 6=second
+struct tm draft_tm; // current editable time
+
 // static lv_timer_t *scroll_timer = NULL;
 
 // // callback to start scrolling
@@ -628,10 +635,147 @@ static uint16_t page_start = 0; // first item currently visible
 //     lv_obj_set_style_anim_speed(label, 20, 0); // adjust speed
 //     lv_timer_del(t); // delete timer after running once
 // }
+void modify_draft_tm(struct tm *draft_tm, uint8_t selected_date_value, int8_t increment) {
+    switch(selected_date_value) {
+        case 0: // weekday manually (1=Sunday, 7=Saturday)
+            draft_tm->tm_wday += increment;
+            if(draft_tm->tm_wday < 0) draft_tm->tm_wday = 6;
+            else if(draft_tm->tm_wday > 6) draft_tm->tm_wday = 0;
+            break;
 
+        case 1: // year
+            draft_tm->tm_year += increment;
+            if(draft_tm->tm_year < 0) draft_tm->tm_year = 0;
+            break;
+
+        case 2: // month 0-11
+            draft_tm->tm_mon += increment;
+            if(draft_tm->tm_mon < 0) draft_tm->tm_mon = 11;
+            else if(draft_tm->tm_mon > 11) draft_tm->tm_mon = 0;
+            break;
+
+        case 3: // day of month
+            draft_tm->tm_mday += increment;
+            break;
+
+        case 4: // hour
+            draft_tm->tm_hour += increment;
+            break;
+
+        case 5: // minute
+            draft_tm->tm_min += increment;
+            break;
+
+        case 6: // second
+            draft_tm->tm_sec += increment;
+            break;
+    }
+
+    // Normalize tm struct (handles overflows and recalculates tm_wday/tm_yday)
+    mktime(draft_tm);
+}
+
+void draw_settings(lv_obj_t *list) {
+    uint16_t bat_percent = get_bat_charge_percent();
+	uint16_t remaining_cap = get_remaining_bat_capacity_mAh();
+	uint16_t full_cap = get_full_bat_capacity_mAh();
+	uint16_t voltage_mV = read_voltage_mV();
+
+	lv_obj_t *percent = lv_label_create(list);
+	char percent_text[64];  // increased size for multiple lines
+    snprintf(percent_text, sizeof(percent_text),
+            "%d%% %d/%dmAh %.2fV",
+            bat_percent, remaining_cap, full_cap, voltage_mV / 1000.0);
+	lv_label_set_text(percent, percent_text);
+	lv_obj_set_style_text_font(percent, LV_FONT_DEFAULT, 0);
+	lv_obj_align(percent, LV_ALIGN_BOTTOM_MID, 0, 5);
+
+    // --- Time and date ---
+    struct tm now = draft_tm;
+    // if (!mcp7940n_get_tm(RTC_I2C_PORT, &now)) return;
+
+    const char *weekdays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
+    lv_color_t normal_color = lv_color_hex(0x202020);
+    lv_color_t highlight_color = lv_color_hex(0x33CC66);
+
+    int y_offset = 10;
+    int spacing = 6;
+
+    // weekday
+    lv_obj_t *weekday_label = lv_label_create(list);
+    lv_label_set_text_fmt(weekday_label, "%s", weekdays[now.tm_wday]);
+    lv_obj_set_style_text_color(weekday_label,
+        (selected_date_value == 0) ? highlight_color : normal_color, 0);
+    lv_obj_align(weekday_label, LV_ALIGN_TOP_MID, 0, y_offset);
+
+    // --- Date: YYYY/MM/DD ---
+    char date_text[16];
+    snprintf(date_text, sizeof(date_text), "%04d/%02d/%02d",
+             now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
+    lv_obj_t *date_label = lv_label_create(list);
+    lv_label_set_text(date_label, date_text);
+    lv_obj_set_style_text_font(date_label, LV_FONT_DEFAULT, 0);
+    lv_obj_set_style_text_color(date_label, normal_color, 0);
+    lv_obj_align_to(date_label, weekday_label, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
+
+    if (selected_date_value >= 1 && selected_date_value <= 3) {
+        // Highlight specific part of the date
+        // We’ll overlay smaller labels with green for whichever field is selected
+        lv_obj_t *highlight_label = lv_label_create(list);
+        lv_obj_set_style_text_color(highlight_label, highlight_color, 0);
+        lv_obj_set_style_text_font(highlight_label, LV_FONT_DEFAULT, 0);
+
+        if (selected_date_value == 1)
+            lv_label_set_text_fmt(highlight_label, "%04d", now.tm_year + 1900);
+        else if (selected_date_value == 2)
+            lv_label_set_text_fmt(highlight_label, "%02d", now.tm_mon + 1);
+        else if (selected_date_value == 3)
+            lv_label_set_text_fmt(highlight_label, "%02d", now.tm_mday);
+
+        lv_obj_align_to(highlight_label, date_label, LV_ALIGN_CENTER, 0, 0);
+    }
+
+    // --- Time: HH:MM:SS (24h) ---
+    char time_text[16];
+    snprintf(time_text, sizeof(time_text), "%02d:%02d:%02d",
+             now.tm_hour, now.tm_min, now.tm_sec);
+    lv_obj_t *time_label = lv_label_create(list);
+    lv_label_set_text(time_label, time_text);
+    lv_obj_set_style_text_font(time_label, LV_FONT_DEFAULT, 0);
+    lv_obj_set_style_text_color(time_label, normal_color, 0);
+    lv_obj_align_to(time_label, date_label, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
+
+    if (selected_date_value >= 4 && selected_date_value <= 6) {
+        // --- Highlight which time field is selected ---
+        lv_obj_t *time_highlight = lv_label_create(list);
+        lv_obj_set_style_text_color(time_highlight, highlight_color, 0);
+        lv_obj_set_style_text_font(time_highlight, LV_FONT_DEFAULT, 0);
+
+        if (selected_date_value == 4)
+            lv_label_set_text_fmt(time_highlight, "%02d", now.tm_hour);
+        else if (selected_date_value == 5)
+            lv_label_set_text_fmt(time_highlight, "%02d", now.tm_min);
+        else if (selected_date_value == 6)
+            lv_label_set_text_fmt(time_highlight, "%02d", now.tm_sec);
+
+        lv_obj_align_to(time_highlight, time_label, LV_ALIGN_CENTER, 0, 0);
+    }
+
+    // --- B: Save Time label at the bottom ---
+    lv_obj_t *save_label = lv_label_create(list);
+    lv_label_set_text(save_label, "B: Save Time");
+    lv_obj_set_style_text_font(save_label, LV_FONT_DEFAULT, 0);
+    lv_obj_set_style_text_color(save_label, normal_color, 0);
+    lv_obj_align(save_label, LV_ALIGN_BOTTOM_MID, 0, -spacing);
+
+}
 void draw_rom_list(lv_obj_t *list, char filenames[][256], uint16_t num_file, uint16_t selected, uint16_t page_start) {
     lv_obj_clean(list);
-
+    if (show_settings) {
+        draw_settings(list);
+        return;
+    }
     for (uint16_t i = 0; i < VISIBLE_ITEMS && (i + page_start) < num_file; i++) {
         lv_obj_t *list_title = lv_list_add_text(list, filenames[i + page_start]);
         lv_obj_set_style_text_font(list_title, LV_FONT_DEFAULT, 0);
@@ -659,7 +803,6 @@ void draw_rom_list(lv_obj_t *list, char filenames[][256], uint16_t num_file, uin
         }
     }
 }
-bool mcp7940n_get_tm(i2c_inst_t *i2c, struct tm *out_tm);
 
 void rom_file_selector() {	
     // Create list
@@ -794,7 +937,7 @@ void rom_file_selector() {
     bool up, down, left, right, a, b, select, start;
 	// Keep previous states (initialize all to "released" = true, since buttons are active-low)
 	static bool prev_up = true, prev_down = true, prev_left = true, prev_right = true;
-	static bool prev_a = true, prev_b = true, prev_start = true;
+	static bool prev_a = true, prev_b = true, prev_start = true, prev_select = true;
 
 	// sleep_ms(3000);
 	print_memory_usage();
@@ -817,7 +960,7 @@ void rom_file_selector() {
 			sleep_ms(BATTERY_TIMER_INTERVAL_MS);
 		}
 #endif
-
+        select = gpio_read(GPIO_B_SELECT);
 		bool iox_nint = gpio_read(GPIO_IOX_nINT);
 		if (!iox_nint) {
 			read_io_expander_states(0);
@@ -836,13 +979,20 @@ void rom_file_selector() {
 			/* re-start the last game (no need to reprogram flash) */
 			break;
 		}
-		if ((!a && prev_a) || (!b && prev_b)) {
+		if (!a && prev_a) {
 			/* copy the rom from the SD card to flash and start the game */
             // memset(front_fb->data, 0, sizeof(front_fb->data));
 			printf("LOADING\n");
 			load_cart_rom_file(filename[selected]);
 			break;
 		}
+        if (!b && prev_b) {
+            if (show_settings) {
+                mcp7940n_set_tm(RTC_I2C_PORT, &draft_tm);
+                show_settings = false;
+                draw_rom_list(list, filename, num_file, selected, page_start);
+            }
+        }
 		// if (!down && prev_down) {
 		// 	/* select the next rom */
 		// 	selected++;
@@ -860,53 +1010,82 @@ void rom_file_selector() {
 		// 	lv_label_set_text(title, filename[selected]);
 		// }
         if (!down && prev_down) {
-            if (selected + 1 < num_file) selected++;
-            else selected = 0; // wrap around
+            if (show_settings) {
+                modify_draft_tm(&draft_tm, selected_date_value, -1);
+            } else {
+                if (selected + 1 < num_file) selected++;
+                else selected = 0; // wrap around
 
-            // scroll if selected goes beyond visible items
-            if (selected >= page_start + VISIBLE_ITEMS) page_start++;
-            else if (selected == 0) page_start = 0; // wrap
-
+                // scroll if selected goes beyond visible items
+                if (selected >= page_start + VISIBLE_ITEMS) page_start++;
+                else if (selected == 0) page_start = 0; // wrap
+            }
             draw_rom_list(list, filename, num_file, selected, page_start);
         }
 
         if (!up && prev_up) {
-            if (selected == 0) selected = num_file - 1;
-            else selected--;
+            if (show_settings) {
+                modify_draft_tm(&draft_tm, selected_date_value, +1);
+            } else {
+                if (selected == 0) selected = num_file - 1;
+                else selected--;
 
-            if (selected < page_start) page_start--;
-            else if (selected == num_file - 1) page_start = (num_file > VISIBLE_ITEMS) ? num_file - VISIBLE_ITEMS : 0;
-
+                if (selected < page_start) page_start--;
+                else if (selected == num_file - 1) page_start = (num_file > VISIBLE_ITEMS) ? num_file - VISIBLE_ITEMS : 0;
+            }
             draw_rom_list(list, filename, num_file, selected, page_start);
         }
 
 		if (!right && prev_right) {
-			/* select the next page */
-			num_page++;
-			num_file=rom_file_selector_display_page(filename,num_page);
-			if(num_file==0) {
-				/* no files in this page, go to the previous page */
-				num_page--;
-				num_file=rom_file_selector_display_page(filename,num_page);
-			}
-			/* select the first file */
-			selected=0;
-			// lv_label_set_text(title, filename[selected]);
-            page_start = 0;
+            if (show_settings) {
+                selected_date_value++;
+                if (selected_date_value > 6) {
+                    selected_date_value = 1;
+                }
+            } else {
+                /* select the next page */
+                num_page++;
+                num_file=rom_file_selector_display_page(filename,num_page);
+                if(num_file==0) {
+                    /* no files in this page, go to the previous page */
+                    num_page--;
+                    num_file=rom_file_selector_display_page(filename,num_page);
+                }
+                /* select the first file */
+                selected=0;
+                // lv_label_set_text(title, filename[selected]);
+                page_start = 0;
+            }
             draw_rom_list(list, filename, num_file, selected, page_start);
 
 		}
-		if (!left && prev_left && num_page > 0) {
-			/* select the previous page */
-			num_page--;
-			num_file=rom_file_selector_display_page(filename,num_page);
-			/* select the first file */
-			selected=0;
-			// lv_label_set_text(title, filename[selected]);
-            page_start = 0;
+		if (!left && prev_left) {
+            if (show_settings) {
+                selected_date_value--;
+                if (selected_date_value < 1) {
+                    selected_date_value = 6;
+                }
+            } else if (num_page > 0) {
+                /* select the previous page */
+                num_page--;
+                num_file=rom_file_selector_display_page(filename,num_page);
+                /* select the first file */
+                selected=0;
+                // lv_label_set_text(title, filename[selected]);
+                page_start = 0;
+            }
             draw_rom_list(list, filename, num_file, selected, page_start);
 
 		}
+
+        if (!select && prev_select) {
+            show_settings = !show_settings;
+            if (show_settings) {
+                mcp7940n_get_tm(RTC_I2C_PORT, &draft_tm);
+            }
+            draw_rom_list(list, filename, num_file, selected, page_start);
+        }
+
 		// Save states for edge detection
 		prev_up = up;
 		prev_down = down;
@@ -915,6 +1094,7 @@ void rom_file_selector() {
 		prev_a = a;
 		prev_b = b;
 		prev_start = start;
+        prev_select = select;
 
 		// in a 1ms timer interrupt or loop
 		lv_tick_inc(5);

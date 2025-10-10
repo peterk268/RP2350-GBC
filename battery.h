@@ -206,12 +206,18 @@ void set_design_capacity(uint16_t cap_mah) {
     uint8_t new_csum = 255 - ((255 - old_csum - temp_old_sum + temp_new_sum) & 0xFF);
 
     // --- Step 9: Write new checksum ---
-    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, &new_csum, 1, false);
+    uint8_t buf[2] = {0x60, new_csum};
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, buf, 2, false);
     printf("Wrote new checksum: 0x%02X\n", new_csum);
 
-    // --- Step 10: Soft reset to apply changes ---
+    // --- Step 10: Wait for commit ---
+    sleep_ms(200);
+
+    // --- Step 11: Soft reset to apply changes ---
     soft_reset_bat_monitor();
-    printf("Soft reset sent, CFGUPDATE exited.\n");
+    printf("Soft reset sent.\n");
+    // Give the gauge time to reboot
+    sleep_us(100);
 
     // --- Step 11: Confirm values ---
     uint8_t check_cap_msb = read_register_8(0x46);

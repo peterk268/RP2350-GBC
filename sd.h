@@ -804,6 +804,53 @@ void draw_rom_list(lv_obj_t *list, char filenames[][256], uint16_t num_file, uin
     }
 }
 
+lv_obj_t *create_top_bar(lv_obj_t *parent, lv_obj_t **status_label_out) {
+    lv_obj_t *top_bar = lv_obj_create(parent);
+    lv_obj_set_size(top_bar, DISP_HOR_RES, 20);
+    lv_obj_align(top_bar, LV_ALIGN_TOP_MID, 0, -15);
+    lv_obj_set_style_bg_color(top_bar, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_set_style_border_width(top_bar, 0, 0);
+    lv_obj_set_scrollbar_mode(top_bar, LV_SCROLLBAR_MODE_OFF);
+
+    // Bottom border line
+    lv_obj_set_style_border_width(top_bar, 1, 0);
+    lv_obj_set_style_border_side(top_bar, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(top_bar, lv_color_hex(0x000000), 0);
+
+    // Left label (title)
+    lv_obj_t *title_label = lv_label_create(top_bar);
+    lv_label_set_text(title_label, "Pico Pal");
+    lv_obj_set_style_text_font(title_label, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(title_label, lv_color_hex(0x202020), 0);
+    lv_obj_align(title_label, LV_ALIGN_LEFT_MID, 5, 0);
+
+    // Right label (time + battery)
+    lv_obj_t *status_label = lv_label_create(top_bar);
+    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(status_label, lv_color_hex(0x202020), 0);
+    lv_obj_align(status_label, LV_ALIGN_RIGHT_MID, -5, 0);
+
+    if (status_label_out) *status_label_out = status_label;
+    return top_bar;
+}
+
+void update_status_label(lv_obj_t *status_label) {
+    uint16_t bat_percent = get_bat_charge_percent();
+
+    struct tm now;
+    mcp7940n_get_tm(RTC_I2C_PORT, &now);
+
+    int hour12 = now.tm_hour % 12;
+    if (hour12 == 0) hour12 = 12;
+    const char *ampm = (now.tm_hour >= 12) ? "PM" : "AM";
+
+    char status_text[32];
+    snprintf(status_text, sizeof(status_text), "%d:%02d%s  %d%%",
+             hour12, now.tm_min, ampm, bat_percent);
+
+    lv_label_set_text(status_label, status_text);
+}
+
 void rom_file_selector() {	
     // Create list
     lv_init();
@@ -850,58 +897,11 @@ void rom_file_selector() {
 
     draw_rom_list(list, filename, num_file, selected, page_start);
         
-	uint16_t bat_percent = get_bat_charge_percent();
-	// uint16_t remaining_cap = get_remaining_bat_capacity_mAh();
-	// uint16_t full_cap = get_full_bat_capacity_mAh();
-	// uint16_t voltage_mV = read_voltage_mV();
+    lv_obj_t *status_label;
+    lv_obj_t *top_bar = create_top_bar(cont, &status_label);
 
-	// lv_obj_t *percent = lv_label_create(cont);
-	// char percent_text[64];  // increased size for multiple lines
-    // snprintf(percent_text, sizeof(percent_text),
-    //         "%d%% %d/%dmAh %.2fV",
-    //         bat_percent, remaining_cap, full_cap, voltage_mV / 1000.0);
-	// lv_label_set_text(percent, percent_text);
-	// lv_obj_set_style_text_font(percent, LV_FONT_DEFAULT, 0);
-	// lv_obj_align(percent, LV_ALIGN_BOTTOM_MID, 0, 5);
-	
-    // === Top bar ===
-    lv_obj_t *top_bar = lv_obj_create(cont);
-    lv_obj_set_size(top_bar, DISP_HOR_RES, 20);
-    lv_obj_align(top_bar, LV_ALIGN_TOP_MID, 0, -15);
-    lv_obj_set_style_bg_color(top_bar, lv_color_hex(0xE0E0E0), 0);
-    lv_obj_set_style_border_width(top_bar, 0, 0);
-    lv_obj_set_scrollbar_mode(top_bar, LV_SCROLLBAR_MODE_OFF);
-
-    // Top bar bottom line
-    lv_obj_set_style_border_width(top_bar, 1, 0);
-    lv_obj_set_style_border_side(top_bar, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_border_color(top_bar, lv_color_hex(0x000000), 0); // 0xC0C0C0
-
-    // Left label (title)
-    lv_obj_t *title_label = lv_label_create(top_bar);
-    lv_label_set_text(title_label, "Pico Pal");
-    lv_obj_set_style_text_font(title_label, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(title_label, lv_color_hex(0x202020), 0);
-    lv_obj_set_style_bg_color(title_label, lv_color_hex(0xE0E0E0), 0);
-    lv_obj_align(title_label, LV_ALIGN_LEFT_MID, 5, 0);
-
-    // Right label (time + battery)
-    struct tm now;
-    mcp7940n_get_tm(RTC_I2C_PORT, &now);  // example RTC read function
-    int hour12 = now.tm_hour % 12;
-    if (hour12 == 0) hour12 = 12;
-    const char *ampm = (now.tm_hour >= 12) ? "PM" : "AM";
-
-    lv_obj_t *status_label = lv_label_create(top_bar);
-    char status_text[32];
-    snprintf(status_text, sizeof(status_text), "%d:%02d%s  %d%%",
-         hour12, now.tm_min, ampm, bat_percent);
-
-    lv_label_set_text(status_label, status_text);
-    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(status_label, lv_color_hex(0x202020), 0);
-    lv_obj_set_style_bg_color(status_label, lv_color_hex(0xE0E0E0), 0);
-    lv_obj_align(status_label, LV_ALIGN_RIGHT_MID, -5, 0);
+    // Initial update
+    update_status_label(status_label);
 
     // === Bottom hint bar ===
     lv_obj_t *hint_bar = lv_obj_create(cont);
@@ -947,6 +947,7 @@ void rom_file_selector() {
 		if (battery_task_flag) {
             battery_task_flag = false;
             process_bat_percent();
+            update_status_label(status_label);
         }
 		if (low_power_shutdown) {
 			release_power(); // Cut power hold

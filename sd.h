@@ -226,13 +226,20 @@ void load_cart_rom_file(const char *filename) {
     uint32_t rom_size = f_size(&fil);
     printf("I ROM size = %lu bytes\n", rom_size);
 
+    uint32_t ints;
+
+#if ENABLE_PSRAM
+    // rom = (const uint8_t *)psram_malloc(rom_size);
+    // erase rom area in psram..
+#else
     // // Round erase size up to nearest 4 KB
     uint32_t erase_size = (rom_size + ERASE_SIZE - 1) & ~(ERASE_SIZE - 1);
     // Erase flash region up front
-    uint32_t ints = save_and_disable_interrupts();
+    ints = save_and_disable_interrupts();
     flash_range_erase(FLASH_TARGET_OFFSET, erase_size);
     restore_interrupts(ints);
     printf("I Erased %lu KB flash\n", erase_size / 1024);
+#endif
     // Allocate buffer (not on stack)
     static uint8_t *buffer = NULL;
     if (!buffer) {
@@ -245,6 +252,21 @@ void load_cart_rom_file(const char *filename) {
         }
     }
 
+#if ENABLE_PSRAM
+    // Stream ROM into PSRAM
+    uint32_t psram_offset = 0;
+    for (;;) {
+        fr = f_read(&fil, buffer, BLOCK_SIZE, &br);
+        if (fr != FR_OK) {
+            printf("E f_read error: %s (%d)\n", FRESULT_str(fr), fr);
+            break;
+        }
+        if (br == 0) break; // EOF
+
+        memcpy(rom + psram_offset, buffer, br);
+        psram_offset += br;
+    }
+#else
     // Stream ROM file into flash
     uint32_t flash_target_offset = FLASH_TARGET_OFFSET;
     for (;;) {
@@ -268,6 +290,8 @@ void load_cart_rom_file(const char *filename) {
 
         flash_target_offset += br;
     }
+#endif
+
     f_close(&fil);
     f_unmount(pSD->pcName);
 

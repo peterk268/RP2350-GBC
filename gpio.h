@@ -15,8 +15,14 @@
 // MARK: - GPIO Pin Definitions
 
 // Misc.
+#if ENABLE_PSRAM
+#define GPIO_QSPI_CS1        0  // PSRAM CS1
+// PWR HOLD gets moved to gpio 1 and imu int to iox and sd card detect removed
+#define GPIO_PWR_HOLD        1
+#else
 #define GPIO_PWR_HOLD        0
 #define GPIO_IMU_INT1        1
+#endif
 
 // SD, LCD, ESP SPI (SPI0 Shared)
 #define GPIO_SPI0_SCK        2
@@ -98,7 +104,11 @@
 #define IOX_ESP_EN           (14 + 48)
 #define IOX_AUDIO_EN         (15 + 48)
 #define IOX_SD_nEN           (16 + 48)
+#if ENABLE_PSRAM
+#define GPIO_IMU_INT1        (17 + 48)
+#else
 #define IOX_SD_CD            (17 + 48)
+#endif
 
 
 void set_up_select() {

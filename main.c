@@ -45,6 +45,9 @@
 #include "leds.h"
 #include "gpu.h"
 #include "gb.h"
+#if ENABLE_PSRAM
+#include "psram.h"
+#endif
 #include "sd.h"
 #include "audio.h"
 #include "rtc.h"
@@ -57,6 +60,10 @@ int main(void)
 	enum gb_init_error_e ret;
 
 	overclock_cpu(UNDERCLOCK_CPU_IN_NORMAL_EMULATION);
+
+#if ENABLE_PSRAM
+	setup_psram(GPIO_QSPI_CS1);
+#endif
 
 	/* Initialise USB serial connection for debugging. */
 	setup_default_uart();

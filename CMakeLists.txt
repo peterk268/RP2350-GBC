@@ -23,7 +23,7 @@ if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
 # ====================================================================================
-set(PICO_BOARD solderparty_rp2350_stamp_xl CACHE STRING "Board type")
+set(PICO_BOARD pimoroni_pico_plus2_rp2350 CACHE STRING "Board type")
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)

@@ -120,10 +120,8 @@ bool battery_timer_callback(repeating_timer_t *rt) {
 }
 
 void subcommand_control(uint16_t subcommand) {
-    // Control command register 0x00 & 0x01 but incremental write used so only 0x00
-    // plus 0xXXXX subcommand.
-    uint8_t data[3] = {0x00, (uint8_t)(subcommand >> 8), (uint8_t)(subcommand & 0x00FF)};
-    // Write the register address
+    // Write two bytes (LSB first) to Control() register 0x00
+    uint8_t data[3] = {0x00, (uint8_t)(subcommand & 0xFF), (uint8_t)(subcommand >> 8)};
     i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, data, 3, false);
 }
 
@@ -145,15 +143,68 @@ void soft_reset_bat_monitor() {
 }
 
 void change_bat_chem_to_lipo() {
-    // Chem B = 4.2V, ID = 1202
-    // Control Data = 0x0031
-    subcommand_control(0x0031);
+    const uint16_t new_chem_id = 0x1202; // ChemID 1202 (LiPo)
+    printf("\n--- Changing Chemistry to ChemID 0x%04X ---\n", new_chem_id);
 
-    // Soft reset to update
+    sleep_ms(100);
+
+    // === Step 1: Unseal ===
+    subcommand_control(0x8000);
+    subcommand_control(0x8000);
+    sleep_ms(200);
+    printf("Device unsealed.\n");
+
+    // === Step 2: Read current ChemID ===
+    subcommand_control(0x0008);  // Read ChemID
+    sleep_ms(300);
+    uint16_t current_chem = read_register(0x00);
+    printf("Current ChemID: 0x%04X\n", current_chem);
+
+    if (current_chem == new_chem_id) {
+        printf("Already set. Skipping chemistry update.\n");
+        return;
+    }
+
+    // === Step 3: Enter CFGUPDATE mode ===
+    subcommand_control(0x0013);  // SET_CFGUPDATE
+    printf("Entered CFGUPDATE mode.\n");
+    sleep_ms(1100);
+
+    // === Step 4: Set CHEM ID to 0x1202 LiPo ===
+    subcommand_control(0x0031); // SET_CHEM_ID
+    sleep_ms(100);
+
+    // === Step 5: Soft reset to exit CFGUPDATE ===
     soft_reset_bat_monitor();
+    printf("Soft reset sent.\n");
+    sleep_ms(2000);
+
+    // === Step 6: Verify new ChemID ===
+    subcommand_control(0x0008);
+    sleep_ms(500);
+    uint16_t verify = read_register(0x00);
+    printf("New ChemID readback: 0x%04X\n", verify);
+
+    if (verify == new_chem_id) {
+        printf("Chemistry successfully changed to 0x%04X.\n", verify);
+    } else {
+        printf("ChemID mismatch. Expected 0x%04X but got 0x%04X.\n", new_chem_id, verify);
+    }
+
+    // === Step 7: Seal the device ===
+    subcommand_control(0x0020); // SEAL
+    printf("Device sealed.\n");
+
+    printf("--- Done ---\n");
 }
 
 void set_design_capacity(uint16_t cap_mah) {
+    // === Step -3: Unseal ===
+    subcommand_control(0x8000);
+    subcommand_control(0x8000);
+    sleep_ms(200);
+    printf("Device unsealed.\n");
+
     // --- Step -2: Compute what we would write ---
     uint8_t new_cap_lsb = cap_mah & 0xFF;
     uint8_t new_cap_msb = (cap_mah >> 8) & 0xFF;

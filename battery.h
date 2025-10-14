@@ -146,17 +146,15 @@ void change_bat_chem_to_lipo() {
     const uint16_t new_chem_id = 0x1202; // ChemID 1202 (LiPo)
     printf("\n--- Changing Chemistry to ChemID 0x%04X ---\n", new_chem_id);
 
-    sleep_ms(100);
-
     // === Step 1: Unseal ===
     subcommand_control(0x8000);
     subcommand_control(0x8000);
-    sleep_ms(200);
+    sleep_ms(10);
     printf("Device unsealed.\n");
 
     // === Step 2: Read current ChemID ===
     subcommand_control(0x0008);  // Read ChemID
-    sleep_ms(300);
+    sleep_ms(10);
     uint16_t current_chem = read_register(0x00);
     printf("Current ChemID: 0x%04X\n", current_chem);
 
@@ -202,7 +200,7 @@ void set_design_capacity(uint16_t cap_mah) {
     // === Step -3: Unseal ===
     subcommand_control(0x8000);
     subcommand_control(0x8000);
-    sleep_ms(200);
+    sleep_ms(10);
     printf("Device unsealed.\n");
 
     // --- Step -2: Compute what we would write ---

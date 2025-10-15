@@ -16,14 +16,13 @@ i2s_config_t i2s_config;
  * Once done, we can access this at XIP_BASE + 2Mb.
  * Game Boy DMG ROM size ranges from 32768 bytes (e.g. Tetris) to 2,097,152 bytes (e.g. Pokemon Silver)
  */
-#if ENABLE_PSRAM
+#if ENABLE_PSRAM && !ROM_FLASH
 #define PSRAM_LOCATION _u(0x11000000)
 const uint8_t *rom = (uint8_t *) PSRAM_LOCATION;
 #else
 #define FLASH_TARGET_OFFSET (4 * 1024 * 1024)
 const uint8_t *rom = (const uint8_t *) (XIP_BASE + FLASH_TARGET_OFFSET);
 #endif
-static unsigned char rom_bank0[65536];
 
 static uint8_t ram[32768];
 static int lcd_fb_ready = 0;

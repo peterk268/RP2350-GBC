@@ -105,7 +105,8 @@
 #define IOX_AUDIO_EN         (15 + 48)
 #define IOX_SD_nEN           (16 + 48)
 #if ENABLE_PSRAM
-#define GPIO_IMU_INT1        (17 + 48)
+#warning "Add back IMU INT1 and remove SD Card Detect"
+#define IOX_SD_CD            (17 + 48)
 #else
 #define IOX_SD_CD            (17 + 48)
 #endif

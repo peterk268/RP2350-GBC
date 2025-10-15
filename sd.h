@@ -228,7 +228,7 @@ void load_cart_rom_file(const char *filename) {
 
     uint32_t ints;
 
-#if ENABLE_PSRAM
+#if ENABLE_PSRAM && !ROM_FLASH
     // rom = (const uint8_t *)psram_malloc(rom_size);
     // erase rom area in psram..
 #else
@@ -252,9 +252,11 @@ void load_cart_rom_file(const char *filename) {
         }
     }
 
-#if ENABLE_PSRAM
-    // Stream ROM into PSRAM
+#if ENABLE_PSRAM && !ROM_FLASH
+    // --- Load ROM into PSRAM ---
     uint32_t psram_offset = 0;
+    uint32_t total_bytes = 0;
+
     for (;;) {
         fr = f_read(&fil, buffer, BLOCK_SIZE, &br);
         if (fr != FR_OK) {
@@ -265,6 +267,47 @@ void load_cart_rom_file(const char *filename) {
 
         memcpy(rom + psram_offset, buffer, br);
         psram_offset += br;
+        total_bytes += br;
+    }
+
+    printf("ROM loaded successfully. Size = %lu bytes (%.2f KB)\n",
+           total_bytes, total_bytes / 1024.0);
+
+    // --- Verification phase ---
+    printf("Verifying PSRAM contents...\n");
+
+    // Rewind file
+    f_lseek(&fil, 0);
+
+    uint8_t verify_buf[BLOCK_SIZE];
+    uint32_t verify_offset = 0;
+    bool mismatch_found = false;
+
+    for (;;) {
+        fr = f_read(&fil, verify_buf, BLOCK_SIZE, &br);
+        if (fr != FR_OK) {
+            printf("E verify read error: %s (%d)\n", FRESULT_str(fr), fr);
+            mismatch_found = true;
+            break;
+        }
+        if (br == 0) break; // EOF
+
+        for (size_t i = 0; i < br; i++) {
+            if (rom[verify_offset + i] != verify_buf[i]) {
+                printf("First real mismatch at offset 0x%08lX: PSRAM=%02X SD=%02X\n",
+                    verify_offset + i, rom[verify_offset + i], verify_buf[i]);
+                mismatch_found = true;
+                break;
+            }
+        }
+
+        verify_offset += br;
+    }
+
+    if (!mismatch_found) {
+        printf("✅ Verification successful: PSRAM contents match SD file!\n");
+    } else {
+        printf("❌ Verification failed.\n");
     }
 #else
     // Stream ROM file into flash

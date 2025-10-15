@@ -61,13 +61,18 @@ int main(void)
 
 	overclock_cpu(UNDERCLOCK_CPU_IN_NORMAL_EMULATION);
 
-#if ENABLE_PSRAM
-	setup_psram(GPIO_QSPI_CS1);
-#endif
-
 	/* Initialise USB serial connection for debugging. */
 	setup_default_uart();
 	stdio_init_all();
+
+#if ENABLE_PSRAM
+	while(gpio_read(GPIO_B_SELECT)) {
+		sleep_ms(100);
+	}
+	size_t psram_size = setup_psram(GPIO_QSPI_CS1);
+	printf("PSRAM size: %zu bytes\n", psram_size);
+#endif
+
     setup_hold_power();
 
 	// sleep_ms(3000);
@@ -207,7 +212,6 @@ while(true)
 #endif
 
 	// MARK: - Initialise GB context
-	memcpy(rom_bank0, rom, sizeof(rom_bank0));
 	ret = gb_init(&gb, &gb_rom_read, &gb_cart_ram_read,
 		      &gb_cart_ram_write, &gb_error, NULL);
 #if ENABLE_BOOTROM

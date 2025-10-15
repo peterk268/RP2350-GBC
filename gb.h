@@ -7,9 +7,6 @@
 uint8_t gb_rom_read(struct gb_s *gb, const uint_fast32_t addr)
 {
 	(void) gb;
-	if(addr < sizeof(rom_bank0))
-		return rom_bank0[addr];
-
 	return rom[addr];
 }
 

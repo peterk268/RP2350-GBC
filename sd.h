@@ -229,7 +229,7 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
     uint32_t ints;
 
 #if ENABLE_PSRAM && !ROM_FLASH
-    rom = (const uint8_t *)sfe_mem_malloc(rom_size);
+    rom = (uint8_t*) malloc(rom_size);
     if (!rom) printf("Big block built in allocation failed\n");
     else printf("\nAllocated %u bytes using built-in PSRAM allocator\n", (unsigned)rom_size);
     memory_stats();

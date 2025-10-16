@@ -25,12 +25,12 @@ endif()
 # ====================================================================================
 set(PICO_BOARD sparkfun_promicro_rp2350 CACHE STRING "Board type")
 
-# # the following enables the system malloc/free to be wrapped
-# set(SKIP_PICO_MALLOC 1)
-# # the following enables wrapping in sparkfun_pico builds
-# set(SFE_PICO_ALLOC_WRAP 1)
-# # the following enables the system malloc/free to be wrapped during compilation
-# add_definitions(-DSFE_PICO_ALLOC_WRAP)
+# the following enables the system malloc/free to be wrapped
+set(SKIP_PICO_MALLOC 1)
+# the following enables wrapping in sparkfun_pico builds
+set(SFE_PICO_ALLOC_WRAP 1)
+# the following enables the system malloc/free to be wrapped during compilation
+add_definitions(-DSFE_PICO_ALLOC_WRAP)
 
 
 # Pull in Raspberry Pi Pico SDK (must be before project)

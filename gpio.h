@@ -148,6 +148,45 @@ void test_hold_power() {
     release_power();
 }
 
+#define I2C_RECOVERY_CLOCKS 9
+
+static void i2c_recover_bus(uint sda_pin, uint scl_pin) {
+    gpio_set_function(sda_pin, GPIO_FUNC_SIO);
+    gpio_set_function(scl_pin, GPIO_FUNC_SIO);
+    gpio_pull_down(sda_pin);
+    gpio_pull_down(scl_pin);
+    gpio_set_dir(sda_pin, true);
+    gpio_set_dir(scl_pin, true);
+    gpio_put(sda_pin, 0);
+    gpio_put(scl_pin, 0);
+    sleep_ms(1);
+    gpio_put(sda_pin, 1);
+    gpio_put(scl_pin, 1);
+    sleep_ms(1);
+    gpio_pull_up(sda_pin);
+    gpio_pull_up(scl_pin);
+
+    // Send 9 clock pulses to free the bus
+    for (int i = 0; i < I2C_RECOVERY_CLOCKS; i++) {
+        gpio_put(scl_pin, 0);
+        sleep_us(5);
+        gpio_put(scl_pin, 1);
+        sleep_us(5);
+    }
+
+    // Generate a STOP condition
+    gpio_put(sda_pin, 0);
+    sleep_us(5);
+    gpio_put(scl_pin, 1);
+    sleep_us(5);
+    gpio_put(sda_pin, 1);
+    sleep_us(5);
+
+    // Restore I²C function
+    gpio_set_function(sda_pin, GPIO_FUNC_I2C);
+    gpio_set_function(scl_pin, GPIO_FUNC_I2C);
+}
+
 void init_i2c() {
     i2c_init(IOX_I2C_PORT, 400 * 1000); // 400 kHz
     gpio_set_function(GPIO_I2C1_SDA, GPIO_FUNC_I2C);
@@ -156,6 +195,36 @@ void init_i2c() {
     gpio_pull_up(GPIO_I2C1_SCL);
 }
 
+// Waits until the I2C bus is idle and optionally checks if a device ACKs.
+// Returns true if ready, false if timeout.
+bool i2c_wait_ready(i2c_inst_t *i2c, uint8_t dev_addr, uint32_t timeout_ms) {
+    absolute_time_t start_time = get_absolute_time();
+    
+    while (true) {
+        // 1. Check if master is active
+        if (!(i2c_get_hw(i2c)->status & I2C_IC_STATUS_MST_ACTIVITY_BITS)) {
+            // Bus is idle, now check device if address is provided
+            if (dev_addr != 0xFF) {
+                int ret = i2c_write_blocking(i2c, dev_addr, NULL, 0, false);
+                if (ret >= 0) {
+                    printf("I2C device 0x%02X is ready\n", dev_addr);
+                    return true; // Device responded
+                }
+            } else {
+                printf("I2C bus idle\n");
+                return true; // Bus idle, no device check requested
+            }
+        }
+
+        // Timeout
+        if (absolute_time_diff_us(start_time, get_absolute_time()) > timeout_ms * 1000) {
+            printf("I2C wait timeout\n");
+            return false;
+        }
+
+        sleep_ms(1); // Small delay to avoid tight loop
+    }
+}
 
 // MARK: - Boolean variables for IO Expander pins
 bool b_a_state = 0;

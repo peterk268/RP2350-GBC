@@ -8,34 +8,6 @@ void sleep_device();
 // Address in SRAM to store a flag
 #define REBOOT_FLAG_ADDRESS ((uint32_t *)0x20041FFC) // Last SRAM address
 
-// Waits until the I2C bus is idle and optionally checks if a device ACKs.
-// Returns true if ready, false if timeout.
-bool i2c_wait_ready(i2c_inst_t *i2c, uint8_t dev_addr, uint32_t timeout_ms) {
-    absolute_time_t start_time = get_absolute_time();
-    
-    while (true) {
-        // 1. Check if master is active
-        if (!(i2c_get_hw(i2c)->status & I2C_IC_STATUS_MST_ACTIVITY_BITS)) {
-            // Bus is idle, now check device if address is provided
-            if (dev_addr != 0xFF) {
-                int ret = i2c_write_blocking(i2c, dev_addr, NULL, 0, false);
-                if (ret >= 0) {
-                    return true; // Device responded
-                }
-            } else {
-                return true; // Bus idle, no device check requested
-            }
-        }
-
-        // Timeout
-        if (absolute_time_diff_us(start_time, get_absolute_time()) > timeout_ms * 1000) {
-            return false;
-        }
-
-        sleep_us(100); // Small delay to avoid tight loop
-    }
-}
-
 // Function to read a 16-bit register
 uint16_t read_register(uint8_t reg) {
     uint8_t buffer[2] = {0};

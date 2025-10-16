@@ -72,15 +72,14 @@ int main(void)
 
     setup_hold_power();
 
-	// sleep_ms(3000);
+	sleep_ms(100); // this helps i2c to get things in order and prevent hangs
 	// MARK: - I2C INIT
 	init_i2c();
 
 #if ENABLE_RTC
 	initialize_rtc(RTC_DEFAULT_VALUE);
 #endif
-	
-	sleep_ms(20);
+	i2c_wait_ready(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, 100);
 
 	// MARK: - Battery Monitor Config
 	config_battery_monitor();
@@ -128,6 +127,7 @@ int main(void)
 
 	// Enable Audio and SD Card
 #if ENABLE_SDCARD || ENABLE_SOUND
+	printf("Enabling Audio and SD Card\n");
 	write_iox_port1(NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, NO_UPDATE, 1, 0, NO_UPDATE);
 	sleep_ms(10);
 	gpio_write(IOX_AUDIO_EN, 0);

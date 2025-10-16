@@ -99,12 +99,47 @@ void shutdown_peripherals(bool keep_i2c);
                 
 void write_cart_ram_file(struct gb_s *gb);
 
+// Estimate SoC from voltage (1S LiPo)
+static uint16_t estimate_soc_from_voltage(uint16_t mV) {
+    if (mV >= 4200) return 100;
+    if (mV >= 4100) return 95;
+    if (mV >= 4000) return 90;
+    if (mV >= 3900) return 80;
+    if (mV >= 3800) return 70;
+    if (mV >= 3700) return 60;
+    if (mV >= 3600) return 50;
+    if (mV >= 3500) return 40;
+    if (mV >= 3400) return 30;
+    if (mV >= 3300) return 20;
+    if (mV >= 3200) return 10;
+    return 0;
+}
+
+bool gauge_is_learning(uint16_t voltage_mV, uint16_t reported_percent) {
+    const uint16_t learning_voltage_threshold = 4100; // e.g., 4.1V
+
+    // If gauge reports 100% but voltage is below threshold, it's likely still learning
+    return reported_percent == 100 && voltage_mV < learning_voltage_threshold;
+}
+
+uint16_t get_bat_charge_percent_with_learning(uint16_t voltage_mV, uint16_t reported_percent) {
+    if (gauge_is_learning(voltage_mV, reported_percent)) {
+        uint16_t percent = estimate_soc_from_voltage(voltage_mV);
+        printf("Gauge learning detected. Estimated SoC: %d%%\n", percent);
+        return percent;
+    }
+    return reported_percent;
+}
+
 void process_bat_percent() {
     uint16_t percent = get_bat_charge_percent();
     int16_t current_mA = get_average_current_mA();
+    uint16_t voltage_mV = read_voltage_mV();
 
     printf("Battery Percent: %d, rem_cap: %d, full_cap: %d, current: %d, voltage: %d\n",
-           percent, get_remaining_bat_capacity_mAh(), get_full_bat_capacity_mAh(), current_mA, read_voltage_mV());
+           percent, get_remaining_bat_capacity_mAh(), get_full_bat_capacity_mAh(), current_mA, voltage_mV);
+
+    percent = get_bat_charge_percent_with_learning(voltage_mV, percent);
 
     // --- Low-power warning ---
     if (percent <= LOW_POWER_THRESHOLD) {

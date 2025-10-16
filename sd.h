@@ -685,6 +685,7 @@ void rom_file_selector() {
 }
 */
 uint16_t get_bat_charge_percent();
+uint16_t get_bat_charge_percent_with_learning(uint16_t voltage_mV, uint16_t reported_percent);
 uint16_t get_remaining_bat_capacity_mAh();
 uint16_t get_full_bat_capacity_mAh();
 uint16_t read_voltage_mV();
@@ -909,7 +910,7 @@ lv_obj_t *create_top_bar(lv_obj_t *parent, lv_obj_t **status_label_out) {
 }
 
 void update_status_label(lv_obj_t *status_label) {
-    uint16_t bat_percent = get_bat_charge_percent();
+    uint16_t bat_percent = get_bat_charge_percent_with_learning(read_voltage_mV(), get_bat_charge_percent());
 
     struct tm now;
     mcp7940n_get_tm(RTC_I2C_PORT, &now);

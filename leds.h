@@ -8,7 +8,7 @@ uint8_t button_led_duty_cycle = MAX_BRIGHTNESS/8;
 
 // perceptual brightness curve 
 static const uint8_t brightness_levels[16] = {
-     0,  4,  7, 10, 14, 19, 25, 33,
+     0,  6,  8, 10, 14, 19, 25, 33,
     43, 55, 70, 90,115,145,185,230
 };
 

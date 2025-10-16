@@ -45,6 +45,7 @@
         "cstdint": "cpp",
         "rtc.h": "c",
         "sleep.h": "c",
-        "malloc.h": "c"
+        "malloc.h": "c",
+        "sfe_pico.h": "c"
     }
 }

@@ -26,6 +26,9 @@
 #include "hardware/watchdog.h"
 #include "pico/scanvideo.h"
 #include "pico/scanvideo/composable_scanline.h"
+#if ENABLE_PSRAM
+#include "sparkfun_pico/sfe_pico.h"
+#endif
 
 // Essential headers
 #include "settings.h"
@@ -66,15 +69,7 @@ int main(void)
 	stdio_init_all();
 
 #if ENABLE_PSRAM
-#if ROM_FLASH
 	gpio_set_function(GPIO_QSPI_CS1, GPIO_FUNC_XIP_CS1);
-#else
-	while(gpio_read(GPIO_B_SELECT)) {
-		sleep_ms(100);
-	}
-	size_t psram_size = setup_psram(GPIO_QSPI_CS1);
-	printf("PSRAM size: %zu bytes\n", psram_size);
-#endif
 #endif
 
     setup_hold_power();
@@ -518,6 +513,7 @@ while(true)
     // MARK: - Ending Emulation
     out:
         puts("\nEmulation Ended");
+		memory_stats();
         /* stop lcd task running on core 1 */
         multicore_reset_core1(); 
     }

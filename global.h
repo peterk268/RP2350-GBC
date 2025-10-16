@@ -17,8 +17,7 @@ i2s_config_t i2s_config;
  * Game Boy DMG ROM size ranges from 32768 bytes (e.g. Tetris) to 2,097,152 bytes (e.g. Pokemon Silver)
  */
 #if ENABLE_PSRAM && !ROM_FLASH
-#define PSRAM_LOCATION _u(0x11000000)
-const uint8_t *rom = (uint8_t *) PSRAM_LOCATION;
+uint8_t *rom;
 #else
 #define FLASH_TARGET_OFFSET (4 * 1024 * 1024)
 const uint8_t *rom = (const uint8_t *) (XIP_BASE + FLASH_TARGET_OFFSET);
@@ -117,6 +116,24 @@ void underclock_cpu(bool enable) {
 	if (enable) {
 		// Going down: lower frequency first, then voltage
 		set_sys_clock_khz(180 * 1000, true);
+		sleep_ms(10);
+
+		vreg_set_voltage(VREG_VOLTAGE_DEFAULT);
+		sleep_ms(10);
+	} else {
+        // Going up: up voltage then frequency
+        vreg_set_voltage(VREG_VOLTAGE_1_15);
+        sleep_ms(10);
+
+        set_sys_clock_khz(300 * 1000, true);
+        sleep_ms(10);
+	}
+}
+
+void underclock_cpu_for_psram(bool enable) {
+	if (enable) {
+		// Going down: lower frequency first, then voltage
+		set_sys_clock_khz(140 * 1000, true);
 		sleep_ms(10);
 
 		vreg_set_voltage(VREG_VOLTAGE_DEFAULT);

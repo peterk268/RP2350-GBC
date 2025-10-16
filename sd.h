@@ -198,7 +198,7 @@ void write_cart_ram_file(struct gb_s *gb) {
 #define BLOCK_SIZE   (64 * 1024)   // SD read buffer size (big enough but not too big)
 
 
-void load_cart_rom_file(const char *filename) {
+void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
     FRESULT fr;
     FIL fil;
     UINT br;
@@ -229,8 +229,10 @@ void load_cart_rom_file(const char *filename) {
     uint32_t ints;
 
 #if ENABLE_PSRAM && !ROM_FLASH
-    // rom = (const uint8_t *)psram_malloc(rom_size);
-    // erase rom area in psram..
+    rom = (const uint8_t *)sfe_mem_malloc(rom_size);
+    if (!rom) printf("Big block built in allocation failed\n");
+    else printf("\nAllocated %u bytes using built-in PSRAM allocator\n", (unsigned)rom_size);
+    memory_stats();
 #else
     // // Round erase size up to nearest 4 KB
     uint32_t erase_size = (rom_size + ERASE_SIZE - 1) & ~(ERASE_SIZE - 1);
@@ -265,7 +267,9 @@ void load_cart_rom_file(const char *filename) {
         }
         if (br == 0) break; // EOF
 
+        ints = save_and_disable_interrupts();
         memcpy(rom + psram_offset, buffer, br);
+        restore_interrupts(ints);
         psram_offset += br;
         total_bytes += br;
     }
@@ -273,6 +277,7 @@ void load_cart_rom_file(const char *filename) {
     printf("ROM loaded successfully. Size = %lu bytes (%.2f KB)\n",
            total_bytes, total_bytes / 1024.0);
 
+#if DEBUG_PSRAM
     // --- Verification phase ---
     printf("Verifying PSRAM contents...\n");
 
@@ -309,6 +314,7 @@ void load_cart_rom_file(const char *filename) {
     } else {
         printf("❌ Verification failed.\n");
     }
+#endif
 #else
     // Stream ROM file into flash
     uint32_t flash_target_offset = FLASH_TARGET_OFFSET;

@@ -23,7 +23,15 @@ if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
 # ====================================================================================
-set(PICO_BOARD pimoroni_pico_plus2_rp2350 CACHE STRING "Board type")
+set(PICO_BOARD sparkfun_promicro_rp2350 CACHE STRING "Board type")
+
+# # the following enables the system malloc/free to be wrapped
+# set(SKIP_PICO_MALLOC 1)
+# # the following enables wrapping in sparkfun_pico builds
+# set(SFE_PICO_ALLOC_WRAP 1)
+# # the following enables the system malloc/free to be wrapped during compilation
+# add_definitions(-DSFE_PICO_ALLOC_WRAP)
+
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
@@ -37,9 +45,6 @@ project(RP2350_GBC C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
-add_subdirectory(ext/FatFs_SPI)
-add_subdirectory(ext/lvgl)
-
 # Add executable. Default name is the project name, version 0.1
 
 add_executable(RP2350_GBC 
@@ -47,6 +52,10 @@ add_executable(RP2350_GBC
             ext/minigb_apu/minigb_apu.c 
             ext/i2s/i2s.c
 )
+
+add_subdirectory(ext/FatFs_SPI)
+add_subdirectory(ext/lvgl)
+add_subdirectory(ext/sparkfun_pico)
 
 pico_set_program_name(RP2350_GBC "RP2350_GBC")
 pico_set_program_version(RP2350_GBC "0.1")
@@ -70,7 +79,8 @@ target_link_libraries(RP2350_GBC
         hardware_sync hardware_pll hardware_spi hardware_irq hardware_dma hardware_flash hardware_i2c pico_aon_timer hardware_powman
         hardware_sleep hardware_adc
         pico_binary_info
-        pico_scanvideo_dpi)
+        pico_scanvideo_dpi
+        sparkfun_pico)
 
 target_compile_definitions(RP2350_GBC PRIVATE
         PARAM_ASSERTIONS_DISABLE_ALL=1

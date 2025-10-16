@@ -302,6 +302,7 @@ void set_design_capacity(uint16_t cap_mah) {
 }
 
 void config_battery_monitor() {
+    printf("Configuring Battery Monitor...\n");
     // reset_bat_monitor();
     set_design_capacity(1500);
     change_bat_chem_to_lipo();

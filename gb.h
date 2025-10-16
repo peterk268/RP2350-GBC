@@ -4,7 +4,7 @@
 /**
  * Returns a byte from the ROM file at the given address.
  */
-uint8_t gb_rom_read(struct gb_s *gb, const uint_fast32_t addr)
+uint8_t __not_in_flash_func(gb_rom_read)(struct gb_s *gb, const uint_fast32_t addr)
 {
 	(void) gb;
 	return rom[addr];

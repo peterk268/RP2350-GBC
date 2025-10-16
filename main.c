@@ -384,23 +384,23 @@ while(true)
 				if(!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
 					/* select + up: increase sound volume */
 					// i2s_increase_volume(&i2s_config);
-					increase_lcd_brightness(4);
-					increase_pwr_brightness(4);
+					step_lcd_brightness(true);
+					step_pwr_brightness(true);
 				}
 				if(!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
 					/* select + down: decrease sound volume */
 					// i2s_decrease_volume(&i2s_config);
-					decrease_lcd_brightness(4);
-					decrease_pwr_brightness(4);
+					step_lcd_brightness(false);
+					step_pwr_brightness(false);
 				}
 #endif
 				if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
 					/* select + right: increase button led brightness */
-					increase_button_brightness(8);
+					step_button_brightness(true);
 				}
 				if(!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
 					/* select + left: decrease button led brightness */
-					decrease_button_brightness(8);
+					step_button_brightness(false);
 				}
 				if(!gb.direct.joypad_bits.start && prev_joypad_bits.start) {
 					/* cycle the next manual color palette: -1 → 0 → 1 … 12 → -1 */

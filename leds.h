@@ -2,10 +2,15 @@
 #define MIN_BRIGHTNESS 0
 
 // Duty Cycle Values
-#warning "Make these flash variables"
 uint8_t lcd_led_duty_cycle = MAX_BRIGHTNESS/8;   
 uint8_t pwr_led_duty_cycle = MAX_BRIGHTNESS/8;  
 uint8_t button_led_duty_cycle = MAX_BRIGHTNESS/8; 
+
+// perceptual brightness curve 
+static const uint8_t brightness_levels[16] = {
+     0,  4,  7, 10, 14, 19, 25, 33,
+    43, 55, 70, 90,115,145,185,230
+};
 
 // Generalized LED Configuration Function
 void config_led(uint8_t gpio_num, uint8_t duty_cycle, bool is_active_low) {
@@ -103,6 +108,50 @@ void increase_button_brightness(uint8_t step) {
 void decrease_button_brightness(uint8_t step) {
     adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, step, false, false);
 }
+
+uint8_t get_next_brightness_level(uint8_t current, bool increase) {
+    int idx = 0;
+
+    // Find the nearest lower/equal level
+    for (int i = 0; i < 16; i++) {
+        if (current <= brightness_levels[i]) {
+            idx = i;
+            break;
+        }
+        idx = 15; // default to top if above all
+    }
+
+    if (increase) {
+        if (idx < 15) idx++;
+    } else {
+        if (idx > 0) idx--;
+    }
+
+    return brightness_levels[idx];
+}
+
+// Generic helper for any LED
+void step_brightness(uint8_t gpio, uint8_t *duty, bool increase, bool is_active_low) {
+    uint8_t target = get_next_brightness_level(*duty, increase);
+    *duty = target;
+    uint slice = pwm_gpio_to_slice_num(gpio);
+    uint channel = pwm_gpio_to_channel(gpio);
+    uint8_t actual = is_active_low ? 255 - target : target;
+    pwm_set_chan_level(slice, channel, actual);
+}
+
+void step_lcd_brightness(bool increase) {
+    step_brightness(GPIO_LCD_LED, &lcd_led_duty_cycle, increase, false);
+}
+
+void step_pwr_brightness(bool increase) {
+    step_brightness(GPIO_PWR_LED, &pwr_led_duty_cycle, increase, false);
+}
+
+void step_button_brightness(bool increase) {
+    step_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, increase, false);
+}
+
 
 // Globals
 bool increasing = true;

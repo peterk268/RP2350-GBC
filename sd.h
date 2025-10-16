@@ -199,6 +199,8 @@ void write_cart_ram_file(struct gb_s *gb) {
 
 
 void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
+    while(led_ramp_done == false) sleep_ms(1); // Wait for LED fade-in to complete
+    
     FRESULT fr;
     FIL fil;
     UINT br;

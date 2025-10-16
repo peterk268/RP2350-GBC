@@ -60,8 +60,6 @@
 int main(void)
 {	
 	set_up_select();
-	enum gb_init_error_e ret;
-
 	overclock_cpu(UNDERCLOCK_CPU_IN_NORMAL_EMULATION);
 
 	/* Initialise USB serial connection for debugging. */
@@ -69,7 +67,7 @@ int main(void)
 	stdio_init_all();
 
 #if ENABLE_PSRAM
-	gpio_set_function(GPIO_QSPI_CS1, GPIO_FUNC_XIP_CS1);
+	enable_psram_cs1();
 #endif
 
     setup_hold_power();
@@ -82,7 +80,7 @@ int main(void)
 	initialize_rtc(RTC_DEFAULT_VALUE);
 #endif
 	
-	sleep_ms(10);
+	sleep_ms(20);
 
 	// MARK: - Battery Monitor Config
 	config_battery_monitor();
@@ -141,9 +139,6 @@ int main(void)
 #endif
 
 	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level, last_filename_raw);
-
-	// MARK: - PWM Set up
-	fade_in_leds_startup();
 
 	mcp7940n_init(RTC_I2C_PORT);
 
@@ -206,6 +201,8 @@ while(true)
 #endif
 #endif
 #endif
+    // MARK: - PWM Set up
+	fade_in_leds_startup();
 #if ENABLE_SDCARD && ENABLE_ROM_SELECTOR
 	rom_file_selector();
 #endif

@@ -22,6 +22,7 @@ const uint8_t *rom;
 #define FLASH_TARGET_OFFSET (4 * 1024 * 1024)
 const uint8_t *rom = (const uint8_t *) (XIP_BASE + FLASH_TARGET_OFFSET);
 #endif
+enum gb_init_error_e ret;
 
 static uint8_t ram[32768];
 static int lcd_fb_ready = 0;

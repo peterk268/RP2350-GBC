@@ -9,6 +9,9 @@ static void memory_stats()
     printf("\tMax free block size: 0x%X (%u) \n", max_block, max_block);
 }
 
+void __not_in_flash_func(enable_psram_cs1)(void) {
+    gpio_set_function(GPIO_QSPI_CS1, GPIO_FUNC_XIP_CS1);
+}
 
 // /**
 //  * @file sfe_psram.c

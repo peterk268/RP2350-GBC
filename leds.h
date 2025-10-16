@@ -171,19 +171,46 @@ static led_ramp_t led_ramps[] = {
 
 bool led_ramp_timer_callback(repeating_timer_t *rt) {
     bool all_done = true;
-    for (size_t i = 0; i < sizeof(led_ramps)/sizeof(led_ramps[0]); ++i) {
+
+    for (size_t i = 0; i < count_of(led_ramps); ++i) {
         led_ramp_t *l = &led_ramps[i];
-        if (*(l->duty) < *(l->target)) {
-            adjust_brightness(l->gpio, l->duty, BRIGHTNESS_STEP, true, l->is_active_low);
-            if (*(l->duty) < *(l->target)) all_done = false;
+        uint8_t duty   = *(l->duty);
+        uint8_t target = *(l->target);
+
+        if (duty < target) {
+            // Progress of current fade (0–1)
+            float progress = (float)duty / (float)target;
+
+            // Desired total fade duration scales slightly with brightness
+            // Lower brightness = shorter fade, but never instant
+            float min_fade_ms = 300.0f;  // fade time for very dim targets
+            float max_fade_ms = 900.0f;  // fade time for max brightness
+            float fade_time_ms = min_fade_ms + (max_fade_ms - min_fade_ms) * (target / 255.0f);
+
+            // Calculate how many timer ticks we’ll run in total
+            float total_ticks = fade_time_ms / (float)RAMP_INTERVAL_MS;
+
+            // Smooth easing function: starts slow, speeds up, then slows near the end
+            float eased = progress * progress * (3 - 2 * progress); // smoothstep(0,1,progress)
+
+            // Dynamic step size so that we finish near target within fade_time_ms
+            float step_f = ((float)target / total_ticks) * (0.6f + 0.8f * eased);
+
+            uint8_t step = (uint8_t)(step_f < 1 ? 1 : step_f);
+
+            adjust_brightness(l->gpio, l->duty, step, true, l->is_active_low);
+
+            if (*(l->duty) < target)
+                all_done = false;
         }
     }
 
     if (all_done) {
-        led_ramp_done = true;   // safe to inspect from main()
-        return false;           // stop the repeating timer
+        led_ramp_done = true;
+        return false;
     }
-    return true; // keep running
+
+    return true;
 }
 
 void fade_in_leds_startup(void) {

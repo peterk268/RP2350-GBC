@@ -229,9 +229,14 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
     uint32_t ints;
 
 #if ENABLE_PSRAM && !ROM_FLASH
-    rom = (uint8_t*) malloc(rom_size);
-    if (!rom) printf("Big block built in allocation failed\n");
-    else printf("\nAllocated %u bytes using built-in PSRAM allocator\n", (unsigned)rom_size);
+    rom = (const uint8_t*) malloc(rom_size);
+    if (!rom) {
+        printf("Big block built in allocation failed\n"); 
+        f_close(&fil);
+        f_unmount(pSD->pcName);
+        return;
+    }
+    printf("\nAllocated %u bytes using built-in PSRAM allocator\n", (unsigned)rom_size);
     memory_stats();
 #else
     // // Round erase size up to nearest 4 KB
@@ -241,7 +246,6 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
     flash_range_erase(FLASH_TARGET_OFFSET, erase_size);
     restore_interrupts(ints);
     printf("I Erased %lu KB flash\n", erase_size / 1024);
-#endif
     // Allocate buffer (not on stack)
     static uint8_t *buffer = NULL;
     if (!buffer) {
@@ -253,6 +257,7 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
             return;
         }
     }
+#endif
 
 #if ENABLE_PSRAM && !ROM_FLASH
     // --- Load ROM into PSRAM ---
@@ -260,17 +265,12 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
     uint32_t total_bytes = 0;
 
     for (;;) {
-        fr = f_read(&fil, buffer, BLOCK_SIZE, &br);
+        fr = f_read(&fil, rom, rom_size, &br);
         if (fr != FR_OK) {
             printf("E f_read error: %s (%d)\n", FRESULT_str(fr), fr);
             break;
         }
         if (br == 0) break; // EOF
-
-        ints = save_and_disable_interrupts();
-        memcpy(rom + psram_offset, buffer, br);
-        restore_interrupts(ints);
-        psram_offset += br;
         total_bytes += br;
     }
 

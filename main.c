@@ -140,7 +140,7 @@ int main(void)
 # endif
 #endif
 
-	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level);
+	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level, last_filename_raw);
 
 	// MARK: - PWM Set up
 	fade_in_leds_startup();
@@ -300,9 +300,9 @@ while(true)
 			write_cart_ram_file(&gb);
 #endif			
 #if LED_PHASE_OUT_PWR_DOWN
-			save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level);
+			save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level, last_filename_raw);
 #else
-			save_system_settings_if_changed(lcd_led_duty_cycle, button_led_duty_cycle, pwr_led_duty_cycle, manual_palette_selected, wash_out_level);
+			save_system_settings_if_changed(lcd_led_duty_cycle, button_led_duty_cycle, pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw);
 #endif
 			printf("Done");
 

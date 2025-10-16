@@ -345,6 +345,7 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
     f_unmount(pSD->pcName);
 
 	save_rom_settings(filename, 0, 0);
+    strncpy(last_filename_raw, filename, FILENAME_MAX_LEN - 1);
 
 	set_sd_busy(false);
 	watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
@@ -1050,6 +1051,12 @@ void rom_file_selector() {
 		if (!start && prev_start) {   // just pressed
             // memset(front_fb->data, 0, sizeof(front_fb->data));
             // printf("Recent game\n");
+#if ENABLE_PSRAM && !ROM_FLASH 
+            if (last_filename_raw != '\0') {
+                printf("LOADING %s\n", last_filename_raw);
+                load_cart_rom_file(last_filename_raw);
+            }
+#endif
 			/* re-start the last game (no need to reprogram flash) */
 			break;
 		}
@@ -1067,22 +1074,6 @@ void rom_file_selector() {
                 draw_rom_list(list, filename, num_file, selected, page_start);
             }
         }
-		// if (!down && prev_down) {
-		// 	/* select the next rom */
-		// 	selected++;
-		// 	if(selected>=num_file) selected=0;
-		// 	printf("%s\n", filename[selected]);
-		// 	lv_label_set_text(title, filename[selected]);	
-		// }
-		// if(!up && prev_up) {
-		// 	/* select the previous rom */
-		// 	if(selected==0) {
-		// 		selected=num_file-1;
-		// 	} else {
-		// 		selected--;
-		// 	}
-		// 	lv_label_set_text(title, filename[selected]);
-		// }
         if (!down && prev_down) {
             if (show_settings) {
                 modify_draft_tm(&draft_tm, selected_date_value, -1);
@@ -1189,6 +1180,7 @@ typedef struct {
     uint8_t power_brightness;
     int8_t selected_palette;
     uint8_t wash_out_level;
+    char last_filename_raw[FILENAME_MAX_LEN];
 } system_settings_t;
 
 system_settings_t g_saved_settings = {0};
@@ -1226,7 +1218,7 @@ static bool ensure_settings_dir(void) {
 // --- System settings ---
 bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
                           uint8_t *power_brightness, int8_t *selected_palette,
-                          uint8_t *wash_out_level) {
+                          uint8_t *wash_out_level, char last_filename_raw[FILENAME_MAX_LEN]) {
     FIL fil;
     UINT br;
     system_settings_t s = {0};
@@ -1253,6 +1245,8 @@ bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
     *power_brightness  = s.power_brightness;
     *selected_palette  = s.selected_palette;
     *wash_out_level    = s.wash_out_level;
+    strncpy(last_filename_raw, s.last_filename_raw, FILENAME_MAX_LEN);
+    last_filename_raw[FILENAME_MAX_LEN - 1] = '\0'; // ensure null termination
 
     // Save to global
     g_saved_settings = s;
@@ -1262,7 +1256,7 @@ bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
 
 void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
                           uint8_t power_brightness, int8_t selected_palette,
-                          uint8_t wash_out_level) {
+                          uint8_t wash_out_level, char last_filename_raw[FILENAME_MAX_LEN]) {
     system_settings_t s = {
         .magic = SYSTEM_MAGIC,
         .lcd_brightness = lcd_brightness,
@@ -1271,6 +1265,9 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
         .selected_palette = selected_palette,
         .wash_out_level = wash_out_level
     };
+    // Properly copy the filename into the struct
+    strncpy(s.last_filename_raw, last_filename_raw, FILENAME_MAX_LEN);
+    s.last_filename_raw[FILENAME_MAX_LEN - 1] = '\0';  // ensure null termination
 
     sd_card_t *pSD = sd_get_by_num(0);
     FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
@@ -1300,12 +1297,13 @@ static inline bool system_settings_equal(const system_settings_t *a, const syste
            a->button_brightness  == b->button_brightness &&
            a->power_brightness   == b->power_brightness &&
            a->selected_palette   == b->selected_palette &&
-           a->wash_out_level     == b->wash_out_level;
+           a->wash_out_level     == b->wash_out_level &&
+           strncmp(a->last_filename_raw, b->last_filename_raw, FILENAME_MAX_LEN) == 0;
 }
 
 void save_system_settings_if_changed(uint8_t lcd_brightness, uint8_t button_brightness,
                                      uint8_t power_brightness, int8_t selected_palette,
-                                     uint8_t wash_out_level) {
+                                     uint8_t wash_out_level, char last_filename_raw[FILENAME_MAX_LEN]) {
 
 	system_settings_t current = {
         .magic = SYSTEM_MAGIC,
@@ -1315,6 +1313,10 @@ void save_system_settings_if_changed(uint8_t lcd_brightness, uint8_t button_brig
         .selected_palette = selected_palette,
         .wash_out_level = wash_out_level
     };
+    // Properly copy the filename into the struct
+    strncpy(current.last_filename_raw, last_filename_raw, FILENAME_MAX_LEN);
+    current.last_filename_raw[FILENAME_MAX_LEN - 1] = '\0';  // ensure null termination
+
 
     if (!system_settings_equal(&g_saved_settings, &current)) {
         printf("Settings changed, saving...\n");
@@ -1322,7 +1324,8 @@ void save_system_settings_if_changed(uint8_t lcd_brightness, uint8_t button_brig
                              button_brightness,
                              power_brightness,
                              selected_palette,
-                             wash_out_level);
+                             wash_out_level,
+                             last_filename_raw);
         g_saved_settings = current;
     }
 }

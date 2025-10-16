@@ -120,13 +120,15 @@ bool read_system_settings(uint8_t *lcd_brightness,
                           uint8_t *button_brightness,
                           uint8_t *power_brightness,
                           int8_t  *selected_palette,
-                          uint8_t *wash_out_level);
+                          uint8_t *wash_out_level,
+                          char last_filename_raw[FILENAME_MAX_LEN]);
 
 void save_system_settings(uint8_t lcd_brightness,
                           uint8_t button_brightness,
                           uint8_t power_brightness,
                           int8_t  selected_palette,
-                          uint8_t wash_out_level);
+                          uint8_t wash_out_level,
+                          char last_filename_raw[FILENAME_MAX_LEN]);
 
 // --- ROM settings ---
 bool read_rom_settings(char *out_filename,

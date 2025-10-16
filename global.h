@@ -27,6 +27,7 @@ static uint8_t ram[32768];
 static int lcd_fb_ready = 0;
 static palette_t palette;	// Colour palette
 static int8_t manual_palette_selected=-1;
+char last_filename_raw[FILENAME_MAX_LEN];
 
 static struct
 {

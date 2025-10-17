@@ -68,6 +68,7 @@ static struct gb_s gb;
 
 repeating_timer_t battery_timer;
 repeating_timer_t pwr_led_timer;
+repeating_timer_t watchdog_timer;
 
 volatile bool battery_task_flag = false;
 bool low_power = false;
@@ -148,4 +149,9 @@ void underclock_cpu_for_psram(bool enable) {
         set_sys_clock_khz(300 * 1000, true);
         sleep_ms(10);
 	}
+}
+
+bool watchdog_callback(repeating_timer_t *rt) {
+    watchdog_update();
+    return true; // Return true to keep the timer running
 }

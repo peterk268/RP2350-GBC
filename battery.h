@@ -89,9 +89,11 @@ static uint16_t estimate_soc_from_voltage(uint16_t mV) {
 
 bool gauge_is_learning(uint16_t voltage_mV, uint16_t reported_percent) {
     const uint16_t learning_voltage_threshold = 4100; // e.g., 4.1V
+    const uint16_t zero_learning_voltage_threshold = 3100; // e.g., 3.1V
 
     // If gauge reports 100% but voltage is below threshold, it's likely still learning
-    return reported_percent == 100 && voltage_mV < learning_voltage_threshold;
+    return (reported_percent == 100 && voltage_mV < learning_voltage_threshold) ||
+           (reported_percent == 0 && voltage_mV > zero_learning_voltage_threshold);
 }
 
 uint16_t get_bat_charge_percent_with_learning(uint16_t voltage_mV, uint16_t reported_percent) {
@@ -198,6 +200,7 @@ void change_bat_chem_to_lipo() {
         return;
     }
 
+    watchdog_disable();
     // === Step 3: Enter CFGUPDATE mode ===
     subcommand_control(0x0013);  // SET_CFGUPDATE
     printf("Entered CFGUPDATE mode.\n");
@@ -215,6 +218,7 @@ void change_bat_chem_to_lipo() {
     // === Step 6: Verify new ChemID ===
     subcommand_control(0x0008);
     sleep_ms(500);
+    watchdog_enable(WATCHDOG_STARTUP_TIMEOUT_MS, true);
     uint16_t verify = read_register(0x00);
     printf("New ChemID readback: 0x%04X\n", verify);
 
@@ -267,10 +271,12 @@ void set_design_capacity(uint16_t cap_mah) {
 
     uint8_t data[2];
 
+    watchdog_disable();
     // --- Step 1: Enter CFGUPDATE mode ---
     subcommand_control(0x0013);  // SET_CFGUPDATE
     printf("Entered CFGUPDATE mode.\n");
     sleep_ms(1100);
+    watchdog_enable(WATCHDOG_STARTUP_TIMEOUT_MS, true);
 
     // --- Step 2: Enable Block Data Memory control ---
     i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x61, 0x00}, 2, false);

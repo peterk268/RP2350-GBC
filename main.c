@@ -66,11 +66,14 @@ int main(void)
 	setup_default_uart();
 	stdio_init_all();
 
+	watchdog_enable(WATCHDOG_STARTUP_TIMEOUT_MS, true);
+	watchdog_update();
 #if ENABLE_PSRAM
 	enable_psram_cs1();
 #endif
 
     setup_hold_power();
+	watchdog_update();
 
 	sleep_ms(100); // this helps i2c to get things in order and prevent hangs
 	// MARK: - I2C INIT
@@ -79,10 +82,15 @@ int main(void)
 #if ENABLE_RTC
 	initialize_rtc(RTC_DEFAULT_VALUE);
 #endif
+	watchdog_update();
 	i2c_wait_ready(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, 100);
 
+	watchdog_update();
 	// MARK: - Battery Monitor Config
 	config_battery_monitor();
+
+	// Makes LED blink on power up with the phase in, I like it.
+	config_led(GPIO_PWR_LED, 128, false);
 
     // MARK: - Initialise GPIO
 	config_iox_ports();
@@ -91,6 +99,7 @@ int main(void)
 	// setup_switch_sleep();
 	sleep_ms(10);
 
+	watchdog_update();
 	#warning "Hold off on battery monitor"
 #if ENABLE_BAT_MONITORING
 #if BAT_IMMEDIATE_CHECK
@@ -105,6 +114,7 @@ int main(void)
 	// Initialize the ADC for GPIO_AUD_POT_ADC and nHP_DETECT
     init_adc(GPIO_AUD_POT_ADC);
 
+	watchdog_update();
 #if ENABLE_LCD && USE_IPS_LCD
 	lcd_power_on_reset();
 	init_spi_lcd();
@@ -125,6 +135,7 @@ int main(void)
 
 #endif
 
+	watchdog_update();
 	// Enable Audio and SD Card
 #if ENABLE_SDCARD || ENABLE_SOUND
 	printf("Enabling Audio and SD Card\n");
@@ -138,10 +149,12 @@ int main(void)
 # endif
 #endif
 
+	watchdog_update();
 	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level, last_filename_raw);
 
 	mcp7940n_init(RTC_I2C_PORT);
 
+	watchdog_update();
 	// SD WILL HANDLE SPI INIT
 	// gpio_set_function(GPIO_SPI0_SCK, GPIO_FUNC_SPI);
 	// gpio_set_function(GPIO_SPI0_MOSI, GPIO_FUNC_SPI);
@@ -179,7 +192,7 @@ int main(void)
 	// sleep_ms(10);
 	// check_dac();
 #endif
-
+	watchdog_disable();
 	// CPU Starts overclocked then goes back to normal after initializing DPI
 	// This is to prevent a bug where overclocking messes DPI timings.
 #if UNDERCLOCK_CPU_IN_NORMAL_EMULATION

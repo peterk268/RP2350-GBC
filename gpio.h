@@ -188,11 +188,18 @@ static void i2c_recover_bus(uint sda_pin, uint scl_pin) {
 }
 
 void init_i2c() {
-    i2c_init(IOX_I2C_PORT, 400 * 1000); // 400 kHz
+    i2c_recover_bus(GPIO_I2C1_SDA, GPIO_I2C1_SCL);
+
     gpio_set_function(GPIO_I2C1_SDA, GPIO_FUNC_I2C);
     gpio_set_function(GPIO_I2C1_SCL, GPIO_FUNC_I2C);
     gpio_pull_up(GPIO_I2C1_SDA);
     gpio_pull_up(GPIO_I2C1_SCL);
+
+    sleep_us(100);
+
+    i2c_init(IOX_I2C_PORT, 400 * 1000); // 400 kHz
+
+    sleep_ms(1);
 }
 
 // Waits until the I2C bus is idle and optionally checks if a device ACKs.

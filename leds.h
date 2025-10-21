@@ -148,8 +148,38 @@ void step_pwr_brightness(bool increase) {
     step_brightness(GPIO_PWR_LED, &pwr_led_duty_cycle, increase, false);
 }
 
+
+static const uint8_t button_brightness_levels[6] = {0, 17, 25, 55, 130, 230};
+
+uint8_t get_next_button_brightness(uint8_t current, bool increase) {
+    int idx = 0;
+
+    // Find the closest brightness level
+    for (int i = 0; i < 6; i++) {
+        if (current <= button_brightness_levels[i]) {
+            idx = i;
+            break;
+        }
+        idx = 5; // max level
+    }
+
+    // Step up or down
+    if (increase) {
+        if (idx < 5) idx++;
+    } else {
+        if (idx > 0) idx--;
+    }
+
+    return button_brightness_levels[idx];
+}
+
 void step_button_brightness(bool increase) {
-    step_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, increase, false);
+    uint8_t target = get_next_button_brightness(button_led_duty_cycle, increase);
+    button_led_duty_cycle = target;
+
+    uint slice = pwm_gpio_to_slice_num(GPIO_BUTTON_LED);
+    uint channel = pwm_gpio_to_channel(GPIO_BUTTON_LED);
+    pwm_set_chan_level(slice, channel, target);
 }
 
 

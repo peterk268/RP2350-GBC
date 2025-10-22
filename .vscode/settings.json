@@ -46,6 +46,7 @@
         "rtc.h": "c",
         "sleep.h": "c",
         "malloc.h": "c",
-        "sfe_pico.h": "c"
+        "sfe_pico.h": "c",
+        "dr_mp3.h": "c"
     }
 }

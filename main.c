@@ -42,6 +42,8 @@
 #include "i2s.h"
 #include "gbcolors.h"
 #include "lvgl.h"
+#define DR_MP3_IMPLEMENTATION
+#include "dr_mp3.h"
 
 /* Main Modularization */
 #include "global.h"
@@ -55,7 +57,7 @@
 #include "audio.h"
 #include "rtc.h"
 #include "battery.h"
-
+#include "mp3.h"
 
 int main(void)
 {	
@@ -216,6 +218,14 @@ while(true)
 #endif
     // MARK: - PWM Set up
 	fade_in_leds_startup();
+
+	read_io_expander_states(0);
+	if (!gpio_read(IOX_B_A)) {
+		while(1) {
+			play_mp3_from_psram("makebelieve.mp3");
+		}
+	}
+
 #if ENABLE_SDCARD && ENABLE_ROM_SELECTOR
 	rom_file_selector();
 #endif

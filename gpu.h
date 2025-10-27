@@ -272,7 +272,7 @@ static inline uint16_t *raw_scanline_prepare(struct scanvideo_scanline_buffer *d
     assert(width >= 3);
     assert(width % 2 == 0);
     // +1 for the black pixel at the end, -3 because the program outputs n+3 pixels.
-    dest->data[0] = COMPOSABLE_RAW_RUN | (width + 1 - 3 << 16);
+    dest->data[0] = COMPOSABLE_RAW_RUN | (width - 3 << 16);
     // After user pixels, 1 black pixel then discard remaining FIFO data
     dest->data[width / 2 + 2] = 0x0000u | (COMPOSABLE_EOL_ALIGN << 16);
     dest->data_used = width / 2 + 2;

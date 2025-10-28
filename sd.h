@@ -753,100 +753,126 @@ void modify_draft_tm(struct tm *draft_tm, uint8_t selected_date_value, int8_t in
 }
 
 void draw_settings(lv_obj_t *list) {
+    lv_obj_clean(list);
+
     uint16_t bat_percent = get_bat_charge_percent();
-	uint16_t remaining_cap = get_remaining_bat_capacity_mAh();
-	uint16_t full_cap = get_full_bat_capacity_mAh();
-	uint16_t voltage_mV = read_voltage_mV();
+    uint16_t remaining_cap = get_remaining_bat_capacity_mAh();
+    uint16_t full_cap = get_full_bat_capacity_mAh();
+    uint16_t voltage_mV = read_voltage_mV();
 
-	lv_obj_t *percent = lv_label_create(list);
-	char percent_text[64];  // increased size for multiple lines
-    snprintf(percent_text, sizeof(percent_text),
-            "%d%% %d/%dmAh %.2fV",
-            bat_percent, remaining_cap, full_cap, voltage_mV / 1000.0);
-	lv_label_set_text(percent, percent_text);
-	lv_obj_set_style_text_font(percent, LV_FONT_DEFAULT, 0);
-	lv_obj_align(percent, LV_ALIGN_BOTTOM_MID, 0, 5);
-
-    // --- Time and date ---
     struct tm now = draft_tm;
-    // if (!mcp7940n_get_tm(RTC_I2C_PORT, &now)) return;
-
-    const char *weekdays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 
     lv_color_t normal_color = lv_color_hex(0x202020);
     lv_color_t highlight_color = lv_color_hex(0x33CC66);
 
-    int y_offset = 10;
+    int y_offset = 6;
     int spacing = 6;
 
-    // weekday
-    lv_obj_t *weekday_label = lv_label_create(list);
-    lv_label_set_text_fmt(weekday_label, "%s", weekdays[now.tm_wday]);
-    lv_obj_set_style_text_color(weekday_label,
-        (selected_date_value == 0) ? highlight_color : normal_color, 0);
-    lv_obj_align(weekday_label, LV_ALIGN_TOP_MID, 0, y_offset);
+    // ------------------------------
+    // SECTION: BATTERY
+    // ------------------------------
+    lv_obj_t *bat_title = lv_label_create(list);
+    lv_label_set_text(bat_title, "Battery");
+    lv_obj_set_style_text_color(bat_title, normal_color, 0);
+    lv_obj_set_style_text_font(bat_title, LV_FONT_DEFAULT, 0);
+    lv_obj_align(bat_title, LV_ALIGN_TOP_MID, 0, y_offset);
 
-    // --- Date: YYYY/MM/DD ---
-    char date_text[16];
-    snprintf(date_text, sizeof(date_text), "%04d/%02d/%02d",
-             now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
+    lv_obj_t *percent = lv_label_create(list);
+    char percent_text[48];
+    snprintf(percent_text, sizeof(percent_text),
+             "%d%%  %d/%dmAh  %.2fV",
+             bat_percent, remaining_cap, full_cap, voltage_mV / 1000.0);
+    lv_label_set_text(percent, percent_text);
+    lv_obj_set_style_text_color(percent, normal_color, 0);
+    lv_obj_align_to(percent, bat_title, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
+
+
+    // ------------------------------
+    // SECTION: DATE
+    // ------------------------------
+    lv_obj_t *date_title = lv_label_create(list);
+    lv_label_set_text(date_title, "\nDate");
+    lv_obj_set_style_text_color(date_title, normal_color, 0);
+    lv_obj_align_to(date_title, percent, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
+
+    // create label for the formatted date
     lv_obj_t *date_label = lv_label_create(list);
-    lv_label_set_text(date_label, date_text);
-    lv_obj_set_style_text_font(date_label, LV_FONT_DEFAULT, 0);
+    lv_label_set_recolor(date_label, true);
     lv_obj_set_style_text_color(date_label, normal_color, 0);
-    lv_obj_align_to(date_label, weekday_label, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
+    lv_obj_set_style_text_font(date_label, LV_FONT_DEFAULT, 0);
 
-    if (selected_date_value >= 1 && selected_date_value <= 3) {
-        // Highlight specific part of the date
-        // We’ll overlay smaller labels with green for whichever field is selected
-        lv_obj_t *highlight_label = lv_label_create(list);
-        lv_obj_set_style_text_color(highlight_label, highlight_color, 0);
-        lv_obj_set_style_text_font(highlight_label, LV_FONT_DEFAULT, 0);
+    char date_str[48];
 
-        if (selected_date_value == 1)
-            lv_label_set_text_fmt(highlight_label, "%04d", now.tm_year + 1900);
-        else if (selected_date_value == 2)
-            lv_label_set_text_fmt(highlight_label, "%02d", now.tm_mon + 1);
-        else if (selected_date_value == 3)
-            lv_label_set_text_fmt(highlight_label, "%02d", now.tm_mday);
-
-        lv_obj_align_to(highlight_label, date_label, LV_ALIGN_CENTER, 0, 0);
+    if (selected_date_value == 1) {
+        snprintf(date_str, sizeof(date_str),
+                 "#33CC66 %04d#/%02d/%02d",
+                 now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
+    } else if (selected_date_value == 2) {
+        snprintf(date_str, sizeof(date_str),
+                 "%04d/#33CC66 %02d#/%02d",
+                 now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
+    } else if (selected_date_value == 3) {
+        snprintf(date_str, sizeof(date_str),
+                 "%04d/%02d/#33CC66 %02d#",
+                 now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
+    } else {
+        snprintf(date_str, sizeof(date_str),
+                 "%04d/%02d/%02d",
+                 now.tm_year + 1900, now.tm_mon + 1, now.tm_mday);
     }
 
-    // --- Time: HH:MM:SS (24h) ---
-    char time_text[16];
-    snprintf(time_text, sizeof(time_text), "%02d:%02d:%02d",
-             now.tm_hour, now.tm_min, now.tm_sec);
+    lv_label_set_text(date_label, date_str);
+    lv_obj_align_to(date_label, date_title, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
+
+
+    // Weekday (not editable)
+    const char *weekdays[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+    lv_obj_t *weekday_label = lv_label_create(list);
+    char weekday_str[16];
+    snprintf(weekday_str, sizeof(weekday_str), "Weekday: %s", weekdays[now.tm_wday]);
+    lv_label_set_text(weekday_label, weekday_str);
+    lv_obj_set_style_text_color(weekday_label, normal_color, 0);
+    lv_obj_align_to(weekday_label, date_label, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
+
+
+    // ------------------------------
+    // SECTION: TIME
+    // ------------------------------
+    lv_obj_t *time_title = lv_label_create(list);
+    lv_label_set_text(time_title, "\nTime");
+    lv_obj_set_style_text_color(time_title, normal_color, 0);
+    lv_obj_align_to(time_title, weekday_label, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
+
+
     lv_obj_t *time_label = lv_label_create(list);
-    lv_label_set_text(time_label, time_text);
-    lv_obj_set_style_text_font(time_label, LV_FONT_DEFAULT, 0);
+    lv_label_set_recolor(time_label, true);
     lv_obj_set_style_text_color(time_label, normal_color, 0);
-    lv_obj_align_to(time_label, date_label, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
+    lv_obj_set_style_text_font(time_label, LV_FONT_DEFAULT, 0);
 
-    if (selected_date_value >= 4 && selected_date_value <= 6) {
-        // --- Highlight which time field is selected ---
-        lv_obj_t *time_highlight = lv_label_create(list);
-        lv_obj_set_style_text_color(time_highlight, highlight_color, 0);
-        lv_obj_set_style_text_font(time_highlight, LV_FONT_DEFAULT, 0);
+    char time_str[48];
 
-        if (selected_date_value == 4)
-            lv_label_set_text_fmt(time_highlight, "%02d", now.tm_hour);
-        else if (selected_date_value == 5)
-            lv_label_set_text_fmt(time_highlight, "%02d", now.tm_min);
-        else if (selected_date_value == 6)
-            lv_label_set_text_fmt(time_highlight, "%02d", now.tm_sec);
-
-        lv_obj_align_to(time_highlight, time_label, LV_ALIGN_CENTER, 0, 0);
+    if (selected_date_value == 4) {
+        snprintf(time_str, sizeof(time_str),
+                 "#33CC66 %02d#:%02d:%02d",
+                 now.tm_hour, now.tm_min, now.tm_sec);
+    } else if (selected_date_value == 5) {
+        snprintf(time_str, sizeof(time_str),
+                 "%02d:#33CC66 %02d#:%02d",
+                 now.tm_hour, now.tm_min, now.tm_sec);
+    } else if (selected_date_value == 6) {
+        snprintf(time_str, sizeof(time_str),
+                 "%02d:%02d:#33CC66 %02d#",
+                 now.tm_hour, now.tm_min, now.tm_sec);
+    } else {
+        snprintf(time_str, sizeof(time_str),
+                 "%02d:%02d:%02d",
+                 now.tm_hour, now.tm_min, now.tm_sec);
     }
 
-    // --- B: Save Time label at the bottom ---
-    lv_obj_t *save_label = lv_label_create(list);
-    lv_label_set_text(save_label, "B: Save Time");
-    lv_obj_set_style_text_font(save_label, LV_FONT_DEFAULT, 0);
-    lv_obj_set_style_text_color(save_label, normal_color, 0);
-    lv_obj_align(save_label, LV_ALIGN_BOTTOM_MID, 0, -spacing);
-
+    lv_label_set_text(time_label, time_str);
+    lv_obj_align_to(time_label, time_title, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
 }
+
 void draw_rom_list(lv_obj_t *list, char filenames[][256], uint16_t num_file, uint16_t selected, uint16_t page_start) {
     lv_obj_clean(list);
     if (show_settings) {
@@ -928,6 +954,48 @@ void update_status_label(lv_obj_t *status_label) {
     lv_label_set_text(status_label, status_text);
 }
 
+lv_obj_t *create_bottom_bar(lv_obj_t *parent, lv_obj_t **left_out, lv_obj_t **right_out) {
+    lv_obj_t *bottom_bar = lv_obj_create(parent);
+    lv_obj_set_size(bottom_bar, DISP_HOR_RES, 20);
+    lv_obj_align(bottom_bar, LV_ALIGN_BOTTOM_MID, 0, 15);
+    lv_obj_set_style_bg_color(bottom_bar, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_set_style_border_width(bottom_bar, 0, 0);
+    lv_obj_set_scrollbar_mode(bottom_bar, LV_SCROLLBAR_MODE_OFF);
+
+    // Top border line
+    lv_obj_set_style_border_width(bottom_bar, 1, 0);
+    lv_obj_set_style_border_side(bottom_bar, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_color(bottom_bar, lv_color_hex(0x000000), 0);
+
+    // Left label
+    lv_obj_t *left = lv_label_create(bottom_bar);
+    lv_label_set_text(left, "A: Load");
+    lv_obj_set_style_text_font(left, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(left, lv_color_hex(0x202020), 0);
+    lv_obj_align(left, LV_ALIGN_LEFT_MID, 5, 0);
+
+    // Right label
+    lv_obj_t *right = lv_label_create(bottom_bar);
+    lv_label_set_text(right, "Start: Recent");
+    lv_obj_set_style_text_font(right, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(right, lv_color_hex(0x202020), 0);
+    lv_obj_align(right, LV_ALIGN_RIGHT_MID, -5, 0);
+
+    if (left_out)  *left_out  = left;
+    if (right_out) *right_out = right;
+    return bottom_bar;
+}
+
+void update_bottom_bar(lv_obj_t *left, lv_obj_t *right, bool show_settings) {
+    if (show_settings) {
+        lv_label_set_text(left,  "B: Save");
+        lv_label_set_text(right, "Select: Exit");
+    } else {
+        lv_label_set_text(left,  "A: Load");
+        lv_label_set_text(right, "Start: Recent");
+    }
+}
+
 void rom_file_selector() {	
     // Create list
     lv_init();
@@ -981,33 +1049,10 @@ void rom_file_selector() {
     update_status_label(status_label);
 
     // === Bottom hint bar ===
-    lv_obj_t *hint_bar = lv_obj_create(cont);
-    lv_obj_set_size(hint_bar, DISP_HOR_RES, 20);
-    lv_obj_align(hint_bar, LV_ALIGN_BOTTOM_MID, 0, 15);
-    lv_obj_set_style_bg_color(hint_bar, lv_color_hex(0xE0E0E0), 0);
-    lv_obj_set_style_border_width(hint_bar, 0, 0);
-    lv_obj_set_scrollbar_mode(hint_bar, LV_SCROLLBAR_MODE_OFF);
-
-    // Bottom bar top line
-    lv_obj_set_style_border_width(hint_bar, 1, 0);
-    lv_obj_set_style_border_side(hint_bar, LV_BORDER_SIDE_TOP, 0);
-    lv_obj_set_style_border_color(hint_bar, lv_color_hex(0x000000), 0);
-
-    // Left label
-    lv_obj_t *hint_label_left = lv_label_create(hint_bar);
-    lv_label_set_text(hint_label_left, "A: Load");
-    lv_obj_set_style_text_font(hint_label_left, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(hint_label_left, lv_color_hex(0x202020), 0);
-    lv_obj_set_style_bg_color(hint_label_left, lv_color_hex(0xE0E0E0), 0);
-    lv_obj_align(hint_label_left, LV_ALIGN_LEFT_MID, 5, 0);
-
-    // Right label
-    lv_obj_t *hint_label_right = lv_label_create(hint_bar);
-    lv_label_set_text(hint_label_right, "Start: Recent");
-    lv_obj_set_style_text_font(hint_label_right, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(hint_label_right, lv_color_hex(0x202020), 0);
-    lv_obj_set_style_bg_color(hint_label_right, lv_color_hex(0xE0E0E0), 0);
-    lv_obj_align(hint_label_right, LV_ALIGN_RIGHT_MID, -5, 0);
+    lv_obj_t *hint_left;
+    lv_obj_t *hint_right;
+    lv_obj_t *hint_bar = create_bottom_bar(cont, &hint_left, &hint_right);
+    update_bottom_bar(hint_left, hint_right, show_settings);
 
 
 	// input loop
@@ -1075,6 +1120,7 @@ void rom_file_selector() {
                 mcp7940n_set_tm(RTC_I2C_PORT, &draft_tm);
                 show_settings = false;
                 draw_rom_list(list, filename, num_file, selected, page_start);
+                update_bottom_bar(hint_left, hint_right, show_settings);
             }
         }
         if (!down && prev_down) {
@@ -1152,6 +1198,7 @@ void rom_file_selector() {
                 mcp7940n_get_tm(RTC_I2C_PORT, &draft_tm);
             }
             draw_rom_list(list, filename, num_file, selected, page_start);
+            update_bottom_bar(hint_left, hint_right, show_settings);
         }
 
 		// Save states for edge detection

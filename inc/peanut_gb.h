@@ -1660,501 +1660,483 @@ static int compare_sprites(const struct sprite_data *const sd1, const struct spr
 
 void __gb_draw_line(struct gb_s *gb)
 {
-	uint8_t pixels[160] = {0};
+    // Latch LCDC and scroll/window registers once per scanline
+    uint8_t lcdc_now      = gb->hram_io[IO_LCDC];
+    bool bg_enable        = (lcdc_now & LCDC_BG_ENABLE) != 0;
+    bool window_enable    = (lcdc_now & LCDC_WINDOW_ENABLE) != 0;
+    uint8_t scx           = gb->hram_io[IO_SCX];
+    uint8_t scy           = gb->hram_io[IO_SCY];
+    uint8_t wx            = gb->hram_io[IO_WX];
+    uint8_t wy            = gb->hram_io[IO_WY]; // IMPORTANT: use IO_WY
 
-	/* If LCD not initialised by front-end, don't render anything. */
-	if(gb->display.lcd_draw_line == NULL)
-		return;
+    uint8_t pixels[160] = {0};
 
-	if(gb->direct.frame_skip && !gb->display.frame_skip_count)
-		return;
+    // If LCD not initialised by front-end, don't render anything.
+    if (gb->display.lcd_draw_line == NULL)
+        return;
+
+    // Respect frame skip
+    if (gb->direct.frame_skip && !gb->display.frame_skip_count)
+        return;
 
 #if PEANUT_FULL_GBC_SUPPORT
-	uint8_t pixelsPrio[160] = {0};  //do these pixels have priority over OAM?
+    uint8_t pixelsPrio[160] = {0};  // do these pixels have priority over OAM?
 #endif
-	/* If interlaced mode is activated, check if we need to draw the current
-	 * line. */
-	if(gb->direct.interlace)
-	{
-		if((!gb->display.interlace_count
-				&& (gb->hram_io[IO_LY] & 1) == 0)
-				|| (gb->display.interlace_count
-				    && (gb->hram_io[IO_LY] & 1) == 1))
-		{
-			/* Compensate for missing window draw if required. */
-			if(gb->hram_io[IO_LCDC] & LCDC_WINDOW_ENABLE
-					&& gb->hram_io[IO_LY] >= gb->display.WY
-					&& gb->hram_io[IO_WX] <= 166)
-				gb->display.window_clear++;
 
-			return;
-		}
-	}
+    // Interlace: if we're skipping this line, do NOT advance window_clear here.
+    if (gb->direct.interlace)
+    {
+        if ((!gb->display.interlace_count && (gb->hram_io[IO_LY] & 1) == 0) ||
+            ( gb->display.interlace_count && (gb->hram_io[IO_LY] & 1) == 1))
+        {
+            // No window_clear bookkeeping on skipped lines — real HW only advances
+            // the window line when it actually draws.
+            return;
+        }
+    }
 
-	/* If background is enabled, draw it. */
+    // -------------------------
+    // Background draw (latched SCX/SCY and LCDC)
+    // -------------------------
 #if PEANUT_FULL_GBC_SUPPORT
-	if(gb->cgb.cgbMode || gb->hram_io[IO_LCDC] & LCDC_BG_ENABLE)
+    if (gb->cgb.cgbMode || bg_enable)
 #else
-	if(gb->hram_io[IO_LCDC] & LCDC_BG_ENABLE)
+    if (bg_enable)
 #endif
-	{
-		uint8_t bg_y, disp_x, bg_x, idx, py, px, t1, t2;
-		uint16_t bg_map, tile;
+    {
+        uint8_t bg_y, disp_x, bg_x, idx, py, px, t1, t2;
+        uint16_t bg_map, tile;
 
-		/* Calculate current background line to draw. Constant because
-		 * this function draws only this one line each time it is
-		 * called. */
-		bg_y = gb->hram_io[IO_LY] + gb->hram_io[IO_SCY];
+        // Calculate current background line to draw.
+        bg_y = gb->hram_io[IO_LY] + scy;
 
-		/* Get selected background map address for first tile
-		 * corresponding to current line.
-		 * 0x20 (32) is the width of a background tile, and the bit
-		 * shift is to calculate the address. */
-		bg_map =
-			((gb->hram_io[IO_LCDC] & LCDC_BG_MAP) ?
-			 VRAM_BMAP_2 : VRAM_BMAP_1)
-			+ (bg_y >> 3) * 0x20;
+        // Select BG map using the latched LCDC
+        bg_map = ((lcdc_now & LCDC_BG_MAP) ? VRAM_BMAP_2 : VRAM_BMAP_1)
+                 + (bg_y >> 3) * 0x20;
 
-		/* The displays (what the player sees) X coordinate, drawn right
-		 * to left. */
-		disp_x = LCD_WIDTH - 1;
+        // Screen X draws right-to-left
+        disp_x = LCD_WIDTH - 1;
 
-		/* The X coordinate to begin drawing the background at. */
-		bg_x = disp_x + gb->hram_io[IO_SCX];
+        // Starting BG X using latched SCX
+        bg_x = disp_x + scx;
 
-		/* Get tile index for current background tile. */
-		idx = gb->vram[bg_map + (bg_x >> 3)];
+        // First tile index for this line
+        idx = gb->vram[bg_map + (bg_x >> 3)];
 #if PEANUT_FULL_GBC_SUPPORT
-		uint8_t idxAtt = gb->vram[bg_map + (bg_x >> 3) + 0x2000];
+        uint8_t idxAtt = gb->vram[bg_map + (bg_x >> 3) + 0x2000];
 #endif
-		/* Y coordinate of tile pixel to draw. */
-		py = (bg_y & 0x07);
-		/* X coordinate of tile pixel to draw. */
-		px = 7 - (bg_x & 0x07);
+        py = (bg_y & 0x07);
+        px = 7 - (bg_x & 0x07);
 
-		/* Select addressing mode. */
-		if(gb->hram_io[IO_LCDC] & LCDC_TILE_SELECT)
-			tile = VRAM_TILES_1 + idx * 0x10;
-		else
-			tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
+        // Tile addressing mode from latched LCDC
+        if (lcdc_now & LCDC_TILE_SELECT)
+            tile = VRAM_TILES_1 + idx * 0x10;
+        else
+            tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
 
 #if PEANUT_FULL_GBC_SUPPORT
-		if(gb->cgb.cgbMode)
-		{
-			if(idxAtt & 0x08) tile += 0x2000; //VRAM bank 2
-			if(idxAtt & 0x40) tile += 2 * (7 - py);
-		}
-		if(!(idxAtt & 0x40))
-		{
-			tile += 2 * py;
-		}
+        if (gb->cgb.cgbMode)
+        {
+            if (idxAtt & 0x08) tile += 0x2000; // VRAM bank 2
+            if (idxAtt & 0x40) tile += 2 * (7 - py);
+        }
+        if (!(idxAtt & 0x40))
+        {
+            tile += 2 * py;
+        }
 
-		/* fetch first tile */
-		t1 = gb->vram[tile] >> px;
-		t2 = gb->vram[tile + 1] >> px;
+        // fetch first tile row
+        t1 = gb->vram[tile] >> px;
+        t2 = gb->vram[tile + 1] >> px;
 
-		for(; disp_x != 0xFF; disp_x--)
-		{
-			uint8_t c;
+        for (; disp_x != 0xFF; disp_x--)
+        {
+            uint8_t c;
 
-			if(px == 8)
-			{
-				/* fetch next tile */
-				px = 0;
-				bg_x = disp_x + gb->hram_io[IO_SCX];
-				idx = gb->vram[bg_map + (bg_x >> 3)];
-#if PEANUT_FULL_GBC_SUPPORT
-				idxAtt = gb->vram[bg_map + (bg_x >> 3) + 0x2000];
-#endif
-				if(gb->hram_io[IO_LCDC] & LCDC_TILE_SELECT)
-					tile = VRAM_TILES_1 + idx * 0x10;
-				else
-					tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
+            if (px == 8)
+            {
+                // fetch next tile using latched SCX
+                px = 0;
+                bg_x = disp_x + scx;
+                idx = gb->vram[bg_map + (bg_x >> 3)];
+                idxAtt = gb->vram[bg_map + (bg_x >> 3) + 0x2000];
 
-#if PEANUT_FULL_GBC_SUPPORT
-				if(gb->cgb.cgbMode)
-				{
-					if(idxAtt & 0x08) tile += 0x2000; //VRAM bank 2
-					if(idxAtt & 0x40) tile += 2 * (7 - py);
-				}
-				if(!(idxAtt & 0x40))
-				{
-					tile += 2 * py;
-				}
-#else
-				tile += 2 * py;
-#endif
-				t1 = gb->vram[tile];
-				t2 = gb->vram[tile + 1];
-			}
+                if (lcdc_now & LCDC_TILE_SELECT)
+                    tile = VRAM_TILES_1 + idx * 0x10;
+                else
+                    tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
 
-			/* copy background */
-#if PEANUT_FULL_GBC_SUPPORT
-			if(gb->cgb.cgbMode && (idxAtt & 0x20))
-			{  //Horizantal Flip
-				c = (((t1 & 0x80) >> 1) | (t2 & 0x80)) >> 6;
-				pixels[disp_x] = ((idxAtt & 0x07) << 2) + c;
-				pixelsPrio[disp_x] = (idxAtt >> 7);
-				t1 = t1 << 1;
-				t2 = t2 << 1;
-			}
-			else
-			{
-				c = (t1 & 0x1) | ((t2 & 0x1) << 1);
-				if(gb->cgb.cgbMode)
-				{
-					pixels[disp_x] = ((idxAtt & 0x07) << 2) + c;
-					pixelsPrio[disp_x] = (idxAtt >> 7);
-				}
-				else
-				{
-					pixels[disp_x] = gb->display.bg_palette[c];
+                if (gb->cgb.cgbMode)
+                {
+                    if (idxAtt & 0x08) tile += 0x2000; // VRAM bank 2
+                    if (idxAtt & 0x40) tile += 2 * (7 - py);
+                }
+                if (!(idxAtt & 0x40))
+                {
+                    tile += 2 * py;
+                }
+                t1 = gb->vram[tile];
+                t2 = gb->vram[tile + 1];
+            }
+
+            // copy background
+            if (gb->cgb.cgbMode && (idxAtt & 0x20))
+            {  // Horizontal Flip
+                c = (((t1 & 0x80) >> 1) | (t2 & 0x80)) >> 6;
+                pixels[disp_x] = ((idxAtt & 0x07) << 2) + c;
+                pixelsPrio[disp_x] = (idxAtt >> 7);
+                t1 = t1 << 1;
+                t2 = t2 << 1;
+            }
+            else
+            {
+                c = (t1 & 0x1) | ((t2 & 0x1) << 1);
+                if (gb->cgb.cgbMode)
+                {
+                    pixels[disp_x] = ((idxAtt & 0x07) << 2) + c;
+                    pixelsPrio[disp_x] = (idxAtt >> 7);
+                }
+                else
+                {
+                    pixels[disp_x] = gb->display.bg_palette[c];
 #if PEANUT_GB_12_COLOUR
-					pixels[disp_x] |= LCD_PALETTE_BG;
+                    pixels[disp_x] |= LCD_PALETTE_BG;
 #endif
-				}
-				t1 = t1 >> 1;
-				t2 = t2 >> 1;
-			}
+                }
+                t1 = t1 >> 1;
+                t2 = t2 >> 1;
+            }
+            px++;
+        }
 #else
-			c = (t1 & 0x1) | ((t2 & 0x1) << 1);
-			pixels[disp_x] = gb->display.bg_palette[c];
+        tile += 2 * py;
+
+        // fetch first tile row
+        t1 = gb->vram[tile] >> px;
+        t2 = gb->vram[tile + 1] >> px;
+
+        for (; disp_x != 0xFF; disp_x--)
+        {
+            uint8_t c;
+            if (px == 8)
+            {
+                px = 0;
+                bg_x = disp_x + scx; // latched
+                idx  = gb->vram[bg_map + (bg_x >> 3)];
+                if (lcdc_now & LCDC_TILE_SELECT)
+                    tile = VRAM_TILES_1 + idx * 0x10;
+                else
+                    tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
+                tile += 2 * py;
+                t1 = gb->vram[tile];
+                t2 = gb->vram[tile + 1];
+            }
+            c = (t1 & 0x1) | ((t2 & 0x1) << 1);
+            pixels[disp_x] = gb->display.bg_palette[c];
 #if PEANUT_GB_12_COLOUR
-			pixels[disp_x] |= LCD_PALETTE_BG;
+            pixels[disp_x] |= LCD_PALETTE_BG;
 #endif
-			t1 = t1 >> 1;
-			t2 = t2 >> 1;
+            t1 = t1 >> 1;
+            t2 = t2 >> 1;
+            px++;
+        }
 #endif
-			px++;
-		}
-	}
+    }
 
-	/* draw window */
-	if(gb->hram_io[IO_LCDC] & LCDC_WINDOW_ENABLE
-			&& gb->hram_io[IO_LY] >= gb->display.WY
-			&& gb->hram_io[IO_WX] <= 166)
-	{
-		uint16_t win_line, tile;
-		uint8_t disp_x, win_x, py, px, idx, t1, t2, end;
+    // -------------------------
+    // Window draw (use latched WX/WY and advance window_clear only if any pixels drawn)
+    // -------------------------
+    if (window_enable && gb->hram_io[IO_LY] >= wy && wx <= 166)
+    {
+        uint16_t win_line, tile;
+        uint8_t disp_x, win_x, py, px, idx, t1, t2, end;
+        bool window_did_draw_any = false;
 
-		/* Calculate Window Map Address. */
-		win_line = (gb->hram_io[IO_LCDC] & LCDC_WINDOW_MAP) ?
-				    VRAM_BMAP_2 : VRAM_BMAP_1;
-		win_line += (gb->display.window_clear >> 3) * 0x20;
+        // Window Map Address from latched LCDC
+        win_line = (lcdc_now & LCDC_WINDOW_MAP) ? VRAM_BMAP_2 : VRAM_BMAP_1;
+        win_line += (gb->display.window_clear >> 3) * 0x20;
 
-		disp_x = LCD_WIDTH - 1;
-		win_x = disp_x - gb->hram_io[IO_WX] + 7;
+        disp_x = LCD_WIDTH - 1;
+        win_x  = disp_x - wx + 7;
 
-		// look up tile
-		py = gb->display.window_clear & 0x07;
-		px = 7 - (win_x & 0x07);
-		idx = gb->vram[win_line + (win_x >> 3)];
+        // look up tile
+        py = gb->display.window_clear & 0x07;
+        px = 7 - (win_x & 0x07);
+        idx = gb->vram[win_line + (win_x >> 3)];
 #if PEANUT_FULL_GBC_SUPPORT
-		uint8_t idxAtt = gb->vram[win_line + (win_x >> 3) + 0x2000];
+        uint8_t idxAtt = gb->vram[win_line + (win_x >> 3) + 0x2000];
 #endif
 
-		if(gb->hram_io[IO_LCDC] & LCDC_TILE_SELECT)
-			tile = VRAM_TILES_1 + idx * 0x10;
-		else
-			tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
+        if (lcdc_now & LCDC_TILE_SELECT)
+            tile = VRAM_TILES_1 + idx * 0x10;
+        else
+            tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
 
 #if PEANUT_FULL_GBC_SUPPORT
-		if(gb->cgb.cgbMode)
-		{
-			if(idxAtt & 0x08) tile += 0x2000; //VRAM bank 2
-			if(idxAtt & 0x40) tile += 2 * (7 - py);
-		}
-		if(!(idxAtt & 0x40))
-		{
-			tile += 2 * py;
-		}
+        if (gb->cgb.cgbMode)
+        {
+            if (idxAtt & 0x08) tile += 0x2000; // VRAM bank 2
+            if (idxAtt & 0x40) tile += 2 * (7 - py);
+        }
+        if (!(idxAtt & 0x40))
+        {
+            tile += 2 * py;
+        }
 
-		// fetch first tile
-		if(gb->cgb.cgbMode && (idxAtt & 0x20))
-		{  //Horizantal Flip
-			t1 = gb->vram[tile] << px;
-			t2 = gb->vram[tile + 1] << px;
-		}
-		else
-		{
-			t1 = gb->vram[tile] >> px;
-			t2 = gb->vram[tile + 1] >> px;
-		}
+        // fetch first tile
+        if (gb->cgb.cgbMode && (idxAtt & 0x20))
+        {  // Horizontal Flip
+            t1 = gb->vram[tile] << px;
+            t2 = gb->vram[tile + 1] << px;
+        }
+        else
+        {
+            t1 = gb->vram[tile] >> px;
+            t2 = gb->vram[tile + 1] >> px;
+        }
 #else
-		tile += 2 * py;
-
-		// fetch first tile
-		t1 = gb->vram[tile] >> px;
-		t2 = gb->vram[tile + 1] >> px;
-#endif
-		// loop & copy window
-		end = (gb->hram_io[IO_WX] < 7 ? 0 : gb->hram_io[IO_WX] - 7) - 1;
-
-		for(; disp_x != end; disp_x--)
-		{
-			uint8_t c;
-
-			if(px == 8)
-			{
-				// fetch next tile
-				px = 0;
-				win_x = disp_x - gb->hram_io[IO_WX] + 7;
-				idx = gb->vram[win_line + (win_x >> 3)];
-#if PEANUT_FULL_GBC_SUPPORT
-				idxAtt = gb->vram[win_line + (win_x >> 3) + 0x2000];
+        tile += 2 * py;
+        t1 = gb->vram[tile] >> px;
+        t2 = gb->vram[tile + 1] >> px;
 #endif
 
-				if(gb->hram_io[IO_LCDC] & LCDC_TILE_SELECT)
-					tile = VRAM_TILES_1 + idx * 0x10;
-				else
-					tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
+        // loop & copy window
+        end = (wx < 7 ? 0 : wx - 7) - 1;
+
+        for (; disp_x != end; disp_x--)
+        {
+            uint8_t c;
+
+            if (px == 8)
+            {
+                // fetch next tile
+                px = 0;
+                win_x = disp_x - wx + 7;
+                idx   = gb->vram[win_line + (win_x >> 3)];
+#if PEANUT_FULL_GBC_SUPPORT
+                idxAtt = gb->vram[win_line + (win_x >> 3) + 0x2000];
+#endif
+                if (lcdc_now & LCDC_TILE_SELECT)
+                    tile = VRAM_TILES_1 + idx * 0x10;
+                else
+                    tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
 
 #if PEANUT_FULL_GBC_SUPPORT
-				if(gb->cgb.cgbMode)
-				{
-					if(idxAtt & 0x08) tile += 0x2000; //VRAM bank 2
-					if(idxAtt & 0x40) tile += 2 * (7 - py);
-				}
-				if(!(idxAtt & 0x40))
-				{
-					tile += 2 * py;
-				}
+                if (gb->cgb.cgbMode)
+                {
+                    if (idxAtt & 0x08) tile += 0x2000; // VRAM bank 2
+                    if (idxAtt & 0x40) tile += 2 * (7 - py);
+                }
+                if (!(idxAtt & 0x40))
+                {
+                    tile += 2 * py;
+                }
 #else
-				tile += 2 * py;
+                tile += 2 * py;
 #endif
-				t1 = gb->vram[tile];
-				t2 = gb->vram[tile + 1];
-			}
+                t1 = gb->vram[tile];
+                t2 = gb->vram[tile + 1];
+            }
 
-			// copy window
+            // copy window
 #if PEANUT_FULL_GBC_SUPPORT
-			if(idxAtt & 0x20)
-			{  //Horizantal Flip
-				c = (((t1 & 0x80) >> 1) | (t2 & 0x80)) >> 6;
-				pixels[disp_x] = ((idxAtt & 0x07) << 2) + c;
-				pixelsPrio[disp_x] = (idxAtt >> 7);
-				t1 = t1 << 1;
-				t2 = t2 << 1;
-			}
-			else
-			{
-				c = (t1 & 0x1) | ((t2 & 0x1) << 1);
-				if(gb->cgb.cgbMode)
-				{
-					pixels[disp_x] = ((idxAtt & 0x07) << 2) + c;
-					pixelsPrio[disp_x] = (idxAtt >> 7);
-				}
-				else
-				{
-					pixels[disp_x] = gb->display.bg_palette[c];
+            if (idxAtt & 0x20)
+            {  // Horizontal Flip
+                c = (((t1 & 0x80) >> 1) | (t2 & 0x80)) >> 6;
+                pixels[disp_x] = ((idxAtt & 0x07) << 2) + c;
+                pixelsPrio[disp_x] = (idxAtt >> 7);
+                t1 = t1 << 1;
+                t2 = t2 << 1;
+                window_did_draw_any = true;
+            }
+            else
+            {
+                c = (t1 & 0x1) | ((t2 & 0x1) << 1);
+                if (gb->cgb.cgbMode)
+                {
+                    pixels[disp_x] = ((idxAtt & 0x07) << 2) + c;
+                    pixelsPrio[disp_x] = (idxAtt >> 7);
+                }
+                else
+                {
+                    pixels[disp_x] = gb->display.bg_palette[c];
 #if PEANUT_GB_12_COLOUR
-					pixels[disp_x] |= LCD_PALETTE_BG;
+                    pixels[disp_x] |= LCD_PALETTE_BG;
 #endif
-				}
-				t1 = t1 >> 1;
-				t2 = t2 >> 1;
-			}
+                }
+                t1 = t1 >> 1;
+                t2 = t2 >> 1;
+                window_did_draw_any = true;
+            }
 #else
-			c = (t1 & 0x1) | ((t2 & 0x1) << 1);
-			pixels[disp_x] = gb->display.bg_palette[c];
+            c = (t1 & 0x1) | ((t2 & 0x1) << 1);
+            pixels[disp_x] = gb->display.bg_palette[c];
 #if PEANUT_GB_12_COLOUR
-			pixels[disp_x] |= LCD_PALETTE_BG;
+            pixels[disp_x] |= LCD_PALETTE_BG;
 #endif
-			t1 = t1 >> 1;
-			t2 = t2 >> 1;
+            t1 = t1 >> 1;
+            t2 = t2 >> 1;
+            window_did_draw_any = true;
 #endif
-			px++;
-		}
+            px++;
+        }
 
-		gb->display.window_clear++; // advance window line
-	}
+        // Only advance window line if at least one window pixel was drawn
+        if (window_did_draw_any)
+        {
+            gb->display.window_clear++;
+            if (gb->display.window_clear > 143) gb->display.window_clear = 143;
+        }
+    }
 
-	// draw sprites
-	if(gb->hram_io[IO_LCDC] & LCDC_OBJ_ENABLE)
-	{
-		uint8_t sprite_number;
+    // -------------------------
+    // Sprites (unchanged)
+    // -------------------------
+    if (gb->hram_io[IO_LCDC] & LCDC_OBJ_ENABLE)
+    {
+        uint8_t sprite_number;
 #if PEANUT_GB_HIGH_LCD_ACCURACY
-		uint8_t number_of_sprites = 0;
+        uint8_t number_of_sprites = 0;
+        struct sprite_data sprites_to_render[MAX_SPRITES_LINE];
 
-		struct sprite_data sprites_to_render[MAX_SPRITES_LINE];
+        for (sprite_number = 0; sprite_number < NUM_SPRITES; sprite_number++)
+        {
+            uint8_t OY = gb->oam[4 * sprite_number + 0];
+            uint8_t OX = gb->oam[4 * sprite_number + 1];
 
-		/* Record number of sprites on the line being rendered, limited
-		 * to the maximum number sprites that the Game Boy is able to
-		 * render on each line (10 sprites). */
-		for(sprite_number = 0;
-				sprite_number < NUM_SPRITES;
-				sprite_number++)
-		{
-			/* Sprite Y position. */
-			uint8_t OY = gb->oam[4 * sprite_number + 0];
-			/* Sprite X position. */
-			uint8_t OX = gb->oam[4 * sprite_number + 1];
+            if (gb->hram_io[IO_LY] + (gb->hram_io[IO_LCDC] & LCDC_OBJ_SIZE ? 0 : 8) >= OY ||
+                gb->hram_io[IO_LY] + 16 < OY)
+                continue;
 
-			/* If sprite isn't on this line, continue. */
-			if (gb->hram_io[IO_LY] +
-				(gb->hram_io[IO_LCDC] & LCDC_OBJ_SIZE ? 0 : 8) >= OY
-					|| gb->hram_io[IO_LY] + 16 < OY)
-				continue;
+            struct sprite_data current;
+            current.sprite_number = sprite_number;
+            current.x = OX;
 
-			struct sprite_data current;
-
-			current.sprite_number = sprite_number;
-			current.x = OX;
-
-			uint8_t place;
-			for (place = number_of_sprites; place != 0; place--)
-			{
-				if(compare_sprites(&sprites_to_render[place - 1], &current) < 0)
-					break;
-			}
-			if(place >= MAX_SPRITES_LINE)
-				continue;
-			for (uint8_t i = number_of_sprites; i > place; --i) {
-				sprites_to_render[i] = sprites_to_render[i - 1];
-			}
-			if(number_of_sprites < MAX_SPRITES_LINE)
-				number_of_sprites++;
-			sprites_to_render[place] = current;
-		}
+            uint8_t place;
+            for (place = number_of_sprites; place != 0; place--)
+            {
+                if (compare_sprites(&sprites_to_render[place - 1], &current) < 0)
+                    break;
+            }
+            if (place >= MAX_SPRITES_LINE)
+                continue;
+            for (uint8_t i = number_of_sprites; i > place; --i)
+                sprites_to_render[i] = sprites_to_render[i - 1];
+            if (number_of_sprites < MAX_SPRITES_LINE)
+                number_of_sprites++;
+            sprites_to_render[place] = current;
+        }
 #if PEANUT_FULL_GBC_SUPPORT
-		if(!gb->cgb.cgbMode)
-		{
+        if (!gb->cgb.cgbMode)
+        {
 #endif
-		/* If maximum number of sprites reached, prioritise X
-		 * coordinate and object location in OAM. */
-		qsort(&sprites_to_render[0], number_of_sprites,
-				sizeof(sprites_to_render[0]), compare_sprites);
+            qsort(&sprites_to_render[0], number_of_sprites,
+                  sizeof(sprites_to_render[0]), compare_sprites);
 #if PEANUT_FULL_GBC_SUPPORT
-		}
+        }
 #endif
-#endif
+#endif // PEANUT_GB_HIGH_LCD_ACCURACY
 
-		/* Render each sprite, from low priority to high priority. */
+        // Render sprites, low priority to high
 #if PEANUT_GB_HIGH_LCD_ACCURACY
-		/* Render the top ten prioritised sprites on this scanline. */
-		for(sprite_number = number_of_sprites - 1;
-				sprite_number != 0xFF;
-				sprite_number--)
-		{
-			uint8_t s = sprites_to_render[sprite_number].sprite_number;
+        for (sprite_number = number_of_sprites - 1; sprite_number != 0xFF; sprite_number--)
+        {
+            uint8_t s = sprites_to_render[sprite_number].sprite_number;
 #else
-		for (sprite_number = NUM_SPRITES - 1;
-			sprite_number != 0xFF;
-			sprite_number--)
-		{
-			uint8_t s = sprite_number;
+        for (sprite_number = NUM_SPRITES - 1; sprite_number != 0xFF; sprite_number--)
+        {
+            uint8_t s = sprite_number;
 #endif
-			uint8_t py, t1, t2, dir, start, end, shift, disp_x;
-			/* Sprite Y position. */
-			uint8_t OY = gb->oam[4 * s + 0];
-			/* Sprite X position. */
-			uint8_t OX = gb->oam[4 * s + 1];
-			/* Sprite Tile/Pattern Number. */
-			uint8_t OT = gb->oam[4 * s + 2]
-				     & (gb->hram_io[IO_LCDC] & LCDC_OBJ_SIZE ? 0xFE : 0xFF);
-			/* Additional attributes. */
-			uint8_t OF = gb->oam[4 * s + 3];
+            uint8_t py, t1, t2, dir, start, end, shift, disp_x;
+            uint8_t OY = gb->oam[4 * s + 0];
+            uint8_t OX = gb->oam[4 * s + 1];
+            uint8_t OT = gb->oam[4 * s + 2] & (gb->hram_io[IO_LCDC] & LCDC_OBJ_SIZE ? 0xFE : 0xFF);
+            uint8_t OF = gb->oam[4 * s + 3];
 
 #if !PEANUT_GB_HIGH_LCD_ACCURACY
-			/* If sprite isn't on this line, continue. */
-			if(gb->hram_io[IO_LY] +
-					(gb->hram_io[IO_LCDC] & LCDC_OBJ_SIZE ? 0 : 8) >= OY ||
-					gb->hram_io[IO_LY] + 16 < OY)
-				continue;
+            if (gb->hram_io[IO_LY] + (gb->hram_io[IO_LCDC] & LCDC_OBJ_SIZE ? 0 : 8) >= OY ||
+                gb->hram_io[IO_LY] + 16 < OY)
+                continue;
 #endif
 
-			/* Continue if sprite not visible. */
-			if(OX == 0 || OX >= 168)
-				continue;
+            if (OX == 0 || OX >= 168)
+                continue;
 
-			// y flip
-			py = gb->hram_io[IO_LY] - OY + 16;
+            // y within sprite
+            py = gb->hram_io[IO_LY] - OY + 16;
+            if (OF & OBJ_FLIP_Y)
+                py = (gb->hram_io[IO_LCDC] & LCDC_OBJ_SIZE ? 15 : 7) - py;
 
-			if(OF & OBJ_FLIP_Y)
-				py = (gb->hram_io[IO_LCDC] & LCDC_OBJ_SIZE ? 15 : 7) - py;
-
-			// fetch the tile
 #if PEANUT_FULL_GBC_SUPPORT
-			if(gb->cgb.cgbMode)
-			{
-				t1 = gb->vram[((OF & OBJ_BANK) << 10) + VRAM_TILES_1 + OT * 0x10 + 2 * py];
-				t2 = gb->vram[((OF & OBJ_BANK) << 10) + VRAM_TILES_1 + OT * 0x10 + 2 * py + 1];
-			}
-			else
+            if (gb->cgb.cgbMode)
+            {
+                t1 = gb->vram[((OF & OBJ_BANK) << 10) + VRAM_TILES_1 + OT * 0x10 + 2 * py];
+                t2 = gb->vram[((OF & OBJ_BANK) << 10) + VRAM_TILES_1 + OT * 0x10 + 2 * py + 1];
+            }
+            else
 #endif
-			{
-				t1 = gb->vram[VRAM_TILES_1 + OT * 0x10 + 2 * py];
-				t2 = gb->vram[VRAM_TILES_1 + OT * 0x10 + 2 * py + 1];
-			}
+            {
+                t1 = gb->vram[VRAM_TILES_1 + OT * 0x10 + 2 * py];
+                t2 = gb->vram[VRAM_TILES_1 + OT * 0x10 + 2 * py + 1];
+            }
 
-			// handle x flip
-			if(OF & OBJ_FLIP_X)
-			{
-				dir = 1;
-				start = (OX < 8 ? 0 : OX - 8);
-				end = MIN(OX, LCD_WIDTH);
-				shift = 8 - OX + start;
-			}
-			else
-			{
-				dir = (uint8_t)-1;
-				start = MIN(OX, LCD_WIDTH) - 1;
-				end = (OX < 8 ? 0 : OX - 8) - 1;
-				shift = OX - (start + 1);
-			}
+            if (OF & OBJ_FLIP_X)
+            {
+                dir = 1;
+                start = (OX < 8 ? 0 : OX - 8);
+                end   = MIN(OX, LCD_WIDTH);
+                shift = 8 - OX + start;
+            }
+            else
+            {
+                dir   = (uint8_t)-1;
+                start = MIN(OX, LCD_WIDTH) - 1;
+                end   = (OX < 8 ? 0 : OX - 8) - 1;
+                shift = OX - (start + 1);
+            }
 
-			// copy tile
-			t1 >>= shift;
-			t2 >>= shift;
+            t1 >>= shift;
+            t2 >>= shift;
 
-			/* TODO: Put for loop within the to if statements
-			 * because the BG priority bit will be the same for
-			 * all the pixels in the tile. */
-			for(disp_x = start; disp_x != end; disp_x += dir)
-			{
-				uint8_t c = (t1 & 0x1) | ((t2 & 0x1) << 1);
-				// check transparency / sprite overlap / background overlap
+            for (disp_x = start; disp_x != end; disp_x += dir)
+            {
+                uint8_t c = (t1 & 0x1) | ((t2 & 0x1) << 1);
 #if PEANUT_FULL_GBC_SUPPORT
-				if(gb->cgb.cgbMode)
-				{
-					uint8_t isBackgroundDisabled = c && !(gb->hram_io[IO_LCDC] & LCDC_BG_ENABLE);
-					uint8_t isPixelPriorityNonConflicting = c &&
-															!(pixelsPrio[disp_x] && (pixels[disp_x] & 0x3)) &&
-															!((OF & OBJ_PRIORITY) && (pixels[disp_x] & 0x3));
+                if (gb->cgb.cgbMode)
+                {
+                    uint8_t isBackgroundDisabled = c && !(gb->hram_io[IO_LCDC] & LCDC_BG_ENABLE);
+                    uint8_t isPixelPriorityNonConflicting = c &&
+                        !(pixelsPrio[disp_x] && (pixels[disp_x] & 0x3)) &&
+                        !((OF & OBJ_PRIORITY) && (pixels[disp_x] & 0x3));
 
-					if(isBackgroundDisabled || isPixelPriorityNonConflicting)
-					{
-						/* Set pixel colour. */
-						pixels[disp_x] = ((OF & OBJ_CGB_PALETTE) << 2) + c + 0x20;  // add 0x20 to differentiate from BG
-					}
-				}
-				else
+                    if (isBackgroundDisabled || isPixelPriorityNonConflicting)
+                    {
+                        pixels[disp_x] = ((OF & OBJ_CGB_PALETTE) << 2) + c + 0x20;  // mark as OAM
+                    }
+                }
+                else
 #endif
-				if(c && !(OF & OBJ_PRIORITY && !((pixels[disp_x] & 0x3) == gb->display.bg_palette[0])))
-				{
-					/* Set pixel colour. */
-					pixels[disp_x] = (OF & OBJ_PALETTE)
-						? gb->display.sp_palette[c + 4]
-						: gb->display.sp_palette[c];
+                if (c && !(OF & OBJ_PRIORITY && !((pixels[disp_x] & 0x3) == gb->display.bg_palette[0])))
+                {
+                    pixels[disp_x] = (OF & OBJ_PALETTE) ? gb->display.sp_palette[c + 4]
+                                                         : gb->display.sp_palette[c];
 #if PEANUT_GB_12_COLOUR
-					/* Set pixel palette (OBJ0 or OBJ1). */
-					pixels[disp_x] |= (OF & OBJ_PALETTE);
+                    pixels[disp_x] |= (OF & OBJ_PALETTE); // palette mark
 #endif
 #if PEANUT_FULL_GBC_SUPPORT
-					/* Deselect BG palette. */
-					pixels[disp_x] &= ~LCD_PALETTE_BG;
+                    pixels[disp_x] &= ~LCD_PALETTE_BG;    // deselect BG palette
 #endif
-				}
+                }
 
-				t1 = t1 >> 1;
-				t2 = t2 >> 1;
-			}
-		}
-	}
+                t1 = t1 >> 1;
+                t2 = t2 >> 1;
+            }
+        }
+    }
 
-	gb->display.lcd_draw_line(gb, pixels, gb->hram_io[IO_LY]);
+    // Push the finished scanline
+    gb->display.lcd_draw_line(gb, pixels, gb->hram_io[IO_LY]);
 }
-#endif
 
 /**
  * Internal function used to step the CPU.

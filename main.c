@@ -370,9 +370,15 @@ while(true)
 		gb_run_frame(&gb);
 
 #if ENABLE_SOUND
-		read_volume(&i2s_config);
-		audio_callback(NULL, stream, AUDIO_BUFFER_SIZE_BYTES);
-		i2s_dma_write(&i2s_config, stream);
+		// if its not frame skip and not skipping audio frame and not enabling skipping then play audio
+		if (!should_skip_audio_frame || !gb.direct.frame_skip || !SKIP_AUDIO_FRAMES_IN_FRAME_SKIP) {
+			read_volume(&i2s_config);
+			audio_callback(NULL, stream, AUDIO_BUFFER_SIZE_BYTES);
+			i2s_dma_write(&i2s_config, stream);
+		}
+# if SKIP_AUDIO_FRAMES_IN_FRAME_SKIP
+		should_skip_audio_frame = !should_skip_audio_frame;
+# endif
 #endif
 
 		// MARK: - Update buttons state
@@ -450,7 +456,9 @@ while(true)
 					gb.direct.frame_skip = frame_skip;
 #endif
 #if ENABLE_SOUND
+# if !SKIP_AUDIO_FRAMES_IN_FRAME_SKIP
 					i2s_set_sample_freq(&i2s_config, 44100, frame_skip);
+# endif
 #endif
 					printf("Frame Skip = %d\n", frame_skip);
 				}

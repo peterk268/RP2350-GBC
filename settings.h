@@ -35,6 +35,7 @@
 // Its not stable unfortunately.. processor ain't fast enough.. yet. I might overclock more
 #define ENABLE_120FPS_FASTFORWARD 0
 #define UNDERCLOCK_CPU_IN_NORMAL_EMULATION 0
+#define SKIP_AUDIO_FRAMES_IN_FRAME_SKIP 1
 
 #define ENABLE_BAT_MONITORING 1
 #define BAT_IMMEDIATE_CHECK 1

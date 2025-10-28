@@ -85,6 +85,8 @@ static uint32_t fps_counter = 0;
 static uint32_t fps_last_time = 0;
 #endif
 
+bool should_skip_audio_frame = false;
+
 // MARK: - Overclock
 // Not stable. Unpredictable and heat is a problem. 300MHz is most I'll go.
 #define SAFE_OVERCLOCK 1

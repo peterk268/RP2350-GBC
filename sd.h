@@ -12,6 +12,9 @@ static char filename[MAX_FILES][256];
 static uint16_t selected = 0;
 
 void set_sd_busy(bool is_sd_busy) {
+    if (sd_busy == is_sd_busy) {
+        return; // No change
+    }
 	sd_busy = is_sd_busy;
 	__sev();
 }
@@ -201,6 +204,11 @@ void write_cart_ram_file(struct gb_s *gb) {
 void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
     while(led_ramp_done == false) sleep_ms(1); // Wait for LED fade-in to complete
     
+    // memset(front_fb->data, 0, sizeof(front_fb->data));
+    memset(back_fb->data, 0, sizeof(back_fb->data));
+    // memset(spare_fb->data, 0, sizeof(spare_fb->data));
+    // sleep_ms(10); // wait for core1 to render black screen, 8.33ms refresh time
+    
     FRESULT fr;
     FIL fil;
     UINT br;
@@ -349,7 +357,10 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
 	save_rom_settings(filename, 0, 0);
     strncpy(last_filename_raw, filename, FILENAME_MAX_LEN - 1);
 
+    // Crashes occur without setting sd busy false here but I want sd busy to be on until the first gb frame is rendered
+    // So that it can instantly go from the black screen to gb instead of black screen to gui to gb
 	set_sd_busy(false);
+    set_sd_busy(true);
 	watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
 
     printf("I load_cart_rom_file(%s) COMPLETE (%lu bytes written)\n", filename, rom_size);

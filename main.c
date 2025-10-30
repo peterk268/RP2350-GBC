@@ -229,6 +229,7 @@ while(true)
 #if ENABLE_SDCARD && ENABLE_ROM_SELECTOR
 	rom_file_selector();
 #endif
+	set_sd_busy(true);
 
 	// MARK: - Initialise GB context
 	ret = gb_init(&gb, &gb_rom_read, &gb_cart_ram_read,
@@ -499,44 +500,45 @@ while(true)
 			}
 		}
 #if ENABLE_FRAME_DEBUGGING
-    static uint32_t last_ts = 0;
-    uint32_t now = time_us_32();
-    if (last_ts != 0) {
-        printf("frame time us: %u\n", now - last_ts);
-    }
-    last_ts = now;
-#endif
-
-    static uint32_t fps_counter = 0;
-    static uint32_t fps_last_time = 0;
-
-    fps_counter++;
-    uint32_t now = time_us_32();
-    if (now - fps_last_time >= 1000000) { // 1 second
-		watchdog_update();
-#if ENABLE_AUTO_SAVE
-		save_wait_counter++;
-		// Auto-save every 30 seconds if there is a change in RAM
-		if (save_wait_counter >= 30) {
-			save_wait_counter = 0;
-			if (ram_changed) {
-				printf("RAM changed, saving...\n");
-				ram_changed = false;
-				// save to sd card
-#if ENABLE_SDCARD				
-				write_cart_ram_file(&gb);
-#endif
-			}
+		static uint32_t last_ts = 0;
+		uint32_t now = time_us_32();
+		if (last_ts != 0) {
+			printf("frame time us: %u\n", now - last_ts);
 		}
+		last_ts = now;
+#endif
+
+		static uint32_t fps_counter = 0;
+		static uint32_t fps_last_time = 0;
+
+		fps_counter++;
+		uint32_t now = time_us_32();
+		if (now - fps_last_time >= 1000000) { // 1 second
+			watchdog_update();
+#if ENABLE_AUTO_SAVE
+			save_wait_counter++;
+			// Auto-save every 30 seconds if there is a change in RAM
+			if (save_wait_counter >= 30) {
+				save_wait_counter = 0;
+				if (ram_changed) {
+					printf("RAM changed, saving...\n");
+					ram_changed = false;
+					// save to sd card
+#if ENABLE_SDCARD				
+					write_cart_ram_file(&gb);
+#endif
+				}
+			}
 #endif
 
 
 #if ENABLE_FPS_MONITORING
-        printf("FPS: %lu\n", fps_counter);
+			printf("FPS: %lu\n", fps_counter);
 #endif
-        fps_counter = 0;
-        fps_last_time = now;
-    }
+			fps_counter = 0;
+			fps_last_time = now;
+		}
+		set_sd_busy(false);
     }
     // MARK: - Ending Emulation
     out:

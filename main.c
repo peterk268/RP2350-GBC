@@ -155,6 +155,9 @@ int main(void)
 	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level, last_filename_raw);
 
 	mcp7940n_init(RTC_I2C_PORT);
+	// Doesn't work :P will crash..
+	// printf("Setting RTC\n");
+	// mcp7940n_set_time_if_unset(RTC_I2C_PORT, &default_rtc);
 
 	watchdog_update();
 	// SD WILL HANDLE SPI INIT

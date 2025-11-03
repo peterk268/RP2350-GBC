@@ -186,6 +186,16 @@ typedef struct {
     uint8_t year;      // 0-99
 } rtc_time_t;
 
+rtc_time_t default_rtc = {
+    .seconds = 0,
+    .minutes = 0,
+    .hours   = 0,
+    .weekday = RTC_MONDAY,   // 2
+    .date    = 3,
+    .month   = 11,
+    .year    = 25            // 2025 → stored as 25
+};
+
 bool mcp7940n_set_time(i2c_inst_t *i2c, rtc_time_t *t) {
     uint8_t buf[8];
     buf[0] = MCP7940N_REG_SECONDS;

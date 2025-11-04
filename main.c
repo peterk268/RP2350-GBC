@@ -490,9 +490,9 @@ while(true)
 				if (!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
 					wash_out_level = decrease_clamp(wash_out_level, 16);
 				}
-				// This is a work in progress but very promising.. only issue is the heartbeat for the fps..
+				
 				// But currently getting like 125mW down from 195mW so it's a good start.
-				if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
+				if (!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
 					/* start + B: Battery Saving Mode*/
 					if (run_mode != MODE_POWERSAVE) {
 						// enable power save

@@ -2,6 +2,43 @@
 #define PCM_BUFFER_SIZE  (PCM_FRAME_COUNT * 2 * sizeof(int16_t))
 #define PSRAM_BUFFER_SIZE (6*1024*1024) // 6 MB
 
+typedef enum {
+    AUDIO_HP_ONLY = 0,
+    AUDIO_SPK_ONLY,
+    AUDIO_BOTH
+} audio_output_mode_t;
+
+static audio_output_mode_t audio_mode = AUDIO_HP_ONLY;
+
+void hp_on()  { dac_i2c_write(1, 0x1F, 0b11010100); }
+void hp_off() { dac_i2c_write(1, 0x1F, 0x00); }
+
+void spk_on()  { dac_i2c_write(1, 0x20, 0b11000110); }
+void spk_off() { dac_i2c_write(1, 0x20, 0x00); }
+
+void apply_audio_mode() {
+    switch (audio_mode) {
+        case AUDIO_HP_ONLY:
+            hp_on();
+            spk_off();
+            break;
+
+        case AUDIO_SPK_ONLY:
+            spk_on();
+            hp_off();
+            break;
+
+        case AUDIO_BOTH:
+            hp_on();
+            spk_on();
+            break;
+    }
+}
+
+bool is_pressed_now(bool curr, bool prev) {
+    return (prev == false && curr == true);   // rising edge
+}
+
 typedef struct {
     uint8_t *buffer;   // PSRAM buffer
     size_t buffer_size; 
@@ -98,7 +135,8 @@ void play_mp3_from_psram(const char *filename) {
         free(psram_buf);
         return;
     }
-
+    audio_mode = headphones_present ? AUDIO_HP_ONLY : AUDIO_SPK_ONLY;
+    dac_i2c_write(1, 0x21, 0x06); // setting headphone power on ramp to 100ms
     while (1) {
         drmp3_uint64 frames = drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, pcm);
         if (frames == 0) {
@@ -111,6 +149,47 @@ void play_mp3_from_psram(const char *filename) {
         // Wait until those samples finish playing
         // sleep_us((frames * 1000000ULL) / mp3.sampleRate);
         // sleep_ms(22);
+		bool iox_nint = gpio_read(GPIO_IOX_nINT);
+		if (!iox_nint) {
+			// Read IOX port 0
+			read_io_expander_states(0);
+
+            // --- Handle Audio Output Switching ---
+            // previous button states
+            static bool prev_btn_a = false;
+            static bool prev_btn_b = false;
+
+            // Read your buttons directly here
+            bool btn_a = gpio_read(IOX_B_A);
+            bool btn_b = gpio_read(IOX_B_B);
+
+            // --- A button: cycle through HP → SPK → BOTH ---
+            if (!prev_btn_a && btn_a) {         // rising edge
+                // audio_mode++;
+                // if (audio_mode > AUDIO_BOTH)
+                audio_mode = AUDIO_BOTH;
+
+                apply_audio_mode();
+            }
+
+            // --- B button: swap HP <-> SPK ---
+            if (!prev_btn_b && btn_b) {         // rising edge
+                if (audio_mode == AUDIO_HP_ONLY) {
+                    audio_mode = AUDIO_SPK_ONLY;
+                } else if (audio_mode == AUDIO_SPK_ONLY) {
+                    audio_mode = AUDIO_HP_ONLY;
+                } else {
+                    // If BOTH → choose the physically meaningful one
+                    audio_mode = headphones_present ? AUDIO_HP_ONLY : AUDIO_SPK_ONLY;
+                }
+
+                apply_audio_mode();
+            }
+
+            // update prev states
+            prev_btn_a = btn_a;
+            prev_btn_b = btn_b;
+        }
 
         i2s_dma_write(&i2s_config, pcm);
     }

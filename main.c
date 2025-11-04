@@ -190,6 +190,8 @@ int main(void)
 	i2s_config = i2s_get_default_config();
 	i2s_config.sample_freq=AUDIO_SAMPLE_RATE;
 	i2s_config.dma_trans_count =AUDIO_SAMPLES;
+	i2s_config.mclk_mult = 512;          // 512× is cleaner
+
 	i2s_volume(&i2s_config,0);
 	i2s_init(&i2s_config);
 
@@ -562,28 +564,23 @@ while(true)
 
 			uint32_t target_us;
 
-			// switch (run_mode) {
-			// 	case MODE_NORMAL:
-			// 		target_us = 16666;   // ~60 FPS
-			// 		break;
+			switch (run_mode) {
+				case MODE_NORMAL:
+					target_us = 16666;   // ~60 FPS
+					break;
 
-			// 	case MODE_TURBO:
-			// 		// No limit → MAX SPEED
-			// 		frame_start = now;
-			// 		break;
+				case MODE_TURBO:
+					target_us = 16666/2; // 120 FPS
+					break;
 
-			// 	case MODE_POWERSAVE:
-			// 		target_us = 16666;   // 60 emulation FPS, this matches 2x frameskip * half clock speed.. 30fps effective
-			// 		break;
-			// }
-			target_us = 16666;   // 60 emulation FPS, this matches 2x frameskip * half clock speed.. 30fps effective
-
-			// Only sleep if limiting
-			if (run_mode != MODE_TURBO) {
-				if (elapsed < target_us)
-					sleep_us(target_us - elapsed);
-				frame_start = time_us_32();
+				case MODE_POWERSAVE:
+					target_us = 16666;   // 60 emulation FPS, this matches 2x frameskip * half clock speed.. 30fps effective
+					break;
 			}
+
+			if (elapsed < target_us)
+				sleep_us(target_us - elapsed);
+			frame_start = time_us_32();
 		}
 #endif
 

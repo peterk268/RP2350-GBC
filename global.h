@@ -87,6 +87,12 @@ static uint32_t fps_last_time = 0;
 
 bool should_skip_audio_frame = false;
 
+static enum {
+    MODE_NORMAL,
+    MODE_TURBO,
+    MODE_POWERSAVE
+} run_mode = MODE_NORMAL;
+
 // MARK: - Overclock
 // Not stable. Unpredictable and heat is a problem. 300MHz is most I'll go.
 #define SAFE_OVERCLOCK 1

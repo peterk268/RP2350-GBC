@@ -451,20 +451,27 @@ while(true)
 					/* select + A: enable/disable frame-skip => fast-forward */
 					// Peanut GB frame skip toggle puts it at 60 fps.. skipping 1 frame every other frame
 					// My implementation runs at 120 fps.
-					static bool frame_skip = false;
-					frame_skip = !frame_skip;
+					run_mode = (run_mode == MODE_TURBO) ? MODE_NORMAL : MODE_TURBO;
+					if (run_mode == MODE_TURBO) {
+						gb.direct.frame_skip = true;   // 2× speed
+						underclock_cpu(false);         // ensure full speed
+					} else {
+						gb.direct.frame_skip = false;
+					}
+/* No Real need for this
 #if UNDERCLOCK_CPU_IN_NORMAL_EMULATION
-					overclock_cpu(frame_skip);
+					overclock_cpu((run_mode == MODE_TURBO));
 #endif
 #if !ENABLE_120FPS_FASTFORWARD
-					gb.direct.frame_skip = frame_skip;
+					gb.direct.frame_skip = (run_mode == MODE_TURBO);
 #endif
 #if ENABLE_SOUND
 # if !SKIP_AUDIO_FRAMES_IN_FRAME_SKIP
-					i2s_set_sample_freq(&i2s_config, 44100, frame_skip);
+					i2s_set_sample_freq(&i2s_config, 44100, (run_mode == MODE_TURBO));
 # endif
 #endif
-					printf("Frame Skip = %d\n", frame_skip);
+*/
+					printf("Frame Skip = %d\n", (run_mode == MODE_TURBO));
 				}
 				if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
 					/* select + B: Save game ram*/
@@ -487,15 +494,14 @@ while(true)
 				// But currently getting like 125mW down from 195mW so it's a good start.
 				if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
 					/* start + B: Battery Saving Mode*/
-					// read current sys clock in Hz
-					uint32_t freq = clock_get_hz(clk_sys);
-
-					if (freq == 300000000) {
-						// currently 300 MHz → underclock to 180 MHz and turn on frame skip
-						underclock_cpu(true);
-						gb.direct.frame_skip = true;
+					if (run_mode != MODE_POWERSAVE) {
+						// enable power save
+						run_mode = MODE_POWERSAVE;
+						underclock_cpu(true);           // 180 MHz
+						gb.direct.frame_skip = true;    // skip each other frame
 					} else {
-						// any other freq → overclock
+						// disable power save → back to normal
+						run_mode = MODE_NORMAL;
 						underclock_cpu(false);
 						gb.direct.frame_skip = false;
 					}
@@ -542,6 +548,45 @@ while(true)
 			fps_last_time = now;
 		}
 		set_sd_busy(false);
+
+#if FPS_LIMITER_ENABLED
+		// --- Dynamic FPS control ---
+		// Only needed for power save mode
+		if (run_mode == MODE_POWERSAVE) {
+			static uint32_t frame_start = 0;
+			uint32_t now = time_us_32();
+
+			if (frame_start == 0) frame_start = now;
+
+			uint32_t elapsed = now - frame_start;
+
+			uint32_t target_us;
+
+			// switch (run_mode) {
+			// 	case MODE_NORMAL:
+			// 		target_us = 16666;   // ~60 FPS
+			// 		break;
+
+			// 	case MODE_TURBO:
+			// 		// No limit → MAX SPEED
+			// 		frame_start = now;
+			// 		break;
+
+			// 	case MODE_POWERSAVE:
+			// 		target_us = 16666;   // 60 emulation FPS, this matches 2x frameskip * half clock speed.. 30fps effective
+			// 		break;
+			// }
+			target_us = 16666;   // 60 emulation FPS, this matches 2x frameskip * half clock speed.. 30fps effective
+
+			// Only sleep if limiting
+			if (run_mode != MODE_TURBO) {
+				if (elapsed < target_us)
+					sleep_us(target_us - elapsed);
+				frame_start = time_us_32();
+			}
+		}
+#endif
+
     }
     // MARK: - Ending Emulation
     out:

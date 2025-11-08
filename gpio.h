@@ -188,7 +188,9 @@ static void i2c_recover_bus(uint sda_pin, uint scl_pin) {
 }
 
 void init_i2c() {
+#if I2C_HAS_TROUBLES
     i2c_recover_bus(GPIO_I2C1_SDA, GPIO_I2C1_SCL);
+#endif
 
     gpio_set_function(GPIO_I2C1_SDA, GPIO_FUNC_I2C);
     gpio_set_function(GPIO_I2C1_SCL, GPIO_FUNC_I2C);

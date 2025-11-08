@@ -51,6 +51,9 @@
 
 #define LED_PHASE_OUT_PWR_DOWN 0
 
+// I2C Troubles with 5.1K pull up fixed by using 1k
+#define I2C_HAS_TROUBLES 0
+
 #include <malloc.h>
 
 

@@ -77,7 +77,9 @@ int main(void)
     setup_hold_power();
 	watchdog_update();
 
+#if I2C_HAS_TROUBLES
 	sleep_ms(100); // this helps i2c to get things in order and prevent hangs
+#endif
 	// MARK: - I2C INIT
 	init_i2c();
 
@@ -154,10 +156,10 @@ int main(void)
 	watchdog_update();
 	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level, last_filename_raw);
 
-	mcp7940n_init(RTC_I2C_PORT);
-	// Doesn't work :P will crash..
-	// printf("Setting RTC\n");
-	// mcp7940n_set_time_if_unset(RTC_I2C_PORT, &default_rtc);
+	// mcp7940n_init(RTC_I2C_PORT);
+	// Doesn't work :P will crash.. sike changing i2c pull up to 1k from 5.1k fixed it :)
+	printf("Setting RTC\n");
+	mcp7940n_set_time_if_unset(RTC_I2C_PORT, &default_rtc);
 
 	watchdog_update();
 	// SD WILL HANDLE SPI INIT

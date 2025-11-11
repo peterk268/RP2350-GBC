@@ -86,10 +86,14 @@ int main(void)
 #if ENABLE_RTC
 	initialize_rtc(RTC_DEFAULT_VALUE);
 #endif
-	watchdog_update();
+
+#if I2C_HAS_TROUBLES
+	// this is needed a lot more than you'd think.. not really bro
 	i2c_wait_ready(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, 100);
+#endif
 
 	watchdog_update();
+
 	// MARK: - Battery Monitor Config
 	config_battery_monitor();
 
@@ -357,6 +361,7 @@ while(true)
 		if (low_power_shutdown) {
 #if ENABLE_SDCARD
 			write_cart_ram_file(&gb);
+			save_system_settings_if_changed(lcd_led_duty_cycle, button_led_duty_cycle, pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw);
 #endif
 			release_power(); // Cut power hold
 			sleep_ms(1);

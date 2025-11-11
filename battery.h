@@ -60,7 +60,7 @@ uint16_t get_bat_charge_percent() {
 // }
 
 bool is_charging(int16_t current_mA) {
-    return current_mA <= 0;
+    return current_mA >= 0;
 }
 void shutdown_peripherals(bool keep_i2c);
 
@@ -68,7 +68,8 @@ void shutdown_peripherals(bool keep_i2c);
 #define LOW_POWER_THRESHOLD      20  // Warning threshold
 #define CRITICAL_SHUTDOWN_THRESH 5   // Shutdown threshold
 #define RECOVERY_THRESHOLD       7   // Recovery threshold
-                
+#define BATTERY_VOLTAGE_SHUTDOWN_mV 3300 // Voltage threshold for shutdown 
+
 void write_cart_ram_file(struct gb_s *gb);
 
 // Estimate SoC from voltage (1S LiPo)
@@ -124,7 +125,7 @@ void process_bat_percent() {
         }
 
         // --- Critical shutdown ---
-        if (percent <= CRITICAL_SHUTDOWN_THRESH && !is_charging(current_mA)) {
+        if (percent <= CRITICAL_SHUTDOWN_THRESH && !is_charging(current_mA) && voltage_mV <= BATTERY_VOLTAGE_SHUTDOWN_mV) {
             if (!low_power_shutdown) {
                 low_power_shutdown = true;
                 // main loop handles saving
@@ -179,17 +180,161 @@ void soft_reset_bat_monitor() {
     subcommand_control(0x0042);
 }
 
+bool bq_is_sealed = false; 
+void bq_unseal() {
+    bq_is_sealed = false;
+    if (!bq_is_sealed) {
+        printf("Device already unsealed.\n");
+        return;
+    }
+    subcommand_control(0x8000);
+    subcommand_control(0x8000);
+    printf("Device unsealed.\n");
+    sleep_ms(5);
+
+    subcommand_control(0xFFFF);
+    subcommand_control(0xFFFF);
+    sleep_ms(5);
+    printf("Device in FULL ACCESS.\n");
+}
+
+void bq_seal() {
+    bq_is_sealed = true;
+    if (bq_is_sealed) {
+        printf("Device already sealed.\n");
+        return;
+    }
+    // === Seal the device ===
+    subcommand_control(0x0020); // SEAL
+    printf("Device sealed.\n");
+    sleep_ms(10);
+}
+
+bool in_config = false; 
+void enter_config() {
+    if (in_config) {
+        printf("Already in CONFIG UPDATE mode.\n");
+        return;
+    }
+    watchdog_disable();
+
+    // 0. UNSEAL + FULL ACCESS REQUIRED
+    bq_unseal();
+
+    // 1. SET_CFGUPDATE
+    subcommand_control(0x0013);
+    printf("SET_CFGUPDATE sent.\n");
+
+    // 2. Poll Flags() until CFGUPMODE is active (bit4)
+    sleep_ms(50);
+    for (int i = 0; i < 50; i++) {
+        uint16_t flags = read_register(0x06); // Flags()
+        if (flags & (1 << 4)) {               // CFGUPMODE = bit 4
+            printf("CFGUPMODE active.\n");
+            in_config = true;
+            break;
+        }
+        sleep_ms(20);
+    }
+
+    watchdog_enable(WATCHDOG_STARTUP_TIMEOUT_MS, true);
+
+    return;
+}
+
+bool bq_needs_to_save = false;
+void save_config() {
+    if (!in_config) {
+        printf("Not in CONFIG UPDATE mode. Cannot save config.\n");
+        return;
+    }
+
+    sleep_ms(100);
+
+    // SOFT RESET
+    soft_reset_bat_monitor();
+    printf("Soft reset sent.\n");
+
+    // Poll Flags() until CFGUPMODE is inactive (bit4)
+    sleep_ms(50);
+    for (int i = 0; i < 50; i++) {
+        uint16_t flags = read_register(0x06); // Flags()
+        if (!(flags & (1 << 4))) {               // CFGUPMODE = bit 4
+            printf("CFGUPMODE inactive.\n");
+            in_config = false;
+            break;
+        }
+        sleep_ms(20);
+    }
+
+    bq_seal();
+
+    bq_needs_to_save = false;
+}
+
+void fix_cc_gain_sign_positive(void) {
+    printf("\n--- Fixing CC_Gain Sign Bit (TI Direct Method) ---\n");
+
+    // 3. Select Calibration subclass
+    i2c_write_blocking(
+        BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+        (uint8_t[]){0x3E, 0x69, 0x00}, 3, false
+    );
+    printf("Calibration subclass 0x69 selected.\n");
+
+    // 4. Read CC_Gain sign byte (direct)
+    uint8_t sign = read_register_8(0x45);
+    printf("Current sign: 0x%02X\n", sign);
+
+    // 5. Read checksum (direct)
+    uint8_t csum = read_register_8(0x60);
+    printf("Current checksum: 0x%02X\n", csum);
+
+    if ((sign & 0x80) == 0) {
+        printf("Sign already positive.\n");
+        return;
+    }
+
+    enter_config();
+
+    uint8_t new_sign = sign & 0x7F;
+    uint8_t new_csum = csum ^ 0x80;
+
+    // 6. Write new sign (direct)
+    i2c_write_blocking(
+        BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+        (uint8_t[]){0x45, new_sign}, 2, false
+    );
+    printf("Wrote new sign byte: 0x%02X\n", new_sign);
+
+    // 7. Write new checksum (direct)
+    i2c_write_blocking(
+        BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+        (uint8_t[]){0x60, new_csum}, 2, false
+    );
+    printf("Wrote new checksum: 0x%02X\n", new_csum);
+
+    sleep_ms(10);
+
+    bq_needs_to_save = true; 
+}
+
+void verify_cc_gain_sign() {
+    // Verify
+    uint8_t verify = read_register_8(0x45);
+    printf("Verify sign byte: 0x%02X\n", verify);
+
+    if ((verify & 0x80) == 0)
+        printf("✅ CC_Gain sign fixed.\n");
+    else
+        printf("❌ CC_Gain sign still negative.\n");
+}
+
+const uint16_t new_chem_id = 0x1202; // ChemID 1202 (LiPo)
 void change_bat_chem_to_lipo() {
-    const uint16_t new_chem_id = 0x1202; // ChemID 1202 (LiPo)
     printf("\n--- Changing Chemistry to ChemID 0x%04X ---\n", new_chem_id);
 
-    // === Step 1: Unseal ===
-    subcommand_control(0x8000);
-    subcommand_control(0x8000);
-    sleep_ms(10);
-    printf("Device unsealed.\n");
-
-    // === Step 2: Read current ChemID ===
+    // === Step 1: Read current ChemID ===
     subcommand_control(0x0008);  // Read ChemID
     sleep_ms(10);
     uint16_t current_chem = read_register(0x00);
@@ -200,25 +345,20 @@ void change_bat_chem_to_lipo() {
         return;
     }
 
-    watchdog_disable();
-    // === Step 3: Enter CFGUPDATE mode ===
-    subcommand_control(0x0013);  // SET_CFGUPDATE
-    printf("Entered CFGUPDATE mode.\n");
-    sleep_ms(1100);
+    enter_config();
 
     // === Step 4: Set CHEM ID to 0x1202 LiPo ===
     subcommand_control(0x0031); // SET_CHEM_ID
-    sleep_ms(100);
 
-    // === Step 5: Soft reset to exit CFGUPDATE ===
-    soft_reset_bat_monitor();
-    printf("Soft reset sent.\n");
-    sleep_ms(2000);
+    sleep_ms(10);
 
+    bq_needs_to_save = true; 
+}
+
+void verify_chem() {
     // === Step 6: Verify new ChemID ===
     subcommand_control(0x0008);
     sleep_ms(500);
-    watchdog_enable(WATCHDOG_STARTUP_TIMEOUT_MS, true);
     uint16_t verify = read_register(0x00);
     printf("New ChemID readback: 0x%04X\n", verify);
 
@@ -228,109 +368,102 @@ void change_bat_chem_to_lipo() {
         printf("ChemID mismatch. Expected 0x%04X but got 0x%04X.\n", new_chem_id, verify);
     }
 
-    // === Step 7: Seal the device ===
-    subcommand_control(0x0020); // SEAL
-    printf("Device sealed.\n");
-
-    printf("--- Done ---\n");
 }
 
 void set_design_capacity(uint16_t cap_mah) {
-    // === Step -3: Unseal ===
-    subcommand_control(0x8000);
-    subcommand_control(0x8000);
-    sleep_ms(10);
-    printf("Device unsealed.\n");
+    printf("\n--- Setting Design Capacity ---\n");
 
-    // --- Step -2: Compute what we would write ---
-    uint8_t new_cap_lsb = cap_mah & 0xFF;
-    uint8_t new_cap_msb = (cap_mah >> 8) & 0xFF;
-    uint16_t design_energy = (uint16_t)(cap_mah * 37 / 10);
-    uint8_t energy_lsb = design_energy & 0xFF;
-    uint8_t energy_msb = (design_energy >> 8) & 0xFF;
+    // --- Step 1: Enable Block Data Control ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){0x61, 0x00}, 2, false);
+    printf("Block data control enabled.\n");
 
-    // --- Step -1: Read current values ---
-    uint8_t cur_cap_msb = read_register_8(0x46);
-    uint8_t cur_cap_lsb = read_register_8(0x47);
+    // --- Step 2: Select State subclass (0x52) ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){0x3E, 0x52}, 2, false);
+    printf("Selected subclass 0x52.\n");
+
+    // --- Step 3: Select block 0 ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){0x3F, 0x00}, 2, false);
+    printf("Block 0 selected.\n");
+
+    // --- Step 4: Read CURRENT values NOW (correct window) ---
+    uint8_t cur_cap_msb    = read_register_8(0x46);
+    uint8_t cur_cap_lsb    = read_register_8(0x47);
     uint8_t cur_energy_msb = read_register_8(0x48);
     uint8_t cur_energy_lsb = read_register_8(0x49);
+    uint8_t cur_csum       = read_register_8(0x60);
 
-    // Compute what checksum would be based on current values
-    uint8_t cur_csum = read_register_8(0x60);
-    uint16_t temp_sum = cur_cap_msb + cur_cap_lsb + cur_energy_msb + cur_energy_lsb;
-    uint8_t expected_csum = 255 - ((255 - cur_csum - temp_sum + (new_cap_msb + new_cap_lsb + energy_msb + energy_lsb)) & 0xFF);
+    printf("Current Capacity: MSB=%02X LSB=%02X\n", cur_cap_msb, cur_cap_lsb);
+    printf("Current Energy:   MSB=%02X LSB=%02X\n", cur_energy_msb, cur_energy_lsb);
+    printf("Current checksum: 0x%02X\n", cur_csum);
 
-    // --- Step 0: Check if everything matches ---
-    if (cur_cap_msb == new_cap_msb && cur_cap_lsb == new_cap_lsb &&
-        cur_energy_msb == energy_msb && cur_energy_lsb == energy_lsb &&
-        cur_csum == expected_csum) {
+    // --- Step 5: Compute new target values ---
+    uint8_t new_cap_msb = (cap_mah >> 8) & 0xFF;
+    uint8_t new_cap_lsb = cap_mah & 0xFF;
+
+    uint16_t design_energy = (uint16_t)(cap_mah * 37 / 10);
+    uint8_t new_eng_msb = (design_energy >> 8) & 0xFF;
+    uint8_t new_eng_lsb = design_energy & 0xFF;
+
+    // --- Step 6: Compute what checksum SHOULD BE ---
+    uint16_t sum_old = cur_cap_msb + cur_cap_lsb + cur_energy_msb + cur_energy_lsb;
+    uint16_t sum_new = new_cap_msb + new_cap_lsb + new_eng_msb + new_eng_lsb;
+
+    uint8_t expected_csum =
+        255 - ((255 - cur_csum - sum_old + sum_new) & 0xFF);
+
+    // ✅ --- Step 7: Skip check — NOW it finally works ---
+    if (cur_cap_msb == new_cap_msb &&
+        cur_cap_lsb == new_cap_lsb &&
+        cur_energy_msb == new_eng_msb &&
+        cur_energy_lsb == new_eng_lsb &&
+        cur_csum == expected_csum)
+    {
         printf("Design capacity and energy already set. Skipping write.\n");
         return;
     }
 
+    enter_config();
 
-    uint8_t data[2];
+    printf("Updating capacity/energy values...\n");
 
-    watchdog_disable();
-    // --- Step 1: Enter CFGUPDATE mode ---
-    subcommand_control(0x0013);  // SET_CFGUPDATE
-    printf("Entered CFGUPDATE mode.\n");
-    sleep_ms(1100);
-    watchdog_enable(WATCHDOG_STARTUP_TIMEOUT_MS, true);
+    // --- Step 8: Write NEW capacity ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){0x46, new_cap_msb}, 2, false);
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){0x47, new_cap_lsb}, 2, false);
 
-    // --- Step 2: Enable Block Data Memory control ---
-    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x61, 0x00}, 2, false);
-    printf("Block data memory control enabled.\n");
+    printf("Wrote Capacity: MSB=%02X LSB=%02X\n", new_cap_msb, new_cap_lsb);
 
-    // --- Step 3: Select State subclass (0x52) ---
-    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x3E, 0x52}, 2, false);
-    printf("State subclass 0x52 selected.\n");
+    // --- Step 9: Write NEW energy ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){0x48, new_eng_msb}, 2, false);
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){0x49, new_eng_lsb}, 2, false);
 
-    // --- Step 4: Set block offset to 0 ---
-    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x3F, 0x00}, 2, false);
-    printf("Block offset set to 0.\n");
+    printf("Wrote Energy:   MSB=%02X LSB=%02X\n", new_eng_msb, new_eng_lsb);
 
-    // --- Step 5: Read old checksum and old capacity/energy bytes ---
-    uint8_t old_csum   = read_register_8(0x60);
-    uint8_t old_cap_msb = read_register_8(0x46);
-    uint8_t old_cap_lsb = read_register_8(0x47);
-    uint8_t old_energy_msb = read_register_8(0x48);
-    uint8_t old_energy_lsb = read_register_8(0x49);
+    // --- Step 10: Compute NEW checksum (TI incremental method) ---
+    uint8_t new_csum =
+        255 - ((255 - cur_csum - sum_old + sum_new) & 0xFF);
 
-    printf("Old checksum: 0x%02X\n", old_csum);
-    printf("Old Capacity: MSB=0x%02X LSB=0x%02X\n", old_cap_msb, old_cap_lsb);
-    printf("Old Energy: MSB=0x%02X LSB=0x%02X\n", old_energy_msb, old_energy_lsb);
+    // --- Step 11: Write NEW checksum ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){0x60, new_csum}, 2, false);
 
-    // --- Step 6: Write new Design Capacity ---
-    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x46, new_cap_msb}, 2, false);
-    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x47, new_cap_lsb}, 2, false);
-    printf("Wrote new Capacity: MSB=0x%02X LSB=0x%02X\n", new_cap_msb, new_cap_lsb);
-
-    // --- Step 7: Write new Design Energy ---
-    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x48, energy_msb}, 2, false);
-    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, (uint8_t[]){0x49, energy_lsb}, 2, false);
-    printf("Wrote new Energy: MSB=0x%02X LSB=0x%02X\n", energy_msb, energy_lsb);
-
-    // --- Step 8: Compute new checksum (update with capacity and energy) ---
-    uint16_t temp_old_sum = old_cap_lsb + old_cap_msb + old_energy_lsb + old_energy_msb;
-    uint16_t temp_new_sum = new_cap_lsb + new_cap_msb + energy_lsb + energy_msb;
-    uint8_t new_csum = 255 - ((255 - old_csum - temp_old_sum + temp_new_sum) & 0xFF);
-
-    // --- Step 9: Write new checksum ---
-    uint8_t buf[2] = {0x60, new_csum};
-    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR, buf, 2, false);
     printf("Wrote new checksum: 0x%02X\n", new_csum);
 
-    // --- Step 10: Wait for commit ---
-    sleep_ms(200);
+    printf("Design capacity update staged (waiting for finalize).\n");
 
-    // --- Step 11: Soft reset to apply changes ---
-    soft_reset_bat_monitor();
-    printf("Soft reset sent.\n");
-    // Give the gauge time to reboot
-    sleep_us(100);
+    sleep_ms(10);
 
-    // --- Step 11: Confirm values ---
+    bq_needs_to_save = true; 
+}
+
+void verify_design_capacity() {
+    // --- Step 12: Confirm values ---
     uint8_t check_cap_msb = read_register_8(0x46);
     uint8_t check_cap_lsb = read_register_8(0x47);
     uint8_t check_energy_msb = read_register_8(0x48);
@@ -344,11 +477,28 @@ void set_design_capacity(uint16_t cap_mah) {
 
 void config_battery_monitor() {
     printf("Configuring Battery Monitor...\n");
-    // reset_bat_monitor();
-    set_design_capacity(1500);
-    change_bat_chem_to_lipo();
 
-    // enable bat monitor shutdown when we shutdown peripherals.
+    // You must unseal in order to read values:
+    bq_unseal();
+
+    set_design_capacity(1500);
+    watchdog_update();
+    change_bat_chem_to_lipo();
+    watchdog_update();
+    fix_cc_gain_sign_positive();
+
+    if (bq_needs_to_save) {
+        watchdog_disable();
+        save_config();
+#if BAT_MONITOR_DEBUG
+        verify_cc_gain_sign();
+        verify_chem();
+        verify_design_capacity();
+#endif
+        watchdog_enable(WATCHDOG_STARTUP_TIMEOUT_MS, true);
+    }
+
+    bq_seal();
 }
 
 // MARK: - Sleep

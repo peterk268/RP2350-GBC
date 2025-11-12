@@ -98,12 +98,17 @@ bool gauge_is_learning(uint16_t voltage_mV, uint16_t reported_percent) {
 }
 
 uint16_t get_bat_charge_percent_with_learning(uint16_t voltage_mV, uint16_t reported_percent) {
+    // Now that we fixed the cc gain issue, the battery monitor has gotten very accurate with percentages and has no need for this
+#if BAT_HAS_PERCENT_ISSUES
     if (gauge_is_learning(voltage_mV, reported_percent)) {
         uint16_t percent = estimate_soc_from_voltage(voltage_mV);
         printf("Gauge learning detected. Estimated SoC: %d%%\n", percent);
         return percent;
     }
     return reported_percent;
+#else
+    return reported_percent;
+#endif
 }
 
 void process_bat_percent() {

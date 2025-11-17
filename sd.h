@@ -1131,6 +1131,7 @@ void rom_file_selector() {
                 mcp7940n_set_tm(RTC_I2C_PORT, &draft_tm);
                 show_settings = false;
                 draw_rom_list(list, filename, num_file, selected, page_start);
+                update_status_label(status_label);
                 update_bottom_bar(hint_left, hint_right, show_settings);
             }
         }

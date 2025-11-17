@@ -1,4 +1,4 @@
-#define PCM_FRAME_COUNT 750
+#define PCM_FRAME_COUNT 738 // was 750 ? depends on sample rate
 #define PCM_BUFFER_SIZE  (PCM_FRAME_COUNT * 2 * sizeof(int16_t))
 #define PSRAM_BUFFER_SIZE (6*1024*1024) // 6 MB
 

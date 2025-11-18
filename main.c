@@ -58,6 +58,7 @@
 #include "rtc.h"
 #include "battery.h"
 #include "mp3.h"
+#include "imu.h"
 
 int main(void)
 {	
@@ -207,6 +208,26 @@ int main(void)
 	// sleep_ms(10);
 	// check_dac();
 #endif
+
+	imu_init();
+	if (!imu_whoami_ok()) {
+        printf("IMU not found!\n");
+        return;
+    }
+
+    float ax, ay, az, gx, gy, gz;
+
+    while (1) {
+		watchdog_update();
+        imu_read_accel_ms2(&ax, &ay, &az);
+        imu_read_gyro_dps(&gx, &gy, &gz);
+
+        printf("ACCEL: %.2f %.2f %.2f m/s²\n", ax, ay, az);
+        // printf("GYRO : %.2f %.2f %.2f dps\n", gx, gy, gz);
+
+        sleep_ms(200);
+    }
+	
 	watchdog_disable();
 	// CPU Starts overclocked then goes back to normal after initializing DPI
 	// This is to prevent a bug where overclocking messes DPI timings.

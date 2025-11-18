@@ -146,6 +146,65 @@ static void gmeter_create_screen(void) {
 
 #undef GMETER_MAKE_RING
 
+    // --- Axis lines (Ford GT style) ---
+    lv_obj_t *axis_h = lv_obj_create(ui->screen);
+    lv_obj_set_size(axis_h, outer_r * 2, 1);
+    lv_obj_set_style_bg_color(axis_h, GMETER_RING_COLOR, 0);
+    lv_obj_set_style_bg_opa(axis_h, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(axis_h, 0, 0);
+    lv_obj_set_pos(axis_h, ui->map_center_x - outer_r, ui->map_center_y);
+
+    lv_obj_t *axis_v = lv_obj_create(ui->screen);
+    lv_obj_set_size(axis_v, 1, outer_r * 2);
+    lv_obj_set_style_bg_color(axis_v, GMETER_RING_COLOR, 0);
+    lv_obj_set_style_bg_opa(axis_v, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(axis_v, 0, 0);
+    lv_obj_set_pos(axis_v, ui->map_center_x, ui->map_center_y - outer_r);
+
+
+    // // --- Tick marks at former 0.75g ring location ---
+    // lv_coord_t rtick = r075;  // where the tick ring used to be
+
+    // // RIGHT tick (+X)
+    // lv_obj_t *tick_r = lv_obj_create(ui->screen);
+    // lv_obj_set_size(tick_r, 1, 6);  // vertical, longer
+    // lv_obj_set_style_bg_color(tick_r, GMETER_RING_COLOR, 0);
+    // lv_obj_set_style_bg_opa(tick_r, LV_OPA_COVER, 0);
+    // lv_obj_set_pos(tick_r,
+    //     ui->map_center_x + rtick - 1,
+    //     ui->map_center_y - 3
+    // );
+
+    // // LEFT tick (−X)
+    // lv_obj_t *tick_l = lv_obj_create(ui->screen);
+    // lv_obj_set_size(tick_l, 1, 6);  // vertical
+    // lv_obj_set_style_bg_color(tick_l, GMETER_RING_COLOR, 0);
+    // lv_obj_set_style_bg_opa(tick_l, LV_OPA_COVER, 0);
+    // lv_obj_set_pos(tick_l,
+    //     ui->map_center_x - rtick,
+    //     ui->map_center_y - 3
+    // );
+
+    // // UP tick (+Z)
+    // lv_obj_t *tick_u = lv_obj_create(ui->screen);
+    // lv_obj_set_size(tick_u, 6, 1);  // horizontal
+    // lv_obj_set_style_bg_color(tick_u, GMETER_RING_COLOR, 0);
+    // lv_obj_set_style_bg_opa(tick_u, LV_OPA_COVER, 0);
+    // lv_obj_set_pos(tick_u,
+    //     ui->map_center_x - 3,
+    //     ui->map_center_y - rtick - 1
+    // );
+
+    // // DOWN tick (−Z)
+    // lv_obj_t *tick_d = lv_obj_create(ui->screen);
+    // lv_obj_set_size(tick_d, 6, 1);  // horizontal
+    // lv_obj_set_style_bg_color(tick_d, GMETER_RING_COLOR, 0);
+    // lv_obj_set_style_bg_opa(tick_d, LV_OPA_COVER, 0);
+    // lv_obj_set_pos(tick_d,
+    //     ui->map_center_x - 3,
+    //     ui->map_center_y + rtick - 1
+    // );
+
     // G-ball
     ui->ball = lv_obj_create(ui->screen);
     ui->ball_radius = 5; // 10px ball
@@ -198,6 +257,19 @@ static void gmeter_create_screen(void) {
     lv_obj_set_pos(ui->accel_bar_fill, 
                 ui->accel_bar_center_x, 
                 lv_obj_get_y(ui->accel_bar_bg));
+
+    // --- ACCEL / BRAKE labels ---
+    lv_obj_t *label_accel = lv_label_create(ui->screen);
+    lv_label_set_text(label_accel, "ACCEL");
+    lv_obj_set_style_text_color(label_accel, lv_color_hex(0x00FF00), 0);
+    lv_obj_set_style_text_font(label_accel, LV_FONT_DEFAULT, 0);
+    lv_obj_align_to(label_accel, ui->accel_bar_bg, LV_ALIGN_OUT_TOP_RIGHT, -2, -2);
+
+    lv_obj_t *label_brake = lv_label_create(ui->screen);
+    lv_label_set_text(label_brake, "BRAKE");
+    lv_obj_set_style_text_color(label_brake, lv_color_hex(0xFF0000), 0);
+    lv_obj_set_style_text_font(label_brake, LV_FONT_DEFAULT, 0);
+    lv_obj_align_to(label_brake, ui->accel_bar_bg, LV_ALIGN_OUT_TOP_LEFT, 2, -2);
 
     // Load this screen
     lv_scr_load(ui->screen);

@@ -24,9 +24,9 @@ extern "C" {
 #define GMETER_ACCENT_COLOR_HEX 0x007BFF
 #endif
 
-#define GMETER_ACCENT_COLOR      lv_color_hex(GMETER_ACCENT_COLOR_HEX)
+#define GMETER_RING_COLOR        lv_color_hex(0x1F50FF)
 #define GMETER_BG_COLOR          lv_color_hex(0x000000)
-#define GMETER_RING_COLOR        lv_color_hex(0xFFFFFF)
+#define GMETER_ACCENT_COLOR      lv_color_hex(0xFFFFFF)
 #define GMETER_TEXT_COLOR        lv_color_hex(0xFFFFFF)
 
 // Outer ring represents ±1 g
@@ -109,11 +109,8 @@ static void gmeter_create_screen(void) {
     // Align map near top center with small margin
     lv_obj_align(ui->map_bg, LV_ALIGN_TOP_MID, 0, 4);
 
-    lv_coord_t map_x = lv_obj_get_x(ui->map_bg);
-    lv_coord_t map_y = lv_obj_get_y(ui->map_bg);
-
-    ui->map_center_x = map_x + ui->map_size / 2;
-    ui->map_center_y = map_y + ui->map_size / 2;
+    ui->map_center_x = DISP_HOR_RES / 2;
+    ui->map_center_y = 4 + (ui->map_size / 2);
 
     // Outer radius is 1g ring
     lv_coord_t outer_r = (ui->map_size / 2) - 2;
@@ -218,13 +215,14 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
 // This takes over execution and runs the G-meter forever
 // (like your MP3 example). Reset device to exit.
 static inline void run_gmeter_dashboard(void) {
+
     // Init IMU (safe to call even if already done elsewhere)
     if (!imu_init()) {
         printf("IMU init failed, aborting G-meter dashboard.\n");
         return;
     }
 
-    // We assume accel config is still IMU_ACCEL_SCALE_4G & 104 Hz
+    // Accel configuration
     imu_set_accel(IMU_ODR_104_HZ, IMU_ACCEL_SCALE_4G);
 
     gmeter_create_screen();
@@ -234,21 +232,44 @@ static inline void run_gmeter_dashboard(void) {
     float filt_gz = 0.0f;
     bool  first_sample = true;
 
+    // OFFSETS FOR CALIBRATION (these are for the BALL axes)
+    float offset_gy = 0.0f;   // Ball X movement axis
+    float offset_gz = 0.0f;   // Ball Y movement axis
+    float offset_gx = 0.0f;   // Ball Z movement axis
+    bool prev_select = true;
+
     while (1) {
         watchdog_update();
 
-        float ax_ms2, ay_ms2, az_ms2;
+        // ------------------------------
+        // Handle SELECT calibration (active-low)
+        // ------------------------------
+        bool select_now = gpio_get(GPIO_B_SELECT);
 
-        // Read accel in m/s^2 (using 4g scale)
+        if (!select_now && prev_select) {
+            // Save offsets on button press
+            offset_gy = filt_gy;
+            offset_gz = filt_gz;
+            offset_gx = filt_gx;
+            printf("G-meter calibrated!\n");
+        }
+        prev_select = select_now;
+
+        // ------------------------------
+        // Read IMU
+        // ------------------------------
+        float ax_ms2, ay_ms2, az_ms2;
         imu_read_accel_ms2(&ax_ms2, &ay_ms2, &az_ms2, IMU_ACCEL_SCALE_4G);
 
         // Convert to g units
         const float ONE_G = 9.80665f;
-        float gx = ax_ms2 / ONE_G;  // lateral (sideways)
-        float gy = ay_ms2 / ONE_G;  // mostly gravity in your mounting
-        float gz = az_ms2 / ONE_G;  // fore/aft
+        float gx = ax_ms2 / ONE_G;  // used only for display
+        float gy = ay_ms2 / ONE_G;  // THIS is your ball X axis
+        float gz = az_ms2 / ONE_G;  // THIS is your ball Y axis
 
-        // Low-pass filter for smoother ball movement
+        // ------------------------------
+        // Low-pass filter
+        // ------------------------------
         if (first_sample) {
             filt_gx = gx;
             filt_gy = gy;
@@ -260,13 +281,38 @@ static inline void run_gmeter_dashboard(void) {
             filt_gz += GMETER_SMOOTH_ALPHA * (gz - filt_gz);
         }
 
-        // Update UI (X/Z move ball, Y shown numerically)
-        gmeter_update_ui(filt_gy, filt_gz, filt_gx);
+        // ------------------------------
+        // Apply calibration offsets
+        // ------------------------------
+        float gx_corrected = filt_gy - offset_gy;   // horizontal ball motion
+        float gz_corrected = filt_gz - offset_gz;   // vertical ball motion
+        float gy_display   = filt_gx - offset_gx;   // numeric value (gravity axis)
 
-        // Drive LVGL (no timers, just manual tick + handler)
+
+        // Change ball color depending on acceleration direction
+        if (gz_corrected > 0.05f) {
+            // Accelerating → GREEN
+            lv_obj_set_style_bg_color(g_gmeter_ui.ball, lv_color_hex(0x00FF00), 0);
+        } 
+        else if (gz_corrected < -0.05f) {
+            // Braking → RED
+            lv_obj_set_style_bg_color(g_gmeter_ui.ball, lv_color_hex(0xFF0000), 0);
+        }
+        else {
+            // Neutral → WHITE (or blue if you prefer)
+            lv_obj_set_style_bg_color(g_gmeter_ui.ball, GMETER_ACCENT_COLOR, 0);
+        }
+
+        // ------------------------------
+        // Update UI (ball + numbers)
+        // ------------------------------
+        gmeter_update_ui(gx_corrected, gz_corrected, gy_display);
+
+        // ------------------------------
+        // Run LVGL manually
+        // ------------------------------
         lv_tick_inc(GMETER_UPDATE_MS);
         lv_timer_handler();
-
         sleep_ms(GMETER_UPDATE_MS);
     }
 }

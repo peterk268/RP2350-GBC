@@ -55,6 +55,13 @@ typedef struct {
     lv_coord_t map_center_x;
     lv_coord_t map_center_y;
     lv_coord_t ball_radius;
+
+    lv_obj_t *accel_bar_bg;   // outline
+    lv_obj_t *accel_bar_fill; // fill rectangle
+    lv_coord_t accel_bar_width;
+    lv_coord_t accel_bar_height;
+    lv_coord_t accel_bar_center_x;
+
 } gmeter_ui_t;
 
 // Single global instance
@@ -102,7 +109,7 @@ static void gmeter_create_screen(void) {
     lv_obj_set_style_bg_color(ui->map_bg, GMETER_BG_COLOR, 0);
     lv_obj_set_style_bg_opa(ui->map_bg, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(ui->map_bg, 1, 0);
-    lv_obj_set_style_border_color(ui->map_bg, GMETER_RING_COLOR, 0);
+    lv_obj_set_style_border_color(ui->map_bg, GMETER_BG_COLOR, 0);
     lv_obj_set_style_radius(ui->map_bg, 0, 0); // keep square
     lv_obj_set_scrollbar_mode(ui->map_bg, LV_SCROLLBAR_MODE_OFF);
 
@@ -163,6 +170,35 @@ static void gmeter_create_screen(void) {
     lv_label_set_text(ui->label_values, "X:+0.00g  Z:+0.00g  Y:+0.00g");
     lv_obj_align(ui->label_values, LV_ALIGN_BOTTOM_MID, 0, -2);
 
+
+    // --- Acceleration Bar (BMW M style) ---
+    ui->accel_bar_width = DISP_HOR_RES - 20;   // full width minus 10px margins
+    ui->accel_bar_height = 6;                  // slim sport bar
+    ui->accel_bar_center_x = DISP_HOR_RES / 2;
+
+    ui->accel_bar_bg = lv_obj_create(ui->screen);
+    lv_obj_set_size(ui->accel_bar_bg, ui->accel_bar_width, ui->accel_bar_height);
+    lv_obj_set_style_bg_opa(ui->accel_bar_bg, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(ui->accel_bar_bg, 1, 0);
+    lv_obj_set_style_border_color(ui->accel_bar_bg, GMETER_RING_COLOR, 0);
+    lv_obj_set_style_radius(ui->accel_bar_bg, 2, 0);
+
+    // position it slightly above the text line
+    lv_obj_align(ui->accel_bar_bg, LV_ALIGN_BOTTOM_MID, 0, -14);
+
+    // bar fill (starts centered)
+    ui->accel_bar_fill = lv_obj_create(ui->screen);
+    lv_obj_set_style_bg_color(ui->accel_bar_fill, lv_color_hex(0x00FF00), 0);
+    lv_obj_set_style_bg_opa(ui->accel_bar_fill, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(ui->accel_bar_fill, 0, 0);
+    lv_obj_set_style_radius(ui->accel_bar_fill, 2, 0);
+
+    // Start at zero width
+    lv_obj_set_size(ui->accel_bar_fill, 0, ui->accel_bar_height);
+    lv_obj_set_pos(ui->accel_bar_fill, 
+                ui->accel_bar_center_x, 
+                lv_obj_get_y(ui->accel_bar_bg));
+
     // Load this screen
     lv_scr_load(ui->screen);
 }
@@ -206,6 +242,41 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
              "X:%+0.2fg  Z:%+0.2fg  Y:%+0.2fg",
              (double)gx, (double)gz, (double)gy);
     lv_label_set_text(ui->label_values, buf);
+
+    // --- Acceleration Bar Update ---
+    lv_coord_t max_w = g_gmeter_ui.accel_bar_width / 2;
+
+    // Limit to ±1g
+    float z = gz;  
+    if (z > 1.0f) z = 1.0f;
+    if (z < -1.0f) z = -1.0f;
+
+    lv_coord_t bar_w = (lv_coord_t)(max_w * fabsf(z));
+
+    // Choose position depending on sign
+    lv_coord_t bg_y = lv_obj_get_y(g_gmeter_ui.accel_bar_bg);
+    lv_coord_t center_x = g_gmeter_ui.accel_bar_center_x;
+
+    // Move the bar either left or right
+    if (z >= 0) {
+        // accelerating → right, green
+        lv_obj_set_style_bg_color(g_gmeter_ui.accel_bar_fill, lv_color_hex(0x00FF00), 0);
+
+        lv_obj_set_pos(g_gmeter_ui.accel_bar_fill,
+                    center_x,
+                    bg_y);
+    } else {
+        // braking → left, red
+        lv_obj_set_style_bg_color(g_gmeter_ui.accel_bar_fill, lv_color_hex(0xFF0000), 0);
+
+        lv_obj_set_pos(g_gmeter_ui.accel_bar_fill,
+                    center_x - bar_w,
+                    bg_y);
+    }
+
+    // Set fill size
+    lv_obj_set_size(g_gmeter_ui.accel_bar_fill, bar_w, g_gmeter_ui.accel_bar_height);
+
 }
 
 // ----------------------------------------------------

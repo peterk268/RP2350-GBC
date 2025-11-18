@@ -52,6 +52,7 @@
 #define WATCHDOG_STARTUP_TIMEOUT_MS 750
 
 #define LED_PHASE_OUT_PWR_DOWN 0
+#define TIE_PWR_LED_TO_LCD 1
 
 // I2C Troubles with 5.1K pull up fixed by using 1k
 #define I2C_HAS_TROUBLES 0

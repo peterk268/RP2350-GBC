@@ -159,7 +159,9 @@ int main(void)
 
 	watchdog_update();
 	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level, last_filename_raw);
-
+#if TIE_PWR_LED_TO_LCD
+	pwr_target_brightness = lcd_target_brightness;
+#endif
 	// mcp7940n_init(RTC_I2C_PORT);
 	// Doesn't work :P will crash.. sike changing i2c pull up to 1k from 5.1k fixed it :)
 	printf("Setting RTC\n");
@@ -334,7 +336,10 @@ while(true)
 #if LED_PHASE_OUT_PWR_DOWN
 			save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level, last_filename_raw);
 #else
-			save_system_settings_if_changed(lcd_led_duty_cycle, button_led_duty_cycle, pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw);
+# if TIE_PWR_LED_TO_LCD
+			pwr_led_duty_cycle = lcd_led_duty_cycle;
+# endif
+			save_system_settings_if_changed(lcd_led_duty_cycle, button_led_duty_cycle, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw);
 #endif
 			printf("Done");
 
@@ -361,7 +366,10 @@ while(true)
 		if (low_power_shutdown) {
 #if ENABLE_SDCARD
 			write_cart_ram_file(&gb);
-			save_system_settings_if_changed(lcd_led_duty_cycle, button_led_duty_cycle, pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw);
+# if TIE_PWR_LED_TO_LCD
+			pwr_led_duty_cycle = lcd_led_duty_cycle;
+# endif
+			save_system_settings_if_changed(lcd_led_duty_cycle, button_led_duty_cycle, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw);
 #endif
 			release_power(); // Cut power hold
 			sleep_ms(1);
@@ -426,14 +434,24 @@ while(true)
 				if(!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
 					/* select + up: increase sound volume */
 					// i2s_increase_volume(&i2s_config);
+					if (!low_power) {
+#if TIE_PWR_LED_TO_LCD
+						pwr_led_duty_cycle = lcd_led_duty_cycle;
+#endif
+						step_pwr_brightness(true);
+					}
 					step_lcd_brightness(true);
-					step_pwr_brightness(true);
 				}
 				if(!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
 					/* select + down: decrease sound volume */
 					// i2s_decrease_volume(&i2s_config);
+					if (!low_power) {
+#if TIE_PWR_LED_TO_LCD
+						pwr_led_duty_cycle = lcd_led_duty_cycle;
+#endif
+						step_pwr_brightness(false);
+					}
 					step_lcd_brightness(false);
-					step_pwr_brightness(false);
 				}
 #endif
 				if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {

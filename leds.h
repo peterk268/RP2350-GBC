@@ -209,7 +209,9 @@ bool pwr_led_timer_callback(repeating_timer_t *rt) {
 uint8_t prev_pwr_led_duty_cycle;  
 
 void setup_pwr_led_flash(uint32_t interval_ms) {
+#if !TIE_PWR_LED_TO_LCD
     prev_pwr_led_duty_cycle = pwr_led_duty_cycle; // Save current brightness
+#endif
     if (!add_repeating_timer_ms(interval_ms, pwr_led_timer_callback, NULL, &pwr_led_timer)) {
         printf("Failed to add repeating timer\n");
     }
@@ -218,7 +220,7 @@ void setup_pwr_led_flash(uint32_t interval_ms) {
 void remove_pwr_led_flash() {
     cancel_repeating_timer(&pwr_led_timer);
     decrease_pwr_brightness(MAX_BRIGHTNESS); // Turn off LED
-    pwr_led_duty_cycle = prev_pwr_led_duty_cycle; // Restore previous brightness
+    pwr_led_duty_cycle = TIE_PWR_LED_TO_LCD ? lcd_led_duty_cycle : prev_pwr_led_duty_cycle; // Restore brightness
     increase_pwr_brightness(pwr_led_duty_cycle); // Apply restored brightness
 }
 

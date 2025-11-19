@@ -62,6 +62,15 @@ typedef struct {
     lv_coord_t accel_bar_height;
     lv_coord_t accel_bar_center_x;
 
+    lv_obj_t *trail_layer;   // container for trail ghost dots
+
+    #define TRAIL_COUNT 20
+
+    lv_obj_t *trail_dots[TRAIL_COUNT];
+    uint8_t trail_opacity[TRAIL_COUNT];
+    uint8_t trail_index;
+    lv_color_t trail_color[TRAIL_COUNT];
+
 } gmeter_ui_t;
 
 // Single global instance
@@ -205,6 +214,27 @@ static void gmeter_create_screen(void) {
     //     ui->map_center_y + rtick - 1
     // );
 
+    // Trail layer (transparent container)
+    ui->trail_layer = lv_obj_create(ui->screen);
+    lv_obj_set_size(ui->trail_layer, DISP_HOR_RES, DISP_VER_RES);
+    lv_obj_set_style_bg_opa(ui->trail_layer, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(ui->trail_layer, 0, 0);
+    lv_obj_set_scrollbar_mode(ui->trail_layer, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_move_foreground(ui->trail_layer); // put above rings, under ball
+
+    ui->trail_index = 0;
+
+    for (int i = 0; i < TRAIL_COUNT; i++) {
+        ui->trail_dots[i] = lv_obj_create(ui->trail_layer);
+        lv_obj_set_size(ui->trail_dots[i], 3, 3);
+        lv_obj_set_style_radius(ui->trail_dots[i], LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(ui->trail_dots[i], 0, 0);
+        lv_obj_set_style_bg_color(ui->trail_dots[i], GMETER_ACCENT_COLOR, 0);
+        lv_obj_set_style_bg_opa(ui->trail_dots[i], LV_OPA_TRANSP, 0);
+        lv_obj_set_pos(ui->trail_dots[i], -10, -10); // off-screen
+        ui->trail_opacity[i] = 0;
+    }
+
     // G-ball
     ui->ball = lv_obj_create(ui->screen);
     ui->ball_radius = 5; // 10px ball
@@ -275,6 +305,30 @@ static void gmeter_create_screen(void) {
     lv_scr_load(ui->screen);
 }
 
+static void gmeter_update_trail(lv_coord_t x, lv_coord_t y, lv_color_t c) {
+    gmeter_ui_t *ui = &g_gmeter_ui;
+
+    uint8_t i = ui->trail_index;
+    ui->trail_index = (ui->trail_index + 1) % TRAIL_COUNT;
+
+    // spawn new ghost
+    ui->trail_opacity[i] = 200;
+    ui->trail_color[i] = c;
+
+    lv_obj_set_pos(ui->trail_dots[i], x, y);
+    lv_obj_set_style_bg_color(ui->trail_dots[i], c, 0);
+    lv_obj_set_style_bg_opa(ui->trail_dots[i], 200, 0);
+
+    // fade existing ghosts
+    for (int j = 0; j < TRAIL_COUNT; j++) {
+        if (ui->trail_opacity[j] > 0) {
+            ui->trail_opacity[j] -= 7; // fade rate
+            lv_obj_set_style_bg_opa(ui->trail_dots[j], ui->trail_opacity[j], 0);
+        }
+    }
+}
+
+
 // Update ball position + numeric label
 // gx and gz drive the ball; gy is numeric-only
 static void gmeter_update_ui(float gx, float gz, float gy) {
@@ -302,6 +356,37 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
     // LVGL Y axis grows downward, so subtract dz
     lv_coord_t ball_center_x = ui->map_center_x + (lv_coord_t)lrintf(dx);
     lv_coord_t ball_center_y = ui->map_center_y - (lv_coord_t)lrintf(dz);
+
+    lv_color_t trail_c;
+
+    // Decide color based on corrected Gs
+    if (gz > 0.05f) {
+        // Forward acceleration → GREEN
+        trail_c = lv_color_hex(0x00FF00);
+    }
+    else if (gz < -0.05f) {
+        // Braking → RED
+        trail_c = lv_color_hex(0xFF0000);
+    }
+    else if (gx > 0.05f) {
+        // Right lateral → BLUE
+        trail_c = lv_color_hex(0x3388FF);
+    }
+    else if (gx < -0.05f) {
+        // Left lateral → BLUE (same tone)
+        trail_c = lv_color_hex(0x3388FF);
+    }
+    else {
+        // Neutral zone → WHITE
+        trail_c = lv_color_hex(0xFFFFFF);
+    }
+
+    // Spawn ghost at previous ball position
+    gmeter_update_trail(
+        ball_center_x - ui->ball_radius - 9,
+        ball_center_y - ui->ball_radius - 9,
+        trail_c
+    );
 
     lv_obj_set_pos(ui->ball,
                    ball_center_x - ui->ball_radius,

@@ -327,8 +327,8 @@ while(true)
 			// Suffering from success I guess but it's fine..
 			// I don't think anyone will miss their Pico Pal taking longer to turn off just for the LEDs to fade out lol.
 			// Power on made sense because that takes like a second to init everything but power off is instant.
-#if LED_PHASE_OUT_PWR_DOWN
 			uint8_t temp_lcd_led = lcd_led_duty_cycle;
+#if LED_PHASE_OUT_PWR_DOWN
 			uint8_t temp_button_led = button_led_duty_cycle;
 			uint8_t temp_pwr_led = pwr_led_duty_cycle;
 			fade_out_leds_powerdown();
@@ -336,15 +336,15 @@ while(true)
 
 #if ENABLE_SDCARD
 			// save to sd card
-			write_cart_ram_file(&gb);
+			write_cart_ram_file(&gb, true);
 #endif			
 #if LED_PHASE_OUT_PWR_DOWN
-			save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level, last_filename_raw);
+			save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level, last_filename_raw, true);
 #else
 # if TIE_PWR_LED_TO_LCD
-			pwr_led_duty_cycle = lcd_led_duty_cycle;
+			pwr_led_duty_cycle = temp_lcd_led;
 # endif
-			save_system_settings_if_changed(lcd_led_duty_cycle, button_led_duty_cycle, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw);
+			save_system_settings_if_changed(temp_lcd_led, button_led_duty_cycle, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, true);
 #endif
 			printf("Done");
 
@@ -369,12 +369,13 @@ while(true)
 			do_rtc_update = !do_rtc_update; // toggle for next round
         }
 		if (low_power_shutdown) {
+			uint8_t temp_lcd_led = lcd_led_duty_cycle;
 #if ENABLE_SDCARD
-			write_cart_ram_file(&gb);
+			write_cart_ram_file(&gb, true);
 # if TIE_PWR_LED_TO_LCD
-			pwr_led_duty_cycle = lcd_led_duty_cycle;
+			pwr_led_duty_cycle = temp_lcd_led;
 # endif
-			save_system_settings_if_changed(lcd_led_duty_cycle, button_led_duty_cycle, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw);
+			save_system_settings_if_changed(temp_lcd_led, button_led_duty_cycle, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, true);
 #endif
 			release_power(); // Cut power hold
 			sleep_ms(1);
@@ -508,7 +509,7 @@ while(true)
 				if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
 					/* select + B: Save game ram*/
 #if ENABLE_SDCARD				
-					write_cart_ram_file(&gb);
+					write_cart_ram_file(&gb, false);
 #endif				
 				}
 			}
@@ -566,7 +567,7 @@ while(true)
 					ram_changed = false;
 					// save to sd card
 #if ENABLE_SDCARD				
-					write_cart_ram_file(&gb);
+					write_cart_ram_file(&gb, false);
 #endif
 				}
 			}

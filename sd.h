@@ -11,12 +11,24 @@ static uint16_t num_file = 0;
 static char filename[MAX_FILES][256];
 static uint16_t selected = 0;
 
+uint8_t sd_prev_lcd_led_duty_cycle;
+
 void set_sd_busy(bool is_sd_busy) {
     if (sd_busy == is_sd_busy) {
         return; // No change
     }
 	sd_busy = is_sd_busy;
-	__sev();
+    if (sd_busy) {
+        sd_prev_lcd_led_duty_cycle = lcd_led_duty_cycle;
+        // LCD LED off
+        decrease_lcd_brightness(MAX_BRIGHTNESS);
+        // sleep_ms(20);
+        __sev();
+    } else {
+        __sev();
+        sleep_ms(20); // waiting the 16.7ms to let a frame be output to the lcd.
+        increase_lcd_brightness(sd_prev_lcd_led_duty_cycle);
+    }
 }
 
 
@@ -122,6 +134,7 @@ void read_cart_ram_file(struct gb_s *gb) {
 
 	save_size=gb_get_save_size(gb);
 	if(save_size>0) {
+        // sd busy not needed here since its held until emulation starts
 		// set_sd_busy(true);
 
 		sd_card_t *pSD=sd_get_by_num(0);
@@ -156,13 +169,13 @@ void read_cart_ram_file(struct gb_s *gb) {
 /**
  * Write a save file to the SD card
  */
-void write_cart_ram_file(struct gb_s *gb) {
+void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
 	uint_fast32_t save_size;
 	UINT bw;
 	
 	save_size=gb_get_save_size(gb);
 	if(save_size>0) {
-		// set_sd_busy(true);
+		set_sd_busy(true);
 
 		sd_card_t *pSD=sd_get_by_num(0);
 		FRESULT fr=f_mount(&pSD->fatfs,pSD->pcName,1);
@@ -187,8 +200,8 @@ void write_cart_ram_file(struct gb_s *gb) {
 			printf("E f_close error: %s (%d)\n", FRESULT_str(fr), fr);
 		}
 		f_unmount(pSD->pcName);
-
-		// set_sd_busy(false);
+        if (!hold_sd_busy)
+            set_sd_busy(false);
 		printf("I write_cart_ram_file(%s) COMPLETE (%lu bytes)\n",save_path,save_size);
 	}
 }
@@ -1318,7 +1331,8 @@ bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
 
 void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
                           uint8_t power_brightness, int8_t selected_palette,
-                          uint8_t wash_out_level, char last_filename_raw[FILENAME_MAX_LEN]) {
+                          uint8_t wash_out_level, char last_filename_raw[FILENAME_MAX_LEN],
+                          bool hold_sd_busy) {
     system_settings_t s = {
         .magic = SYSTEM_MAGIC,
         .lcd_brightness = lcd_brightness,
@@ -1331,6 +1345,7 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
     strncpy(s.last_filename_raw, last_filename_raw, FILENAME_MAX_LEN);
     s.last_filename_raw[FILENAME_MAX_LEN - 1] = '\0';  // ensure null termination
 
+    set_sd_busy(true);
     sd_card_t *pSD = sd_get_by_num(0);
     FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
     if (fr != FR_OK) return;
@@ -1352,6 +1367,8 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
     }
 
     f_unmount(pSD->pcName);
+    if (!hold_sd_busy)
+        set_sd_busy(false);
 }
 
 static inline bool system_settings_equal(const system_settings_t *a, const system_settings_t *b) {
@@ -1365,7 +1382,8 @@ static inline bool system_settings_equal(const system_settings_t *a, const syste
 
 void save_system_settings_if_changed(uint8_t lcd_brightness, uint8_t button_brightness,
                                      uint8_t power_brightness, int8_t selected_palette,
-                                     uint8_t wash_out_level, char last_filename_raw[FILENAME_MAX_LEN]) {
+                                     uint8_t wash_out_level, char last_filename_raw[FILENAME_MAX_LEN],
+                                     bool hold_sd_busy) {
 
 	system_settings_t current = {
         .magic = SYSTEM_MAGIC,
@@ -1387,7 +1405,8 @@ void save_system_settings_if_changed(uint8_t lcd_brightness, uint8_t button_brig
                              power_brightness,
                              selected_palette,
                              wash_out_level,
-                             last_filename_raw);
+                             last_filename_raw,
+                             hold_sd_busy);
         g_saved_settings = current;
     }
 }

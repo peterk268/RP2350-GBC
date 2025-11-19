@@ -70,7 +70,7 @@ void shutdown_peripherals(bool keep_i2c);
 #define RECOVERY_THRESHOLD       7   // Recovery threshold
 #define BATTERY_VOLTAGE_SHUTDOWN_mV 3300 // Voltage threshold for shutdown 
 
-void write_cart_ram_file(struct gb_s *gb);
+void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy);
 
 // Estimate SoC from voltage (1S LiPo)
 static uint16_t estimate_soc_from_voltage(uint16_t mV) {

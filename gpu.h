@@ -129,12 +129,8 @@ void render_loop() {
 
     while (true) {
         if(sd_busy) {
-            uint8_t duty_cycle = lcd_led_duty_cycle;
-            // Immediately OFF at frame start
-            decrease_lcd_brightness(MAX_BRIGHTNESS);
             // sleep until an event (wakes on SEV)
             __wfe();
-            increase_lcd_brightness(duty_cycle);
             continue; // check again after waking
         }
         // Wait for scanvideo to be ready for next scanline

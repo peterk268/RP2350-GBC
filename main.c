@@ -237,7 +237,7 @@ while(true)
 	read_io_expander_states(0);
 	if (!gpio_read(IOX_B_A)) {
 		while(1) {
-			play_mp3_from_psram("makebelieve.mp3");
+			play_mp3_stream("makebelieve.mp3");
 		}
 	}
 	if (!gpio_read(IOX_B_B)) {

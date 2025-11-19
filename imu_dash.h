@@ -30,11 +30,13 @@ extern "C" {
 #define GMETER_TEXT_COLOR        lv_color_hex(0xFFFFFF)
 
 // Outer ring represents ±1 g
-#define GMETER_MAX_G             1.0f
+#define GMETER_MAX_G             0.6f
 // Update period: 20ms → 50 FPS
 #define GMETER_UPDATE_MS         20
 // Simple low-pass smoothing
 #define GMETER_SMOOTH_ALPHA      0.30f
+
+#define ACCEL_BAR_FULLSCALE_G   0.6f   // or whatever max g you want
 
 // ----------------------------------------------------
 // UI state
@@ -359,6 +361,14 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
         return;
     }
 
+    // Update numeric label before capping
+    char buf[64];
+    // Show two decimals in g
+    snprintf(buf, sizeof(buf),
+             "X:%+0.2fg  Z:%+0.2fg  Y:%+0.2fg",
+             (double)gx, (double)gz, (double)gy);
+    lv_label_set_text(ui->label_values, buf);
+
     // Clamp magnitude to max ring
     float mag = sqrtf(gx * gx + gz * gz);
     if (mag > GMETER_MAX_G && mag > 0.0f) {
@@ -437,19 +447,11 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
                    ball_center_x - ui->ball_radius,
                    ball_center_y - ui->ball_radius);
 
-    // Update numeric label
-    char buf[64];
-    // Show two decimals in g
-    snprintf(buf, sizeof(buf),
-             "X:%+0.2fg  Z:%+0.2fg  Y:%+0.2fg",
-             (double)gx, (double)gz, (double)gy);
-    lv_label_set_text(ui->label_values, buf);
-
     // --- Acceleration Bar Update ---
     lv_coord_t max_w = g_gmeter_ui.accel_bar_width / 2;
 
-    // Limit to ±1g
-    float z = gz;  
+    // Limit to ±0.6g (map scale)
+    float z = gz / ACCEL_BAR_FULLSCALE_G;   // Normalize
     if (z > 1.0f) z = 1.0f;
     if (z < -1.0f) z = -1.0f;
 

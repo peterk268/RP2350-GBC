@@ -71,6 +71,16 @@ typedef struct {
     uint8_t trail_index;
     lv_color_t trail_color[TRAIL_COUNT];
 
+    float peak_accel;   // +Z
+    float peak_brake;   // -Z
+    float peak_left;    // -X
+    float peak_right;   // +X
+
+    lv_obj_t *arrow_accel;
+    lv_obj_t *arrow_brake;
+    lv_obj_t *arrow_left;
+    lv_obj_t *arrow_right;
+
 } gmeter_ui_t;
 
 // Single global instance
@@ -214,6 +224,43 @@ static void gmeter_create_screen(void) {
     //     ui->map_center_y + rtick - 1
     // );
 
+    ui->peak_accel = 0.0f;
+    ui->peak_brake = 0.0f;
+    ui->peak_left  = 0.0f;
+    ui->peak_right = 0.0f;
+
+    int arrow_size = 6;
+
+    // ACCEL peak (arrow at top)
+    ui->arrow_accel = lv_obj_create(ui->screen);
+    lv_obj_set_size(ui->arrow_accel, arrow_size, arrow_size);
+    lv_obj_set_style_bg_color(ui->arrow_accel, lv_color_hex(0x00FF00), 0);
+    lv_obj_set_style_bg_opa(ui->arrow_accel, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ui->arrow_accel, 0, 0); // small square or circle
+    lv_obj_set_style_border_width(ui->arrow_accel, 0, 0);
+
+    // BRAKE peak (arrow at bottom)
+    ui->arrow_brake = lv_obj_create(ui->screen);
+    lv_obj_set_size(ui->arrow_brake, arrow_size, arrow_size);
+    lv_obj_set_style_bg_color(ui->arrow_brake, lv_color_hex(0xFF0000), 0);
+    lv_obj_set_style_bg_opa(ui->arrow_brake, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ui->arrow_brake, 0, 0);
+    lv_obj_set_style_border_width(ui->arrow_brake, 0, 0);
+
+    // LEFT peak (arrow left)
+    ui->arrow_left = lv_obj_create(ui->screen);
+    lv_obj_set_size(ui->arrow_left, arrow_size, arrow_size);
+    lv_obj_set_style_bg_color(ui->arrow_left, lv_color_hex(0x3388FF), 0);
+    lv_obj_set_style_bg_opa(ui->arrow_left, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ui->arrow_left, 0, 0);
+
+    // RIGHT peak (arrow right)
+    ui->arrow_right = lv_obj_create(ui->screen);
+    lv_obj_set_size(ui->arrow_right, arrow_size, arrow_size);
+    lv_obj_set_style_bg_color(ui->arrow_right, lv_color_hex(0x3388FF), 0);
+    lv_obj_set_style_bg_opa(ui->arrow_right, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ui->arrow_right, 0, 0);
+
     // Trail layer (transparent container)
     ui->trail_layer = lv_obj_create(ui->screen);
     lv_obj_set_size(ui->trail_layer, DISP_HOR_RES, DISP_VER_RES);
@@ -338,6 +385,19 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
         return;
     }
 
+    // --- Peak hold capture ---
+    // Accel
+    if (gz > ui->peak_accel) ui->peak_accel = gz;
+
+    // Brake
+    if (gz < ui->peak_brake) ui->peak_brake = gz;
+
+    // Right
+    if (gx > ui->peak_right) ui->peak_right = gx;
+
+    // Left
+    if (gx < ui->peak_left) ui->peak_left = gx;
+
     // Clamp magnitude to max ring
     float mag = sqrtf(gx * gx + gz * gz);
     if (mag > GMETER_MAX_G && mag > 0.0f) {
@@ -349,6 +409,26 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
     // Convert g's to pixels inside outer ring
     lv_coord_t outer_r = (ui->map_size / 2) - 2;
     float px_per_g = (float)outer_r / GMETER_MAX_G;
+
+    lv_coord_t accel_y = ui->map_center_y - (lv_coord_t)(ui->peak_accel * px_per_g);
+    lv_obj_set_pos(ui->arrow_accel,
+                ui->map_center_x - 3,
+                accel_y - 3);
+
+    lv_coord_t brake_y = ui->map_center_y - (lv_coord_t)(ui->peak_brake * px_per_g);
+    lv_obj_set_pos(ui->arrow_brake,
+                ui->map_center_x - 3,
+                brake_y - 3);
+
+    lv_coord_t right_x = ui->map_center_x + (lv_coord_t)(ui->peak_right * px_per_g);
+    lv_obj_set_pos(ui->arrow_right,
+                right_x - 3,
+                ui->map_center_y - 3);
+
+    lv_coord_t left_x = ui->map_center_x + (lv_coord_t)(ui->peak_left * px_per_g);
+    lv_obj_set_pos(ui->arrow_left,
+                left_x - 3,
+                ui->map_center_y - 3);
 
     float dx = gx * px_per_g;
     float dz = gz * px_per_g;
@@ -434,6 +514,12 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
     // Set fill size
     lv_obj_set_size(g_gmeter_ui.accel_bar_fill, bar_w, g_gmeter_ui.accel_bar_height);
 
+
+    // --- Peak decay ---
+    ui->peak_accel *= 0.995f;
+    ui->peak_brake *= 0.995f;
+    ui->peak_left  *= 0.995f;
+    ui->peak_right *= 0.995f;
 }
 
 // ----------------------------------------------------

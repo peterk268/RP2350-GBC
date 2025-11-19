@@ -410,7 +410,7 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
 
     // LVGL Y axis grows downward, so subtract dz
     lv_coord_t ball_center_x = ui->map_center_x + (lv_coord_t)lrintf(dx);
-    lv_coord_t ball_center_y = ui->map_center_y - (lv_coord_t)lrintf(dz);
+    lv_coord_t ball_center_y = ui->map_center_y - (lv_coord_t)lrintf(-dz);
 
     lv_color_t trail_c;
 
@@ -559,7 +559,7 @@ static inline void run_gmeter_dashboard(void) {
         // ------------------------------
         // Apply calibration offsets
         // ------------------------------
-        float gx_corrected = filt_gy - offset_gy;   // horizontal ball motion
+        float gx_corrected = -(filt_gy - offset_gy);   // horizontal ball motion
         float gz_corrected = -(filt_gz - offset_gz);   // vertical ball motion
         float gy_display   = filt_gx - offset_gx;   // numeric value (gravity axis)
 

@@ -73,13 +73,22 @@ typedef struct {
 
     float peak_accel;   // +Z
     float peak_brake;   // -Z
-    float peak_left;    // -X
-    float peak_right;   // +X
 
     lv_obj_t *arrow_accel;
     lv_obj_t *arrow_brake;
-    lv_obj_t *arrow_left;
-    lv_obj_t *arrow_right;
+
+    // Peak markers
+    float peak_accel_x;
+    float peak_accel_z;
+    uint8_t peak_accel_life;
+
+    float peak_brake_x;
+    float peak_brake_z;
+    uint8_t peak_brake_life;
+
+    bool accel_armed;
+    bool brake_armed;
+
 
 } gmeter_ui_t;
 
@@ -224,10 +233,17 @@ static void gmeter_create_screen(void) {
     //     ui->map_center_y + rtick - 1
     // );
 
-    ui->peak_accel = 0.0f;
-    ui->peak_brake = 0.0f;
-    ui->peak_left  = 0.0f;
-    ui->peak_right = 0.0f;
+    // Peak system init
+    ui->peak_accel_x    = 0.0f;
+    ui->peak_accel_z    = 0.0f;
+    ui->peak_accel_life = 0;
+
+    ui->peak_brake_x    = 0.0f;
+    ui->peak_brake_z    = 0.0f;
+    ui->peak_brake_life = 0;
+
+    ui->accel_armed = true;
+    ui->brake_armed = true;
 
     int arrow_size = 6;
 
@@ -247,19 +263,8 @@ static void gmeter_create_screen(void) {
     lv_obj_set_style_radius(ui->arrow_brake, 0, 0);
     lv_obj_set_style_border_width(ui->arrow_brake, 0, 0);
 
-    // LEFT peak (arrow left)
-    ui->arrow_left = lv_obj_create(ui->screen);
-    lv_obj_set_size(ui->arrow_left, arrow_size, arrow_size);
-    lv_obj_set_style_bg_color(ui->arrow_left, lv_color_hex(0x3388FF), 0);
-    lv_obj_set_style_bg_opa(ui->arrow_left, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(ui->arrow_left, 0, 0);
-
-    // RIGHT peak (arrow right)
-    ui->arrow_right = lv_obj_create(ui->screen);
-    lv_obj_set_size(ui->arrow_right, arrow_size, arrow_size);
-    lv_obj_set_style_bg_color(ui->arrow_right, lv_color_hex(0x3388FF), 0);
-    lv_obj_set_style_bg_opa(ui->arrow_right, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(ui->arrow_right, 0, 0);
+    lv_obj_set_style_bg_opa(ui->arrow_accel, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_opa(ui->arrow_brake, LV_OPA_TRANSP, 0);
 
     // Trail layer (transparent container)
     ui->trail_layer = lv_obj_create(ui->screen);
@@ -385,20 +390,38 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
         return;
     }
 
-    // --- Peak hold capture ---
-    // Accel
-    if (gz > ui->peak_accel) ui->peak_accel = gz;
+    // ------------------------------
+    // 1) Peak trigger: edge detection on gz
+    // ------------------------------
+    const float ACCEL_ON  = 0.50f;
+    const float ACCEL_OFF = 0.20f;
+    const float BRAKE_ON  = -0.50f;
+    const float BRAKE_OFF = -0.20f;
 
-    // Brake
-    if (gz < ui->peak_brake) ui->peak_brake = gz;
+    // Forward accel peak (green marker)
+    if (ui->accel_armed && gz > ACCEL_ON) {
+        ui->peak_accel_x    = gx;
+        ui->peak_accel_z    = gz;
+        ui->peak_accel_life = 255;   // fully visible
+        ui->accel_armed     = false; // disarm until we come back down
+    } else if (!ui->accel_armed && gz < ACCEL_OFF) {
+        // re-arm once we’re back near neutral
+        ui->accel_armed = true;
+    }
 
-    // Right
-    if (gx > ui->peak_right) ui->peak_right = gx;
+    // Braking peak (red marker)
+    if (ui->brake_armed && gz < BRAKE_ON) {
+        ui->peak_brake_x    = gx;
+        ui->peak_brake_z    = gz;
+        ui->peak_brake_life = 255;
+        ui->brake_armed     = false;
+    } else if (!ui->brake_armed && gz > BRAKE_OFF) {
+        ui->brake_armed = true;
+    }
 
-    // Left
-    if (gx < ui->peak_left) ui->peak_left = gx;
-
-    // Clamp magnitude to max ring
+    // ------------------------------
+    // 2) Clamp magnitude for ball rendering
+    // ------------------------------
     float mag = sqrtf(gx * gx + gz * gz);
     if (mag > GMETER_MAX_G && mag > 0.0f) {
         float scale = GMETER_MAX_G / mag;
@@ -406,62 +429,33 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
         gz *= scale;
     }
 
-    // Convert g's to pixels inside outer ring
+    // ------------------------------
+    // 3) Pixel conversion + ball position
+    // ------------------------------
     lv_coord_t outer_r = (ui->map_size / 2) - 2;
     float px_per_g = (float)outer_r / GMETER_MAX_G;
-
-    lv_coord_t accel_y = ui->map_center_y - (lv_coord_t)(ui->peak_accel * px_per_g);
-    lv_obj_set_pos(ui->arrow_accel,
-                ui->map_center_x - 3,
-                accel_y - 3);
-
-    lv_coord_t brake_y = ui->map_center_y - (lv_coord_t)(ui->peak_brake * px_per_g);
-    lv_obj_set_pos(ui->arrow_brake,
-                ui->map_center_x - 3,
-                brake_y - 3);
-
-    lv_coord_t right_x = ui->map_center_x + (lv_coord_t)(ui->peak_right * px_per_g);
-    lv_obj_set_pos(ui->arrow_right,
-                right_x - 3,
-                ui->map_center_y - 3);
-
-    lv_coord_t left_x = ui->map_center_x + (lv_coord_t)(ui->peak_left * px_per_g);
-    lv_obj_set_pos(ui->arrow_left,
-                left_x - 3,
-                ui->map_center_y - 3);
 
     float dx = gx * px_per_g;
     float dz = gz * px_per_g;
 
-    // LVGL Y axis grows downward, so subtract dz
     lv_coord_t ball_center_x = ui->map_center_x + (lv_coord_t)lrintf(dx);
     lv_coord_t ball_center_y = ui->map_center_y - (lv_coord_t)lrintf(dz);
 
+    // ------------------------------
+    // 4) Ghost trail color
+    // ------------------------------
     lv_color_t trail_c;
-
-    // Decide color based on corrected Gs
     if (gz > 0.05f) {
-        // Forward acceleration → GREEN
-        trail_c = lv_color_hex(0x00FF00);
-    }
-    else if (gz < -0.05f) {
-        // Braking → RED
-        trail_c = lv_color_hex(0xFF0000);
-    }
-    else if (gx > 0.05f) {
-        // Right lateral → BLUE
-        trail_c = lv_color_hex(0x3388FF);
-    }
-    else if (gx < -0.05f) {
-        // Left lateral → BLUE (same tone)
-        trail_c = lv_color_hex(0x3388FF);
-    }
-    else {
-        // Neutral zone → WHITE
-        trail_c = lv_color_hex(0xFFFFFF);
+        trail_c = lv_color_hex(0x00FF00);   // accel
+    } else if (gz < -0.05f) {
+        trail_c = lv_color_hex(0xFF0000);   // brake
+    } else if (gx > 0.05f || gx < -0.05f) {
+        trail_c = lv_color_hex(0x3388FF);   // lateral
+    } else {
+        trail_c = lv_color_hex(0xFFFFFF);   // neutral
     }
 
-    // Spawn ghost at previous ball position
+    // keep your ghost trail exactly as-is
     gmeter_update_trail(
         ball_center_x - ui->ball_radius - 9,
         ball_center_y - ui->ball_radius - 9,
@@ -472,56 +466,80 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
                    ball_center_x - ui->ball_radius,
                    ball_center_y - ui->ball_radius);
 
-    // Update numeric label
+    // ------------------------------
+    // 5) Numeric label
+    // ------------------------------
     char buf[64];
-    // Show two decimals in g
     snprintf(buf, sizeof(buf),
              "X:%+0.2fg  Z:%+0.2fg  Y:%+0.2fg",
              (double)gx, (double)gz, (double)gy);
     lv_label_set_text(ui->label_values, buf);
 
-    // --- Acceleration Bar Update ---
-    lv_coord_t max_w = g_gmeter_ui.accel_bar_width / 2;
-
-    // Limit to ±1g
-    float z = gz;  
-    if (z > 1.0f) z = 1.0f;
+    // ------------------------------
+    // 6) Accel bar
+    // ------------------------------
+    lv_coord_t max_w = ui->accel_bar_width / 2;
+    float z = gz;
+    if (z > 1.0f)  z = 1.0f;
     if (z < -1.0f) z = -1.0f;
 
     lv_coord_t bar_w = (lv_coord_t)(max_w * fabsf(z));
+    lv_coord_t bg_y = lv_obj_get_y(ui->accel_bar_bg);
+    lv_coord_t center_x = ui->accel_bar_center_x;
 
-    // Choose position depending on sign
-    lv_coord_t bg_y = lv_obj_get_y(g_gmeter_ui.accel_bar_bg);
-    lv_coord_t center_x = g_gmeter_ui.accel_bar_center_x;
-
-    // Move the bar either left or right
     if (z >= 0) {
-        // accelerating → right, green
-        lv_obj_set_style_bg_color(g_gmeter_ui.accel_bar_fill, lv_color_hex(0x00FF00), 0);
-
-        lv_obj_set_pos(g_gmeter_ui.accel_bar_fill,
-                    center_x,
-                    bg_y);
+        lv_obj_set_style_bg_color(ui->accel_bar_fill, lv_color_hex(0x00FF00), 0);
+        lv_obj_set_pos(ui->accel_bar_fill, center_x, bg_y);
     } else {
-        // braking → left, red
-        lv_obj_set_style_bg_color(g_gmeter_ui.accel_bar_fill, lv_color_hex(0xFF0000), 0);
+        lv_obj_set_style_bg_color(ui->accel_bar_fill, lv_color_hex(0xFF0000), 0);
+        lv_obj_set_pos(ui->accel_bar_fill, center_x - bar_w, bg_y);
+    }
+    lv_obj_set_size(ui->accel_bar_fill, bar_w, ui->accel_bar_height);
 
-        lv_obj_set_pos(g_gmeter_ui.accel_bar_fill,
-                    center_x - bar_w,
-                    bg_y);
+    // ------------------------------
+    // 7) Peak markers – fade ONLY, no re-trigger here
+    // ------------------------------
+
+    // ACCEL peak marker (green square)
+    if (ui->peak_accel_life > 0) {
+        float px = ui->peak_accel_x * px_per_g;
+        float pz = ui->peak_accel_z * px_per_g;
+
+        lv_coord_t mx = ui->map_center_x + (lv_coord_t)lrintf(px);
+        lv_coord_t my = ui->map_center_y - (lv_coord_t)lrintf(pz);
+
+        lv_obj_set_pos(ui->arrow_accel, mx - 3, my - 3);
+        lv_obj_set_style_bg_opa(ui->arrow_accel, ui->peak_accel_life, 0);
+
+        if (ui->peak_accel_life > 4) {
+            ui->peak_accel_life -= 4;
+        } else {
+            ui->peak_accel_life = 0;
+        }
+    } else {
+        lv_obj_set_style_bg_opa(ui->arrow_accel, LV_OPA_TRANSP, 0);
     }
 
-    // Set fill size
-    lv_obj_set_size(g_gmeter_ui.accel_bar_fill, bar_w, g_gmeter_ui.accel_bar_height);
+    // BRAKE peak marker (red square)
+    if (ui->peak_brake_life > 0) {
+        float px = ui->peak_brake_x * px_per_g;
+        float pz = ui->peak_brake_z * px_per_g;
 
+        lv_coord_t mx = ui->map_center_x + (lv_coord_t)lrintf(px);
+        lv_coord_t my = ui->map_center_y - (lv_coord_t)lrintf(pz);
 
-    // --- Peak decay ---
-    ui->peak_accel *= 0.995f;
-    ui->peak_brake *= 0.995f;
-    ui->peak_left  *= 0.995f;
-    ui->peak_right *= 0.995f;
+        lv_obj_set_pos(ui->arrow_brake, mx - 3, my - 3);
+        lv_obj_set_style_bg_opa(ui->arrow_brake, ui->peak_brake_life, 0);
+
+        if (ui->peak_brake_life > 4) {
+            ui->peak_brake_life -= 4;
+        } else {
+            ui->peak_brake_life = 0;
+        }
+    } else {
+        lv_obj_set_style_bg_opa(ui->arrow_brake, LV_OPA_TRANSP, 0);
+    }
 }
-
 // ----------------------------------------------------
 // Public API
 // ----------------------------------------------------

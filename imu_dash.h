@@ -71,6 +71,8 @@ typedef struct {
     uint8_t trail_index;
     lv_color_t trail_color[TRAIL_COUNT];
 
+    lv_obj_t *g_indicator;   // horizontal g-force line
+
 } gmeter_ui_t;
 
 // Single global instance
@@ -170,6 +172,25 @@ static void gmeter_create_screen(void) {
     lv_obj_set_style_border_width(axis_v, 0, 0);
     lv_obj_set_pos(axis_v, ui->map_center_x, ui->map_center_y - outer_r);
 
+
+    // --- Gravity / vertical G indicator line ---
+    ui->g_indicator = lv_obj_create(ui->screen);
+
+    // Half the 0.5g diameter = r05
+    lv_coord_t g_len = r05;   // r05 is radius of the 0.5g ring
+
+    lv_obj_set_size(ui->g_indicator, g_len, 2);
+    lv_obj_set_style_bg_color(ui->g_indicator, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(ui->g_indicator, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(ui->g_indicator, 0, 0);
+    lv_obj_set_style_radius(ui->g_indicator, 1, 0);
+
+    // Start centered (neutral G)
+    lv_obj_set_pos(
+        ui->g_indicator,
+        ui->map_center_x - (g_len / 2),
+        ui->map_center_y - 1
+    );
 
     // // --- Tick marks at former 0.75g ring location ---
     // lv_coord_t rtick = r075;  // where the tick ring used to be
@@ -352,6 +373,30 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
 
     float dx = gx * px_per_g;
     float dz = gz * px_per_g;
+
+    // --- Vertical G indicator (uses gy = gravity/up-down) ---
+    {
+        // Clamp gy to ±GMETER_MAX_G so it stays inside the outer ring
+        float gy_clamped = gy;
+        if (gy_clamped > GMETER_MAX_G)  gy_clamped = GMETER_MAX_G;
+        if (gy_clamped < -GMETER_MAX_G) gy_clamped = -GMETER_MAX_G;
+
+        // Convert gy to pixels (same scale as ball)
+        float gy_px = gy_clamped * px_per_g;
+
+        // LVGL Y axis grows downward, so subtract to move "up" for +gy
+        lv_coord_t gy_pos = ui->map_center_y - (lv_coord_t)lrintf(gy_px);
+
+        // Half-length of indicator (we set it in create_screen)
+        lv_coord_t g_len = lv_obj_get_width(ui->g_indicator);
+
+        // Center the line horizontally, slide it vertically
+        lv_obj_set_pos(
+            ui->g_indicator,
+            ui->map_center_x - (g_len / 2),
+            gy_pos - 1
+        );
+    }
 
     // LVGL Y axis grows downward, so subtract dz
     lv_coord_t ball_center_x = ui->map_center_x + (lv_coord_t)lrintf(dx);

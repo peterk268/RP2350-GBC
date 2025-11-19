@@ -428,7 +428,7 @@ static inline void run_gmeter_dashboard(void) {
         // Apply calibration offsets
         // ------------------------------
         float gx_corrected = filt_gy - offset_gy;   // horizontal ball motion
-        float gz_corrected = filt_gz - offset_gz;   // vertical ball motion
+        float gz_corrected = -(filt_gz - offset_gz);   // vertical ball motion
         float gy_display   = filt_gx - offset_gx;   // numeric value (gravity axis)
 
 

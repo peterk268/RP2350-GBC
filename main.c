@@ -239,12 +239,12 @@ while(true)
 
 	read_io_expander_states(0);
 	if (!gpio_read(IOX_B_A)) {
-		while(1) {
-			play_mp3_stream("makebelieve.mp3");
-		}
+		play_mp3_stream(NULL);
+		while (1) { tight_loop_contents(); }
 	}
 	if (!gpio_read(IOX_B_B)) {
 		run_gmeter_dashboard();
+		while (1) { tight_loop_contents(); }
 	}
 
 #if ENABLE_SDCARD && ENABLE_ROM_SELECTOR

@@ -124,6 +124,35 @@ void i2s_dma_write(i2s_config_t *i2s_config, const uint16_t *samples) {
                                         i2s_config->dma_trans_count);
 }
 
+/**
+ * Non-blocking I2S DMA write.
+ *
+ * Returns:
+ *   true  → DMA transfer started (previous transfer finished)
+ *   false → DMA is still busy; call again later
+ *
+ * Notes:
+ *   - Does NOT wait for DMA to finish.
+ *   - Caller should retry until true is returned.
+ *   - `samples` must contain dma_trans_count 32-bit I2S words.
+ */
+bool i2s_dma_write_non_blocking(i2s_config_t *i2s_config, const uint16_t *samples) {
+    if (!i2s_config || !samples || !i2s_config->dma_buf) 
+        return true; // treat invalid state as "ready" to avoid locking
+
+    // If DMA is still transferring the previous buffer, don't block.
+    if (dma_channel_is_busy(i2s_config->dma_channel)) {
+        return false;
+    }
+
+    // DMA is free → copy new data and start next transfer.
+    memcpy(i2s_config->dma_buf, samples, i2s_config->dma_trans_count * sizeof(uint32_t));
+    dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
+                                        i2s_config->dma_buf,
+                                        i2s_config->dma_trans_count);
+    return true;
+}
+
 
 /**
  * Adjust the output volume

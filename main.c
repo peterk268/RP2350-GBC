@@ -412,8 +412,12 @@ while(true)
 #endif
 
 		// MARK: - Update buttons state
+		prev_joypad_bits.select  = gb.direct.joypad_bits.select;
+		gb.direct.joypad_bits.select  = gpio_read(GPIO_B_SELECT);
+
 		bool iox_nint = gpio_read(GPIO_IOX_nINT);
 		if (!iox_nint) {
+			printf("ioxlo\n");
 			// Read IOX port 0
 			read_io_expander_states(0);
 			// Store previous joypad states
@@ -423,7 +427,6 @@ while(true)
 			prev_joypad_bits.right   = gb.direct.joypad_bits.right;
 			prev_joypad_bits.a       = gb.direct.joypad_bits.a;
 			prev_joypad_bits.b       = gb.direct.joypad_bits.b;
-			prev_joypad_bits.select  = gb.direct.joypad_bits.select;
 			prev_joypad_bits.start   = gb.direct.joypad_bits.start;
 
 			// Update joypad states with values from IOX
@@ -433,7 +436,6 @@ while(true)
 			gb.direct.joypad_bits.right   = gpio_read(IOX_B_RIGHT);
 			gb.direct.joypad_bits.a       = gpio_read(IOX_B_A);
 			gb.direct.joypad_bits.b       = gpio_read(IOX_B_B);
-			gb.direct.joypad_bits.select  = gpio_read(GPIO_B_SELECT);
 			gb.direct.joypad_bits.start   = gpio_read(IOX_B_START);
 
 			// MARK: - Hotkeys
@@ -543,6 +545,8 @@ while(true)
 					}
 				}
 			}
+		} else {
+			printf("ioxhi\n");
 		}
 #if ENABLE_FRAME_DEBUGGING
 		static uint32_t last_ts = 0;

@@ -256,7 +256,6 @@ void play_mp3_stream(const char *filename) {
             // ---- SD mini-refills (keeps stream fed) ----
             for (int i = 0; i < 2 && stream.count < (MP3_STREAM_BUF_SIZE * 3 / 4) && !stream.eof; i++) {
                 mp3_refill(&stream);
-                printf("RE\n");
             }
 
             // ---- Decode *into buf_fill* only if we haven’t decoded yet ----

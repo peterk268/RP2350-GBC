@@ -196,10 +196,13 @@ int main(void)
 	
 	setup_dac();
 
+	// If the mp3 application is selected we need to switch dma_trans_count to 2048.
+	read_io_expander_states(0);
+
 	// Initialize I2S sound driver
 	i2s_config = i2s_get_default_config();
 	i2s_config.sample_freq=AUDIO_SAMPLE_RATE;
-	i2s_config.dma_trans_count =AUDIO_SAMPLES;
+	i2s_config.dma_trans_count = !gpio_read(IOX_B_A) ? PCM_FRAME_COUNT : AUDIO_SAMPLES;
 	i2s_config.mclk_mult = 512;          // 512× is cleaner
 
 	i2s_volume(&i2s_config,0);

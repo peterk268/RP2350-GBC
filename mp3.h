@@ -15,7 +15,7 @@
 #include <stdint.h>
 
 #ifndef PCM_FRAME_COUNT
-#define PCM_FRAME_COUNT 738
+#define PCM_FRAME_COUNT 2048
 #endif
 
 #define MP3_STREAM_BUF_SIZE   (16 * 1024)   // 16 KB ring buffer

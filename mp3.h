@@ -1,17 +1,17 @@
 // ===============================================================
-// Pico Pal MP3 Streaming Player (TRIPLE PCM BUFFER VERSION)
-// - Streaming from SD via 16 KB ring buffer
+// Pico Pal MP3 Streaming Player (PLAYLIST + TRIPLE PCM BUFFER)
+// - Scans "/music" for .mp3; if none, falls back to root
 // - PCM_FRAME_COUNT = 2048
 // - Triple PCM buffers
-// - Non-blocking I2S DMA
+// - Non-blocking I2S DMA (i2s_dma_write_non_blocking must be implemented)
 // - Controls:
 //      A       -> Play / Pause
 //      B       -> Repeat mode (OFF -> ONE -> INFINITE -> OFF)
-//      SELECT  -> Shuffle toggle (future menu / GUI)
-//      LEFT    -> Tap: prev track (TODO), Hold: seek -5s
-//      RIGHT   -> Tap: next track (TODO), Hold: seek +5s
-//      UP/DOWN -> Reserved for GUI navigation
-//      START   -> Reserved for future menu
+//      SELECT  -> Shuffle toggle
+//      LEFT    -> Tap: previous track, Hold: seek backwards
+//      RIGHT   -> Tap: next track,     Hold: seek forwards
+//      UP/DOWN -> Reserved for GUI navigation (future)
+//      START   -> Reserved for menu (future)
 // ===============================================================
 
 #include "dr_mp3.h"
@@ -20,19 +20,26 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "pico/time.h"   // for time_us_64()
+#include "pico/time.h"   // time_us_64()
 
 #ifndef PCM_FRAME_COUNT
-#define PCM_FRAME_COUNT 2048
+#define PCM_FRAME_COUNT 6144
 #endif
 
 #define MP3_STREAM_BUF_SIZE       (16 * 1024)   // 16 KB ring buffer
 #define MP3_REFILL_CHUNK          (4 * 1024)    // max bytes per SD read
 
+// Directory used for music; fallback is root ("")
+#define MUSIC_DIR                 "music"
+
 // ---- Seek behaviour tuning ----
 #define SEEK_HOLD_TIME_MS         250           // Hold LEFT/RIGHT this long to start seeking
 #define SEEK_REPEAT_INTERVAL_MS   150           // Seek step repeat while held
-#define SEEK_STEP_SECONDS         2             // Approx seek +/- 5s each step
+#define SEEK_STEP_SECONDS         2             // Each seek step in seconds (~2s)
+
+// Maximum playlist size and path length
+#define MP3_MAX_TRACKS            64
+#define MP3_MAX_PATH_LEN          96
 
 
 // ===================================================================
@@ -52,7 +59,7 @@ void hp_off() { dac_i2c_write(1, 0x1F, 0x00); }
 void spk_on()  { dac_i2c_write(1, 0x20, 0b11000110); }
 void spk_off() { dac_i2c_write(1, 0x20, 0x00); }
 
-void apply_audio_mode() {
+void apply_audio_mode(void) {
     switch (audio_mode) {
         case AUDIO_HP_ONLY:
             hp_on();
@@ -71,6 +78,19 @@ void apply_audio_mode() {
 
 
 // ===================================================================
+// Repeat / shuffle modes (global so they persist across tracks)
+// ===================================================================
+typedef enum {
+    REPEAT_OFF = 0,
+    REPEAT_ONE,        // play once more then stop (single extra loop)
+    REPEAT_INFINITE    // loop forever
+} repeat_mode_t;
+
+static repeat_mode_t g_repeat_mode = REPEAT_OFF;
+static bool          g_shuffle_enabled = false;
+
+
+// ===================================================================
 // SD ring buffer logic
 // ===================================================================
 typedef struct {
@@ -82,7 +102,7 @@ typedef struct {
     bool eof;
 } mp3_stream_t;
 
-// SD → ring buffer refill, but capped to MP3_REFILL_CHUNK to avoid stalls
+// SD → ring buffer refill, capped to MP3_REFILL_CHUNK to avoid stalls
 static void mp3_refill(mp3_stream_t *s) {
     if (s->eof || s->count >= MP3_STREAM_BUF_SIZE)
         return;
@@ -148,17 +168,103 @@ static drmp3_bool32 mp3_stream_seek(void *pUserData, int offset, drmp3_seek_orig
 
 
 // ===================================================================
-// Repeat / shuffle modes
+// Playlist storage
 // ===================================================================
-typedef enum {
-    REPEAT_OFF = 0,
-    REPEAT_ONE,        // play once more then stop (single extra loop)
-    REPEAT_INFINITE    // loop forever
-} repeat_mode_t;
+static char g_playlist[MP3_MAX_TRACKS][MP3_MAX_PATH_LEN];
+static int  g_track_count = 0;
 
-// ============================================================
-// C helper: approximate seek by jumping compressed bytes
-// ============================================================
+// Lowercase helper
+static char tolower_ascii(char c) {
+    if (c >= 'A' && c <= 'Z') return (char)(c + 32);
+    return c;
+}
+
+// Check if name ends with ".mp3" (case-insensitive)
+static bool has_mp3_extension(const char *name) {
+    size_t len = strlen(name);
+    if (len < 4) return false;
+    const char *ext = name + len - 4;
+    return (tolower_ascii(ext[0]) == '.' &&
+            tolower_ascii(ext[1]) == 'm' &&
+            tolower_ascii(ext[2]) == 'p' &&
+            tolower_ascii(ext[3]) == '3');
+}
+
+// Get basename from path ("music/rock.mp3" -> "rock.mp3")
+static const char* basename_from_path(const char *path) {
+    const char *slash = strrchr(path, '/');
+    return slash ? (slash + 1) : path;
+}
+
+// Scan a directory ("music" or "") and append .mp3 files to playlist
+static int mp3_scan_dir(const char *dir) {
+    DIR dir_obj;
+    FILINFO fno;
+    int added = 0;
+
+    const char *open_path = (dir && dir[0] != '\0') ? dir : "";
+
+    FRESULT fr = f_opendir(&dir_obj, open_path);
+    if (fr != FR_OK) {
+        printf("f_opendir('%s') failed: %d\n", open_path, fr);
+        return 0;
+    }
+
+    for (;;) {
+        fr = f_readdir(&dir_obj, &fno);
+        if (fr != FR_OK || fno.fname[0] == '\0')
+            break;
+
+        // Skip directories
+        if (fno.fattrib & AM_DIR)
+            continue;
+
+        const char *name = fno.fname;
+
+        // Skip hidden/metadata files (like ._whatever)
+        if (name[0] == '.')
+            continue;
+
+        if (!has_mp3_extension(name))
+            continue;
+
+        if (g_track_count >= MP3_MAX_TRACKS)
+            break;
+
+        // Build path
+        if (dir && dir[0] != '\0')
+            snprintf(g_playlist[g_track_count], MP3_MAX_PATH_LEN, "%s/%s", dir, name);
+        else
+            snprintf(g_playlist[g_track_count], MP3_MAX_PATH_LEN, "%s", name);
+
+        printf("Found track: %s\n", g_playlist[g_track_count]);
+        g_track_count++;
+        added++;
+    }
+
+    f_closedir(&dir_obj);
+    return added;
+}
+
+// Build playlist: try MUSIC_DIR, then fallback to root
+static void mp3_build_playlist(void) {
+    g_track_count = 0;
+
+    int from_music = mp3_scan_dir(MUSIC_DIR);
+    if (from_music > 0) {
+        printf("Playlist: %d tracks found in '%s'\n", g_track_count, MUSIC_DIR);
+        return;
+    }
+
+    // Fallback to root
+    mp3_scan_dir("");
+    printf("Playlist: %d tracks found in root\n", g_track_count);
+}
+
+
+// ===================================================================
+// Seek helper: approximate seek by jumping compressed bytes
+// ===================================================================
 static bool seek_relative_seconds(
     mp3_stream_t *stream,
     drmp3 *mp3,
@@ -168,17 +274,14 @@ static bool seek_relative_seconds(
 ){
     DWORD pos = f_tell(&stream->file);
 
-    // Rough byte estimate: sample_rate * 2 bytes per sample
+    // Rough byte estimate: sample_rate * 2 bytes/sample * seconds
     int64_t delta_bytes = (int64_t)sample_rate * 2 * seconds;
-
-    // Compute new position
     int64_t new_pos = (int64_t)pos + delta_bytes;
 
     if (new_pos < 0) new_pos = 0;
     if (new_pos > (int64_t)f_size(&stream->file))
         new_pos = f_size(&stream->file);
 
-    // Perform the actual file seek
     f_lseek(&stream->file, (DWORD)new_pos);
 
     // Reset ring buffer
@@ -195,8 +298,7 @@ static bool seek_relative_seconds(
                     NULL,
                     NULL,
                     stream,
-                    NULL))
-    {
+                    NULL)) {
         printf("E drmp3_init after seek\n");
         return false;
     }
@@ -205,26 +307,27 @@ static bool seek_relative_seconds(
     return true;
 }
 
+
 // ===================================================================
-// TRIPLE BUFFERED PCM + “gentle” SD prefill + controls
+// Single-track player: returns what the playlist should do next
 // ===================================================================
-void play_mp3_stream(const char *filename) {
-    sd_card_t *pSD = sd_get_by_num(0);
+typedef enum {
+    PLAY_RESULT_STOP = 0,
+    PLAY_RESULT_NEXT,
+    PLAY_RESULT_PREV
+} play_result_t;
+
+// Non-blocking I2S DMA prototype (implemented elsewhere)
+bool i2s_dma_write_non_blocking(i2s_config_t *i2s_config, const uint16_t *samples);
+
+static play_result_t mp3_play_single_track(const char *filepath) {
+    mp3_stream_t stream = {0};
     FRESULT fr;
 
-    fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+    fr = f_open(&stream.file, filepath, FA_READ);
     if (fr != FR_OK) {
-        printf("Mount fail %d\n", fr);
-        return;
-    }
-
-    mp3_stream_t stream = {0};
-
-    fr = f_open(&stream.file, filename, FA_READ);
-    if (fr != FR_OK) {
-        printf("Open fail %d\n", fr);
-        f_unmount(pSD->pcName);
-        return;
+        printf("Open fail %d for '%s'\n", fr, filepath);
+        return PLAY_RESULT_NEXT;   // skip broken file
     }
 
     DWORD file_size = f_size(&stream.file);
@@ -242,12 +345,10 @@ void play_mp3_stream(const char *filename) {
                     NULL,   // no tell
                     NULL,   // no meta
                     &stream,
-                    NULL))
-    {
+                    NULL)) {
         printf("E drmp3_init failed\n");
         f_close(&stream.file);
-        f_unmount(pSD->pcName);
-        return;
+        return PLAY_RESULT_NEXT;
     }
 
     printf("MP3: %d Hz, %d ch\n", mp3.sampleRate, mp3.channels);
@@ -256,13 +357,11 @@ void play_mp3_stream(const char *filename) {
     int channels = mp3.channels;
     int sample_count = PCM_FRAME_COUNT * channels;
 
-    // ================================================================
-    // TRIPLE PCM BUFFERS (PCM_FRAME_COUNT = 2048)
-    // ================================================================
-    int16_t *pcmA = malloc(sample_count * sizeof(int16_t));
-    int16_t *pcmB = malloc(sample_count * sizeof(int16_t));
-    int16_t *pcmC = malloc(sample_count * sizeof(int16_t));
-    int16_t *silence_buf = calloc(sample_count, sizeof(int16_t));  // all zeros
+    // Triple PCM buffers + silence buffer for pause
+    int16_t *pcmA       = malloc(sample_count * sizeof(int16_t));
+    int16_t *pcmB       = malloc(sample_count * sizeof(int16_t));
+    int16_t *pcmC       = malloc(sample_count * sizeof(int16_t));
+    int16_t *silence_buf = calloc(sample_count, sizeof(int16_t));
 
     if (!pcmA || !pcmB || !pcmC || !silence_buf) {
         printf("pcm malloc fail\n");
@@ -272,19 +371,14 @@ void play_mp3_stream(const char *filename) {
         if (silence_buf) free(silence_buf);
         drmp3_uninit(&mp3);
         f_close(&stream.file);
-        f_unmount(pSD->pcName);
-        return;
+        return PLAY_RESULT_NEXT;
     }
 
     int16_t *buf_play  = pcmA;
     int16_t *buf_ready = pcmB;
     int16_t *buf_fill  = pcmC;
 
-    // ================================================================
-    // INITIAL DECODE + START
-    // ================================================================
-
-    // Some extra prefill before first decode
+    // Extra prefill before first decode
     for (int i = 0; i < 4 && !stream.eof; i++) {
         mp3_refill(&stream);
     }
@@ -293,7 +387,7 @@ void play_mp3_stream(const char *filename) {
     drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, buf_play);
     i2s_dma_write(&i2s_config, buf_play);
 
-    // A bit more prefill before decoding second buffer
+    // More prefill before second buffer
     for (int i = 0; i < 4 && !stream.eof; i++) {
         mp3_refill(&stream);
     }
@@ -301,59 +395,55 @@ void play_mp3_stream(const char *filename) {
     // Decode second buffer into buf_ready
     drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, buf_ready);
 
-    // buf_fill is free for the next decode
-
-    // ================================================================
-    // PLAYBACK STATE + CONTROLS
-    // ================================================================
+    // Playback state
     audio_mode = headphones_present ? AUDIO_HP_ONLY : AUDIO_SPK_ONLY;
     apply_audio_mode();
-    dac_i2c_write(1, 0x21, 0x06);
+    dac_i2c_write(1, 0x21, 0x06);   // 100ms ramp
 
     printf("Starting MP3 stream...\n");
 
     bool decoded_next_chunk = false;
     bool paused = false;
-    repeat_mode_t repeat_mode = REPEAT_OFF;
-    bool shuffle_enabled = false;
 
-    static bool prev_btn_a       = false;
-    static bool prev_btn_b       = false;
-    static bool prev_btn_select  = false;
-    static bool prev_btn_up      = false;
-    static bool prev_btn_down    = false;
-    static bool prev_btn_left    = false;
-    static bool prev_btn_right   = false;
-    static bool prev_btn_start   = false;
+    bool next_track_requested = false;
+    bool prev_track_requested = false;
+
+    bool prev_btn_a       = false;
+    bool prev_btn_b       = false;
+    bool prev_btn_select  = false;
+    bool prev_btn_up      = false;
+    bool prev_btn_down    = false;
+    bool prev_btn_left    = false;
+    bool prev_btn_right   = false;
+    bool prev_btn_start   = false;
 
     // For LEFT/RIGHT hold detection
-    uint64_t left_press_us  = 0;
-    uint64_t right_press_us = 0;
+    uint64_t left_press_us      = 0;
+    uint64_t right_press_us     = 0;
     uint64_t left_last_seek_us  = 0;
     uint64_t right_last_seek_us = 0;
     bool left_held_seek  = false;
     bool right_held_seek = false;
+
+    play_result_t result = PLAY_RESULT_STOP;
 
     // ================================================================
     // MAIN PLAYBACK LOOP
     // ================================================================
     while (1) {
 
-        // ============================================================
-        // While DMA is still sending the previous buffer,
-        // do *useful work*: SD refills + MP3 decoding + input handling.
-        // ============================================================
+        // While DMA is still sending previous buffer, do useful work
+        while (!i2s_dma_write_non_blocking(&i2s_config,
+                                           paused ? silence_buf : buf_ready)) {
 
-        while (!i2s_dma_write_non_blocking(&i2s_config, paused ? silence_buf : buf_ready)) {
-
-            // ---- SD mini-refills (keeps stream fed) ----
+            // SD mini-refills
             for (int i = 0;
                  i < 2 && stream.count < (MP3_STREAM_BUF_SIZE * 3 / 4) && !stream.eof;
                  i++) {
                 mp3_refill(&stream);
             }
 
-            // ---- Decode *into buf_fill* only if we haven’t decoded yet ----
+            // Decode into buf_fill only if we haven’t yet and not paused
             if (!decoded_next_chunk && !paused) {
                 drmp3_uint64 frames =
                     drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, buf_fill);
@@ -361,13 +451,15 @@ void play_mp3_stream(const char *filename) {
                 if (frames == 0) {
                     if (stream.eof) {
                         // Handle repeat logic
-                        if (repeat_mode == REPEAT_OFF) {
-                            printf("MP3 EOF reached (no repeat).\n");
+                        if (g_repeat_mode == REPEAT_OFF) {
+                            printf("MP3 EOF reached (no repeat) -> next track\n");
+                            next_track_requested = true;
+                            result = PLAY_RESULT_NEXT;
                             goto END_PLAYBACK;
                         }
 
-                        // Restart track
-                        printf("MP3 EOF reached -> restarting track (repeat).\n");
+                        // Restart same track
+                        printf("MP3 EOF reached -> restarting track (repeat)\n");
                         f_lseek(&stream.file, 0);
                         stream.rd = stream.wr = stream.count = 0;
                         stream.eof = false;
@@ -376,12 +468,13 @@ void play_mp3_stream(const char *filename) {
                         if (!drmp3_init(&mp3, mp3_stream_read,
                                         NULL, NULL, NULL, &stream, NULL)) {
                             printf("E drmp3_init after repeat\n");
+                            result = PLAY_RESULT_NEXT;
                             goto END_PLAYBACK;
                         }
 
-                        // If REPEAT_ONE, consume this one extra loop then go OFF
-                        if (repeat_mode == REPEAT_ONE) {
-                            repeat_mode = REPEAT_OFF;
+                        // REPEAT_ONE: do only one extra loop, then OFF
+                        if (g_repeat_mode == REPEAT_ONE) {
+                            g_repeat_mode = REPEAT_OFF;
                             printf("Repeat ONE complete -> Repeat OFF\n");
                         }
 
@@ -394,9 +487,7 @@ void play_mp3_stream(const char *filename) {
                 }
             }
 
-            // =======================================================
-            // BUTTONS + CONTROLS
-            // =======================================================
+            // ================== BUTTONS + CONTROLS ====================
             read_volume(&i2s_config);
 
             bool iox_nint    = gpio_read(GPIO_IOX_nINT);
@@ -424,52 +515,47 @@ void play_mp3_stream(const char *filename) {
 
             uint64_t now_us = time_us_64();
 
-            // ---- A → Play / Pause ----
+            // A → Play / Pause
             if (!prev_btn_a && btn_a) {
                 paused = !paused;
                 printf(paused ? "Paused\n" : "Playing\n");
             }
 
-            // ---- B → Repeat mode cycle ----
+            // B → Repeat mode cycle (global)
             if (!prev_btn_b && btn_b) {
-                static repeat_mode_t last_mode = REPEAT_OFF;
-                repeat_mode = (repeat_mode_t)((repeat_mode + 1) % 3);
+                g_repeat_mode = (repeat_mode_t)((g_repeat_mode + 1) % 3);
 
-                if (repeat_mode == REPEAT_OFF) {
+                if (g_repeat_mode == REPEAT_OFF) {
                     printf("Repeat: OFF\n");
-                } else if (repeat_mode == REPEAT_ONE) {
+                } else if (g_repeat_mode == REPEAT_ONE) {
                     printf("Repeat: ONE (play once more)\n");
-                } else if (repeat_mode == REPEAT_INFINITE) {
+                } else if (g_repeat_mode == REPEAT_INFINITE) {
                     printf("Repeat: INFINITE\n");
                 }
-                last_mode = repeat_mode;
             }
 
-            // ---- SELECT → Shuffle toggle + future menu / HP-SPK toggle ----
+            // SELECT → Shuffle toggle (global)
             if (!prev_btn_select && select_btn) {
-                shuffle_enabled = !shuffle_enabled;
-                printf("Shuffle: %s\n", shuffle_enabled ? "ON" : "OFF");
+                g_shuffle_enabled = !g_shuffle_enabled;
+                printf("Shuffle: %s\n", g_shuffle_enabled ? "ON" : "OFF");
 
-                // FUTURE: you can move headphone/speaker toggle here in GUI:
-                //
+                // FUTURE GUI:
                 // if (audio_mode == AUDIO_HP_ONLY)      audio_mode = AUDIO_SPK_ONLY;
                 // else if (audio_mode == AUDIO_SPK_ONLY) audio_mode = AUDIO_BOTH;
                 // else                                   audio_mode = AUDIO_HP_ONLY;
                 // apply_audio_mode();
             }
 
-            // ---- LEFT / RIGHT tap vs hold for seek / track skip ----
-            // LEFT handling
+            // LEFT: tap = prev track, hold = seek backward
             if (btn_left) {
                 if (!prev_btn_left) {
                     // New press
-                    left_press_us = now_us;
+                    left_press_us     = now_us;
                     left_last_seek_us = now_us;
-                    left_held_seek = false;
+                    left_held_seek    = false;
                 } else {
                     // Held
-                    uint64_t held_ms =
-                        (now_us - left_press_us) / 1000;
+                    uint64_t held_ms = (now_us - left_press_us) / 1000;
                     if (!left_held_seek && held_ms >= SEEK_HOLD_TIME_MS && !paused) {
                         left_held_seek = true;
                         printf("Start rewind (hold LEFT)\n");
@@ -479,33 +565,40 @@ void play_mp3_stream(const char *filename) {
                             (now_us - left_last_seek_us) / 1000;
                         if (since_last_ms >= SEEK_REPEAT_INTERVAL_MS) {
                             printf("Rewind -%ds\n", SEEK_STEP_SECONDS);
-                            seek_relative_seconds(&stream, &mp3, -SEEK_STEP_SECONDS, mp3.sampleRate, &decoded_next_chunk);
+                            seek_relative_seconds(&stream, &mp3,
+                                                  -SEEK_STEP_SECONDS,
+                                                  mp3.sampleRate,
+                                                  &decoded_next_chunk);
                             left_last_seek_us = now_us;
                         }
                     }
                 }
             } else {
+                // Released
                 if (prev_btn_left) {
-                    // Released
                     if (!left_held_seek) {
-                        // Short tap -> previous track (TODO)
-                        printf("<< Previous track (TODO)\n");
+                        // Short tap → previous track
+                        printf("<< Previous track\n");
+                        prev_track_requested = true;
+                        result = PLAY_RESULT_PREV;
+                        left_held_seek = false;
+                        prev_btn_left  = false;
+                        goto END_PLAYBACK;
                     }
                 }
                 left_held_seek = false;
             }
 
-            // RIGHT handling
+            // RIGHT: tap = next track, hold = seek forward
             if (btn_right) {
                 if (!prev_btn_right) {
                     // New press
-                    right_press_us = now_us;
+                    right_press_us     = now_us;
                     right_last_seek_us = now_us;
-                    right_held_seek = false;
+                    right_held_seek    = false;
                 } else {
                     // Held
-                    uint64_t held_ms =
-                        (now_us - right_press_us) / 1000;
+                    uint64_t held_ms = (now_us - right_press_us) / 1000;
                     if (!right_held_seek && held_ms >= SEEK_HOLD_TIME_MS && !paused) {
                         right_held_seek = true;
                         printf("Start fast-forward (hold RIGHT)\n");
@@ -515,32 +608,39 @@ void play_mp3_stream(const char *filename) {
                             (now_us - right_last_seek_us) / 1000;
                         if (since_last_ms >= SEEK_REPEAT_INTERVAL_MS) {
                             printf("Fast-forward +%ds\n", SEEK_STEP_SECONDS);
-                            seek_relative_seconds(&stream, &mp3, SEEK_STEP_SECONDS, mp3.sampleRate, &decoded_next_chunk);
+                            seek_relative_seconds(&stream, &mp3,
+                                                  SEEK_STEP_SECONDS,
+                                                  mp3.sampleRate,
+                                                  &decoded_next_chunk);
                             right_last_seek_us = now_us;
                         }
                     }
                 }
             } else {
+                // Released
                 if (prev_btn_right) {
                     if (!right_held_seek) {
-                        // Short tap -> next track (TODO)
-                        printf(">> Next track (TODO)\n");
+                        // Short tap → next track
+                        printf(">> Next track\n");
+                        next_track_requested = true;
+                        result = PLAY_RESULT_NEXT;
+                        right_held_seek = false;
+                        prev_btn_right  = false;
+                        goto END_PLAYBACK;
                     }
                 }
                 right_held_seek = false;
             }
 
-            // ---- UP / DOWN reserved for GUI / navigation ----
+            // UP / DOWN reserved
             if (!prev_btn_up && btn_up) {
                 // TODO: integrate with GUI navigation
-                // printf("UP (GUI TODO)\n");
             }
             if (!prev_btn_down && btn_down) {
                 // TODO: integrate with GUI navigation
-                // printf("DOWN (GUI TODO)\n");
             }
 
-            // ---- START reserved for future menu ----
+            // START reserved
             if (!prev_btn_start && btn_start) {
                 printf("[MENU] (TODO)\n");
             }
@@ -556,22 +656,15 @@ void play_mp3_stream(const char *filename) {
             prev_btn_select = select_btn;
         }
 
-        // ============================================================
-        // If we get here, DMA accepted buf_ready and started playing it.
-        // Now rotate buffers and mark we need to decode again.
-        // ============================================================
-
+        // DMA accepted buf_ready and started playing it.
         int16_t *old = buf_play;
-        buf_play  = buf_ready;   // buffered PCM now playing
-        buf_ready = buf_fill;    // next PCM ready
-        buf_fill  = old;         // old play buffer becomes the new fill target
+        buf_play  = buf_ready;   // now playing
+        buf_ready = buf_fill;    // next ready
+        buf_fill  = old;         // to be filled
 
-        decoded_next_chunk = false;  // must decode next chunk again
+        decoded_next_chunk = false;  // decode again on next loop
     }
 
-    // ================================================================
-    // CLEANUP
-    // ================================================================
 END_PLAYBACK:
     free(pcmA);
     free(pcmB);
@@ -579,5 +672,79 @@ END_PLAYBACK:
     free(silence_buf);
     drmp3_uninit(&mp3);
     f_close(&stream.file);
+
+    return result;
+}
+
+
+// ===================================================================
+// Playlist-level player
+// ===================================================================
+void play_mp3_stream(const char *start_filename) {
+    sd_card_t *pSD = sd_get_by_num(0);
+    FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+    if (fr != FR_OK) {
+        printf("Mount fail %d\n", fr);
+        return;
+    }
+
+    // Build playlist from /music, then root fallback
+    mp3_build_playlist();
+
+    if (g_track_count == 0) {
+        printf("No MP3 files found on SD.\n");
+        f_unmount(pSD->pcName);
+        return;
+    }
+
+    // Choose initial track index
+    int current_index = 0;
+
+    if (start_filename && start_filename[0] != '\0') {
+        for (int i = 0; i < g_track_count; i++) {
+            const char *base = basename_from_path(g_playlist[i]);
+            if (strcmp(base, start_filename) == 0) {
+                current_index = i;
+                break;
+            }
+        }
+    }
+
+    // Optional: seed shuffle from time
+    srand((unsigned)time_us_64());
+
+    while (1) {
+        const char *path = g_playlist[current_index];
+        const char *base = basename_from_path(path);
+
+        printf("\n--- Now playing [%d/%d]: %s ---\n",
+               current_index + 1, g_track_count, base);
+
+        play_result_t r = mp3_play_single_track(path);
+
+        if (r == PLAY_RESULT_STOP) {
+            // Stop playback (e.g., user quits in future menu)
+            break;
+        } else if (r == PLAY_RESULT_PREV) {
+            // Previous track (linear)
+            current_index--;
+            if (current_index < 0)
+                current_index = g_track_count - 1;
+        } else if (r == PLAY_RESULT_NEXT) {
+            // Next track (respect shuffle)
+            if (g_shuffle_enabled && g_track_count > 1) {
+                int new_idx = current_index;
+                while (new_idx == current_index) {
+                    new_idx = rand() % g_track_count;
+                }
+                current_index = new_idx;
+            } else {
+                current_index++;
+                if (current_index >= g_track_count)
+                    current_index = 0;
+            }
+        }
+    }
+
     f_unmount(pSD->pcName);
 }

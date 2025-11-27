@@ -530,6 +530,71 @@ static inline void run_gmeter_dashboard(void) {
         }
         prev_select = select_now;
 
+        // =====================================================
+        //  Brightness Control
+        // =====================================================
+        read_io_expander_states(0);   // refresh GPIO states
+
+        // current button reads (active-low)
+        bool cur_up    = gpio_read(IOX_B_UP);
+        bool cur_down  = gpio_read(IOX_B_DOWN);
+        bool cur_left  = gpio_read(IOX_B_LEFT);
+        bool cur_right = gpio_read(IOX_B_RIGHT);
+
+        // previous states (keep in this block, static)
+        static bool prev_up    = true;
+        static bool prev_down  = true;
+        static bool prev_left  = true;
+        static bool prev_right = true;
+
+        // =====================================================
+        //  LCD / PWR Brightness (Up & Down)
+        // =====================================================
+
+        // Brightness UP (on press)
+        if (!cur_up && prev_up) {
+            if (!low_power) {
+        #if TIE_PWR_LED_TO_LCD
+                pwr_led_duty_cycle = lcd_led_duty_cycle;
+        #endif
+                step_pwr_brightness(true);
+            }
+            step_lcd_brightness(true);
+        }
+
+        // Brightness DOWN (on press)
+        if (!cur_down && prev_down) {
+            if (!low_power) {
+        #if TIE_PWR_LED_TO_LCD
+                pwr_led_duty_cycle = lcd_led_duty_cycle;
+        #endif
+                step_pwr_brightness(false);
+            }
+            step_lcd_brightness(false);
+        }
+
+
+        // =====================================================
+        //  Button LED Brightness (Left & Right)
+        // =====================================================
+
+        // Button LED brightness UP
+        if (!cur_right && prev_right) {
+            step_button_brightness(true);
+        }
+
+        // Button LED brightness DOWN
+        if (!cur_left && prev_left) {
+            step_button_brightness(false);
+        }
+
+
+        // save previous states
+        prev_up    = cur_up;
+        prev_down  = cur_down;
+        prev_left  = cur_left;
+        prev_right = cur_right;
+
         // ------------------------------
         // Read IMU
         // ------------------------------

@@ -396,9 +396,9 @@ static play_result_t mp3_play_single_track(const char *filepath) {
     drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, buf_ready);
 
     // Playback state
-    audio_mode = headphones_present ? AUDIO_HP_ONLY : AUDIO_SPK_ONLY;
-    apply_audio_mode();
-    dac_i2c_write(1, 0x21, 0x06);   // 100ms ramp
+    // audio_mode = headphones_present ? AUDIO_HP_ONLY : AUDIO_SPK_ONLY;
+    // apply_audio_mode();
+    // dac_i2c_write(1, 0x21, 0x06);   // 100ms ramp
 
     printf("Starting MP3 stream...\n");
 

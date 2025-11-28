@@ -402,6 +402,8 @@ static play_result_t mp3_play_single_track(const char *filepath) {
 
     printf("Starting MP3 stream...\n");
 
+    set_sd_busy(true);
+    
     bool decoded_next_chunk = false;
     bool paused = false;
 

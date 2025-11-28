@@ -163,3 +163,26 @@ bool watchdog_callback(repeating_timer_t *rt) {
     watchdog_update();
     return true; // Return true to keep the timer running
 }
+
+void process_bat_percent();
+void shutdown_peripherals(bool keep_i2c);
+void minimal_battery_monitoring_cb() {
+#if ENABLE_BAT_MONITORING
+	// Check battery status periodically
+	if (battery_task_flag) {
+		battery_task_flag = false;
+		process_bat_percent();
+	}
+	if (low_power_shutdown) {
+		release_power(); // Cut power hold
+		sleep_ms(1);
+		watchdog_disable();
+		shutdown_peripherals(true);
+		sleep_ms(10);
+	}
+	while(low_power_shutdown) {
+		process_bat_percent();
+		sleep_ms(BATTERY_TIMER_INTERVAL_MS);
+	}
+#endif
+}

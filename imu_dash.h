@@ -516,6 +516,9 @@ static inline void run_gmeter_dashboard(void) {
     while (1) {
         watchdog_update();
 
+        // BATTERY MONITORING //
+        minimal_battery_monitoring_cb();
+
         // ------------------------------
         // Handle SELECT calibration (active-low)
         // ------------------------------

@@ -1,7 +1,7 @@
 // ===============================================================
 // Pico Pal MP3 Streaming Player (PLAYLIST + TRIPLE PCM BUFFER)
 // - Scans "/music" for .mp3; if none, falls back to root
-// - PCM_FRAME_COUNT = 2048
+// - PCM_FRAME_COUNT = 6144 (high for long buffers in PSRAM)
 // - Triple PCM buffers
 // - Non-blocking I2S DMA (i2s_dma_write_non_blocking must be implemented)
 // - Controls:
@@ -20,13 +20,14 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include "pico/time.h"   // time_us_64()
 
 #ifndef PCM_FRAME_COUNT
 #define PCM_FRAME_COUNT 6144
 #endif
 
-#define MP3_STREAM_BUF_SIZE       (16 * 1024)   // 16 KB ring buffer
+#define MP3_STREAM_BUF_SIZE       (16 * 1024)   // 16 KB ring buffer (in PSRAM via malloc)
 #define MP3_REFILL_CHUNK          (4 * 1024)    // max bytes per SD read
 
 // Directory used for music; fallback is root ("")
@@ -38,7 +39,7 @@
 #define SEEK_STEP_SECONDS         2             // Each seek step in seconds (~2s)
 
 // Maximum playlist size and path length
-#define MP3_MAX_TRACKS            64
+#define MP3_MAX_TRACKS            4096
 #define MP3_MAX_PATH_LEN          96
 
 
@@ -91,11 +92,11 @@ static bool          g_shuffle_enabled = false;
 
 
 // ===================================================================
-// SD ring buffer logic
+// SD ring buffer logic (HEAP-BASED, in PSRAM via malloc)
 // ===================================================================
 typedef struct {
     FIL file;
-    uint8_t buf[MP3_STREAM_BUF_SIZE];
+    uint8_t *buf;                // was: uint8_t buf[MP3_STREAM_BUF_SIZE];
     uint32_t rd;
     uint32_t wr;
     uint32_t count;
@@ -104,6 +105,8 @@ typedef struct {
 
 // SD → ring buffer refill, capped to MP3_REFILL_CHUNK to avoid stalls
 static void mp3_refill(mp3_stream_t *s) {
+    if (!s || !s->buf) return;
+
     if (s->eof || s->count >= MP3_STREAM_BUF_SIZE)
         return;
 
@@ -139,6 +142,8 @@ static size_t mp3_stream_read(void *pUserData, void *pBufferOut, size_t bytesToR
     uint8_t *out = (uint8_t *)pBufferOut;
     size_t copied = 0;
 
+    if (!s || !s->buf) return 0;
+
     while (copied < bytesToRead) {
         if (s->count == 0) {
             if (s->eof) break;
@@ -168,10 +173,13 @@ static drmp3_bool32 mp3_stream_seek(void *pUserData, int offset, drmp3_seek_orig
 
 
 // ===================================================================
-// Playlist storage
+// Playlist storage (HEAP-BASED, in PSRAM via malloc)
 // ===================================================================
-static char g_playlist[MP3_MAX_TRACKS][MP3_MAX_PATH_LEN];
-static int  g_track_count = 0;
+
+// Pointer to N×MP3_MAX_PATH_LEN block
+static char (*g_playlist)[MP3_MAX_PATH_LEN] = NULL;
+static int   g_track_count  = 0;
+static int   g_playlist_cap = 0;
 
 // Lowercase helper
 static char tolower_ascii(char c) {
@@ -196,11 +204,33 @@ static const char* basename_from_path(const char *path) {
     return slash ? (slash + 1) : path;
 }
 
+// Allocate playlist array in PSRAM
+static bool mp3_playlist_init(void) {
+    if (g_playlist) {
+        return true; // already allocated
+    }
+
+    g_playlist = (char (*)[MP3_MAX_PATH_LEN])malloc(MP3_MAX_TRACKS * MP3_MAX_PATH_LEN);
+    if (!g_playlist) {
+        printf("playlist malloc fail\n");
+        g_playlist_cap = 0;
+        return false;
+    }
+
+    g_playlist_cap = MP3_MAX_TRACKS;
+    memset(g_playlist, 0, MP3_MAX_TRACKS * MP3_MAX_PATH_LEN);
+    return true;
+}
+
 // Scan a directory ("music" or "") and append .mp3 files to playlist
 static int mp3_scan_dir(const char *dir) {
     DIR dir_obj;
     FILINFO fno;
     int added = 0;
+
+    if (!g_playlist || g_playlist_cap == 0) {
+        return 0;
+    }
 
     const char *open_path = (dir && dir[0] != '\0') ? dir : "";
 
@@ -228,7 +258,7 @@ static int mp3_scan_dir(const char *dir) {
         if (!has_mp3_extension(name))
             continue;
 
-        if (g_track_count >= MP3_MAX_TRACKS)
+        if (g_track_count >= g_playlist_cap)
             break;
 
         // Build path
@@ -248,6 +278,12 @@ static int mp3_scan_dir(const char *dir) {
 
 // Build playlist: try MUSIC_DIR, then fallback to root
 static void mp3_build_playlist(void) {
+    if (!mp3_playlist_init()) {
+        printf("Playlist init failed\n");
+        g_track_count = 0;
+        return;
+    }
+
     g_track_count = 0;
 
     int from_music = mp3_scan_dir(MUSIC_DIR);
@@ -272,6 +308,8 @@ static bool seek_relative_seconds(
     int sample_rate,
     bool *decoded_next_chunk
 ){
+    if (!stream) return false;
+
     DWORD pos = f_tell(&stream->file);
 
     // Rough byte estimate: sample_rate * 2 bytes/sample * seconds
@@ -317,25 +355,38 @@ typedef enum {
     PLAY_RESULT_PREV
 } play_result_t;
 
-// Non-blocking I2S DMA prototype (implemented elsewhere)
-bool i2s_dma_write_non_blocking(i2s_config_t *i2s_config, const uint16_t *samples);
-
+// Non-blocking MP3 playback for a single file
 static play_result_t mp3_play_single_track(const char *filepath) {
-    mp3_stream_t stream = {0};
     FRESULT fr;
+    play_result_t result = PLAY_RESULT_STOP;
 
-    fr = f_open(&stream.file, filepath, FA_READ);
-    if (fr != FR_OK) {
-        printf("Open fail %d for '%s'\n", fr, filepath);
-        return PLAY_RESULT_NEXT;   // skip broken file
+    // --- Allocate stream structure + ring buffer in PSRAM ---
+    mp3_stream_t *stream = (mp3_stream_t *)calloc(1, sizeof(mp3_stream_t));
+    if (!stream) {
+        printf("mp3_stream_t malloc fail\n");
+        return PLAY_RESULT_NEXT;
     }
 
-    DWORD file_size = f_size(&stream.file);
+    stream->buf = (uint8_t *)malloc(MP3_STREAM_BUF_SIZE);
+    if (!stream->buf) {
+        printf("mp3_stream_t buf malloc fail\n");
+        free(stream);
+        return PLAY_RESULT_NEXT;
+    }
+
+    fr = f_open(&stream->file, filepath, FA_READ);
+    if (fr != FR_OK) {
+        printf("Open fail %d for '%s'\n", fr, filepath);
+        result = PLAY_RESULT_NEXT;
+        goto CLEANUP_STREAM_ONLY;
+    }
+
+    DWORD file_size = f_size(&stream->file);
     printf("Streaming MP3 file (%lu bytes)...\n", (unsigned long)file_size);
 
     // Initial small prefill
-    for (int i = 0; i < 4 && !stream.eof; i++) {
-        mp3_refill(&stream);
+    for (int i = 0; i < 4 && !stream->eof; i++) {
+        mp3_refill(stream);
     }
 
     drmp3 mp3;
@@ -344,11 +395,11 @@ static play_result_t mp3_play_single_track(const char *filepath) {
                     NULL,   // no seek callback
                     NULL,   // no tell
                     NULL,   // no meta
-                    &stream,
+                    stream, // pUserData
                     NULL)) {
         printf("E drmp3_init failed\n");
-        f_close(&stream.file);
-        return PLAY_RESULT_NEXT;
+        result = PLAY_RESULT_NEXT;
+        goto CLEANUP_FILE;
     }
 
     printf("MP3: %d Hz, %d ch\n", mp3.sampleRate, mp3.channels);
@@ -357,21 +408,16 @@ static play_result_t mp3_play_single_track(const char *filepath) {
     int channels = mp3.channels;
     int sample_count = PCM_FRAME_COUNT * channels;
 
-    // Triple PCM buffers + silence buffer for pause
-    int16_t *pcmA       = malloc(sample_count * sizeof(int16_t));
-    int16_t *pcmB       = malloc(sample_count * sizeof(int16_t));
-    int16_t *pcmC       = malloc(sample_count * sizeof(int16_t));
-    int16_t *silence_buf = calloc(sample_count, sizeof(int16_t));
+    // Triple PCM buffers + silence buffer for pause (all in PSRAM)
+    int16_t *pcmA        = (int16_t *)malloc(sample_count * sizeof(int16_t));
+    int16_t *pcmB        = (int16_t *)malloc(sample_count * sizeof(int16_t));
+    int16_t *pcmC        = (int16_t *)malloc(sample_count * sizeof(int16_t));
+    int16_t *silence_buf = (int16_t *)calloc(sample_count, sizeof(int16_t));
 
     if (!pcmA || !pcmB || !pcmC || !silence_buf) {
         printf("pcm malloc fail\n");
-        if (pcmA) free(pcmA);
-        if (pcmB) free(pcmB);
-        if (pcmC) free(pcmC);
-        if (silence_buf) free(silence_buf);
-        drmp3_uninit(&mp3);
-        f_close(&stream.file);
-        return PLAY_RESULT_NEXT;
+        result = PLAY_RESULT_NEXT;
+        goto CLEANUP_MP3;
     }
 
     int16_t *buf_play  = pcmA;
@@ -379,17 +425,17 @@ static play_result_t mp3_play_single_track(const char *filepath) {
     int16_t *buf_fill  = pcmC;
 
     // Extra prefill before first decode
-    for (int i = 0; i < 4 && !stream.eof; i++) {
-        mp3_refill(&stream);
+    for (int i = 0; i < 4 && !stream->eof; i++) {
+        mp3_refill(stream);
     }
 
     // First buffer: decode & start DMA
     drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, buf_play);
-    i2s_dma_write(&i2s_config, buf_play);
+    i2s_dma_write(&i2s_config, (const uint16_t *)buf_play);
 
     // More prefill before second buffer
-    for (int i = 0; i < 4 && !stream.eof; i++) {
-        mp3_refill(&stream);
+    for (int i = 0; i < 4 && !stream->eof; i++) {
+        mp3_refill(stream);
     }
 
     // Decode second buffer into buf_ready
@@ -403,7 +449,7 @@ static play_result_t mp3_play_single_track(const char *filepath) {
     printf("Starting MP3 stream...\n");
 
     set_sd_busy(true);
-    
+
     bool decoded_next_chunk = false;
     bool paused = false;
 
@@ -427,8 +473,6 @@ static play_result_t mp3_play_single_track(const char *filepath) {
     bool left_held_seek  = false;
     bool right_held_seek = false;
 
-    play_result_t result = PLAY_RESULT_STOP;
-
     // ================================================================
     // MAIN PLAYBACK LOOP
     // ================================================================
@@ -436,13 +480,13 @@ static play_result_t mp3_play_single_track(const char *filepath) {
 
         // While DMA is still sending previous buffer, do useful work
         while (!i2s_dma_write_non_blocking(&i2s_config,
-                                           paused ? silence_buf : buf_ready)) {
+                                           (const uint16_t *)(paused ? silence_buf : buf_ready))) {
 
             // SD mini-refills
             for (int i = 0;
-                 i < 2 && stream.count < (MP3_STREAM_BUF_SIZE * 3 / 4) && !stream.eof;
+                 i < 2 && stream->count < (MP3_STREAM_BUF_SIZE * 3 / 4) && !stream->eof;
                  i++) {
-                mp3_refill(&stream);
+                mp3_refill(stream);
             }
 
             // Decode into buf_fill only if we haven’t yet and not paused
@@ -451,7 +495,7 @@ static play_result_t mp3_play_single_track(const char *filepath) {
                     drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, buf_fill);
 
                 if (frames == 0) {
-                    if (stream.eof) {
+                    if (stream->eof) {
                         // Handle repeat logic
                         if (g_repeat_mode == REPEAT_OFF) {
                             printf("MP3 EOF reached (no repeat) -> next track\n");
@@ -462,13 +506,13 @@ static play_result_t mp3_play_single_track(const char *filepath) {
 
                         // Restart same track
                         printf("MP3 EOF reached -> restarting track (repeat)\n");
-                        f_lseek(&stream.file, 0);
-                        stream.rd = stream.wr = stream.count = 0;
-                        stream.eof = false;
+                        f_lseek(&stream->file, 0);
+                        stream->rd = stream->wr = stream->count = 0;
+                        stream->eof = false;
 
                         drmp3_uninit(&mp3);
                         if (!drmp3_init(&mp3, mp3_stream_read,
-                                        NULL, NULL, NULL, &stream, NULL)) {
+                                        NULL, NULL, NULL, stream, NULL)) {
                             printf("E drmp3_init after repeat\n");
                             result = PLAY_RESULT_NEXT;
                             goto END_PLAYBACK;
@@ -567,7 +611,7 @@ static play_result_t mp3_play_single_track(const char *filepath) {
                             (now_us - left_last_seek_us) / 1000;
                         if (since_last_ms >= SEEK_REPEAT_INTERVAL_MS) {
                             printf("Rewind -%ds\n", SEEK_STEP_SECONDS);
-                            seek_relative_seconds(&stream, &mp3,
+                            seek_relative_seconds(stream, &mp3,
                                                   -SEEK_STEP_SECONDS,
                                                   mp3.sampleRate,
                                                   &decoded_next_chunk);
@@ -610,7 +654,7 @@ static play_result_t mp3_play_single_track(const char *filepath) {
                             (now_us - right_last_seek_us) / 1000;
                         if (since_last_ms >= SEEK_REPEAT_INTERVAL_MS) {
                             printf("Fast-forward +%ds\n", SEEK_STEP_SECONDS);
-                            seek_relative_seconds(&stream, &mp3,
+                            seek_relative_seconds(stream, &mp3,
                                                   SEEK_STEP_SECONDS,
                                                   mp3.sampleRate,
                                                   &decoded_next_chunk);
@@ -675,8 +719,18 @@ END_PLAYBACK:
     free(pcmB);
     free(pcmC);
     free(silence_buf);
+
+CLEANUP_MP3:
     drmp3_uninit(&mp3);
-    f_close(&stream.file);
+
+CLEANUP_FILE:
+    f_close(&stream->file);
+
+CLEANUP_STREAM_ONLY:
+    if (stream) {
+        if (stream->buf) free(stream->buf);
+        free(stream);
+    }
 
     return result;
 }
@@ -685,6 +739,7 @@ END_PLAYBACK:
 // ===================================================================
 // Playlist-level player
 // ===================================================================
+
 void play_mp3_stream(const char *start_filename) {
     sd_card_t *pSD = sd_get_by_num(0);
     FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
@@ -752,4 +807,6 @@ void play_mp3_stream(const char *start_filename) {
     }
 
     f_unmount(pSD->pcName);
+    // If you ever want to free playlist:
+    // if (g_playlist) { free(g_playlist); g_playlist = NULL; g_playlist_cap = 0; }
 }

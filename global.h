@@ -24,7 +24,19 @@ const uint8_t *rom = (const uint8_t *) (XIP_BASE + FLASH_TARGET_OFFSET);
 #endif
 enum gb_init_error_e ret;
 
-static uint8_t ram[32768];
+uint8_t *ram = NULL;
+bool gb_alloc_ram(void)
+{
+    ram = malloc(32768);   // goes to PSRAM on your system
+    if (!ram) {
+        printf("ERROR: Failed to alloc GB 32KB RAM block\n");
+        return false;
+    }
+
+    memset(ram, 0, 32768);
+    return true;
+}
+
 static int lcd_fb_ready = 0;
 static palette_t palette;	// Colour palette
 static int8_t manual_palette_selected=-1;

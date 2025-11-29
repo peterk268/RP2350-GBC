@@ -202,7 +202,7 @@ int main(void)
 	// Initialize I2S sound driver
 	i2s_config = i2s_get_default_config();
 	i2s_config.sample_freq=AUDIO_SAMPLE_RATE;
-	i2s_config.dma_trans_count = !gpio_read(IOX_B_A) ? PCM_FRAME_COUNT : AUDIO_SAMPLES;
+	i2s_config.dma_trans_count = gpio_read(IOX_B_UP) ? PCM_FRAME_COUNT : AUDIO_SAMPLES;
 	i2s_config.mclk_mult = 512;          // 512× is cleaner
 
 	i2s_volume(&i2s_config,0);
@@ -238,15 +238,14 @@ while(true)
 	fade_in_leds_startup();
 
 	// read_io_expander_states(0);
-	if (!gpio_read(IOX_B_A)) {
-		play_mp3_stream(NULL);
-		while (1) { tight_loop_contents(); }
-	}
 	if (!gpio_read(IOX_B_B)) {
 		run_gmeter_dashboard();
 		while (1) { tight_loop_contents(); }
 	}
-	// while (1) { tight_loop_contents(); }
+	if (gpio_read(IOX_B_UP)) {
+		play_mp3_stream(NULL);
+		while (1) { tight_loop_contents(); }
+	}
 
 #if ENABLE_SDCARD && ENABLE_ROM_SELECTOR
 	rom_file_selector();
@@ -254,6 +253,7 @@ while(true)
 	set_sd_busy(true);
 
 	// MARK: - Initialise GB context
+	gb_alloc_ram();
 	ret = gb_init(&gb, &gb_rom_read, &gb_cart_ram_read,
 		      &gb_cart_ram_write, &gb_error, NULL);
 #if ENABLE_BOOTROM

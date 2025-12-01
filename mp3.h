@@ -148,15 +148,6 @@ typedef struct {
     bool eof;
 } mp3_stream_t;
 
-// Reset ring buffer state after an external seek
-static inline void mp3_stream_flush(mp3_stream_t *s) {
-    if (!s) return;
-    s->rd = 0;
-    s->wr = 0;
-    s->count = 0;
-    s->eof = false;
-}
-
 // SD → ring buffer refill, capped to MP3_REFILL_CHUNK to avoid stalls
 static void mp3_refill(mp3_stream_t *s) {
     if (!s || !s->buf) return;
@@ -218,23 +209,11 @@ static size_t mp3_stream_read(void *pUserData, void *pBufferOut, size_t bytesToR
     return copied;
 }
 
-static drmp3_bool32 mp3_stream_seek(void *pUserData, int offset, drmp3_seek_origin origin)
-{
-    mp3_stream_t *s = (mp3_stream_t *)pUserData;
-    if (!s) return DRMP3_FALSE;
-
-    // We ignore origin and treat 'offset' as absolute byte offset from start.
-    // This matches how dr_mp3 uses it for MP3 files in practice.
-    if (offset < 0) offset = 0;
-
-    if (f_lseek(&s->file, (DWORD)offset) != FR_OK)
-        return DRMP3_FALSE;
-
-    // Invalidate ring buffer because file position changed.
-    mp3_stream_flush(s);
-
-    (void)origin; // avoid unused warning
-    return DRMP3_TRUE;
+static drmp3_bool32 mp3_stream_seek(void *pUserData, int offset, drmp3_seek_origin origin) {
+    (void)pUserData;
+    (void)offset;
+    (void)origin;
+    return DRMP3_FALSE;
 }
 
 
@@ -367,6 +346,50 @@ static void mp3_build_playlist(void) {
 // ===================================================================
 // Seek helper: approximate seek by jumping compressed bytes
 // ===================================================================
+static bool seek_relative_seconds(
+    mp3_stream_t *stream,
+    drmp3 *mp3,
+    int seconds,
+    int sample_rate,
+    bool *decoded_next_chunk
+){
+    if (!stream) return false;
+
+    DWORD pos = f_tell(&stream->file);
+
+    // Rough byte estimate: sample_rate * 2 bytes/sample * seconds
+    int64_t delta_bytes = (int64_t)sample_rate * 2 * seconds;
+    int64_t new_pos = (int64_t)pos + delta_bytes;
+
+    if (new_pos < 0) new_pos = 0;
+    if (new_pos > (int64_t)f_size(&stream->file))
+        new_pos = f_size(&stream->file);
+
+    f_lseek(&stream->file, (DWORD)new_pos);
+
+    // Reset ring buffer
+    stream->rd = 0;
+    stream->wr = 0;
+    stream->count = 0;
+    stream->eof = false;
+
+    // Re-init decoder
+    drmp3_uninit(mp3);
+    if (!drmp3_init(mp3,
+                    mp3_stream_read,
+                    NULL,
+                    NULL,
+                    NULL,
+                    stream,
+                    NULL)) {
+        printf("E drmp3_init after seek\n");
+        return false;
+    }
+
+    *decoded_next_chunk = false;
+    return true;
+}
+
 
 static inline int adaptive_seek_step_ms(uint64_t held_ms) {
     if (held_ms < SEEK_STAGE_1_MS)
@@ -378,110 +401,6 @@ static inline int adaptive_seek_step_ms(uint64_t held_ms) {
     if (held_ms < SEEK_STAGE_4_MS)
         return SEEK_STEP_5S;
     return SEEK_STEP_10S;
-}
-
-static bool seek_relative_seconds_pcm(
-    mp3_stream_t *stream,
-    drmp3* mp3,
-    int seconds,
-    uint64_t* played_frames,
-    bool *decoded_next_chunk
-){
-    if (!stream || !mp3 || !played_frames) return false;
-
-    // 1) Compute target frame
-    int64_t delta_frames = (int64_t)seconds * mp3->sampleRate;
-    int64_t target       = (int64_t)(*played_frames) + delta_frames;
-    if (target < 0) target = 0;
-
-    // 2) Flush buffered data and let dr_mp3 handle internal reset on seek.
-    mp3_stream_flush(stream);
-
-    // 3) Accurate PCM seek
-    if (!drmp3_seek_to_pcm_frame(mp3, (drmp3_uint64)target)) {
-        return false;
-    }
-
-    *played_frames = (uint64_t)target;
-    *decoded_next_chunk = false;
-    return true;
-}
-
-// Smart seek that chooses between fast byte-jump + PCM seek
-static bool seek_relative_seconds(
-    mp3_stream_t *stream,
-    drmp3 *mp3,
-    int seconds,
-    uint64_t *played_frames,
-    int sample_rate,
-    bool *decoded_next_chunk
-){
-    if (!stream || !mp3 || !played_frames) return false;
-
-    int abs_sec = (seconds < 0 ? -seconds : seconds);
-
-    // Rough bytes-per-second estimate using current playback position.
-    int64_t cur_pos = f_tell(&stream->file);
-    int64_t cur_size = f_size(&stream->file);
-    int64_t bytes_per_sec = 16000; // fallback ~128 kbps
-    if (sample_rate > 0 && *played_frames > 0 && cur_pos > 0) {
-        int64_t bytes_per_frame_est = cur_pos / (int64_t)(*played_frames);
-        if (bytes_per_frame_est > 0) {
-            int64_t est = bytes_per_frame_est * sample_rate;
-            if (est > 0) bytes_per_sec = est;
-        }
-    }
-
-    int64_t delta_frames = (int64_t)seconds * sample_rate;
-    int64_t target_frames = (int64_t)(*played_frames) + delta_frames;
-    if (target_frames < 0) target_frames = 0;
-
-    // ----------------------------------------------------------
-    // SMALL SEEK (<5s): fast byte jump only (no PCM realign)
-    // ----------------------------------------------------------
-    if (abs_sec < 5) {
-        int64_t byte_jump = (int64_t)seconds * bytes_per_sec;
-        int64_t target = cur_pos + byte_jump;
-
-        if (target < 0) target = 0;
-        if (target > cur_size) target = cur_size;
-
-        f_lseek(&stream->file, (DWORD)target);
-        mp3_stream_flush(stream);
-
-        *played_frames = (uint64_t)target_frames;
-        *decoded_next_chunk = false;
-        return true;
-    }
-
-    // ----------------------------------------------------------
-    // LARGE SEEK (>=5s):
-    // 1) Fast byte jump (approx)
-    // 2) Flush ring buffer (keep decoder alive)
-    // 3) Accurate PCM seek to correct frame
-    // ----------------------------------------------------------
-
-    // Approximate skip (fast) using runtime bitrate estimate
-    int64_t byte_jump = (int64_t)seconds * bytes_per_sec;
-    int64_t target = cur_pos + byte_jump;
-
-    if (target < 0) target = 0;
-    if (target > cur_size)
-        target = cur_size;
-
-    f_lseek(&stream->file, (DWORD)target);
-
-    // Reset ring buffer fully so the decoder reads from the new position.
-    mp3_stream_flush(stream);
-
-    // Accurate PCM seek for perfect alignment without tearing down the decoder
-    if (!drmp3_seek_to_pcm_frame(mp3, (drmp3_uint64)target_frames)) {
-        return false;
-    }
-
-    *played_frames = (uint64_t)target_frames;
-    *decoded_next_chunk = false;
-    return true;
 }
 
 // ===================================================================
@@ -535,7 +454,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
     drmp3 mp3;
     if (!drmp3_init(&mp3,
                     mp3_stream_read,
-                    mp3_stream_seek,   // no seek callback
+                    NULL,   // no seek callback
                     NULL,   // no tell
                     NULL,   // no meta
                     stream, // pUserData
@@ -574,9 +493,19 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
     // Resume position (if any)
     if (resume_position_ms > 0) {
-        uint32_t seconds = resume_position_ms / 1000;
-        bool dummy = false;
-        seek_relative_seconds(stream, &mp3, seconds, &played_frames, mp3.sampleRate, &dummy);
+        printf("Seeking to resume position %u ms...\n", resume_position_ms);
+
+        if (mp3.sampleRate > 0) {
+            drmp3_uint64 target_frames =
+                (drmp3_uint64)resume_position_ms * mp3.sampleRate / 1000;
+
+            if (drmp3_seek_to_pcm_frame(&mp3, target_frames)) {
+                played_frames = (uint64_t)target_frames;
+            } else {
+                printf("drmp3_seek_to_pcm_frame failed for resume\n");
+                played_frames = 0;
+            }
+        }
     }
 
 
@@ -677,7 +606,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
                         drmp3_uninit(&mp3);
                         if (!drmp3_init(&mp3, mp3_stream_read,
-                                        mp3_stream_seek, NULL, NULL, stream, NULL)) {
+                                        NULL, NULL, NULL, stream, NULL)) {
                             printf("E drmp3_init after repeat\n");
                             result = PLAY_RESULT_NEXT;
                             goto END_PLAYBACK;
@@ -778,10 +707,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             int step = adaptive_seek_step_ms(held_ms);
                             printf("Rewind -%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
-                            if (seek_relative_seconds(stream, &mp3, -step, &played_frames, mp3.sampleRate, &decoded_next_chunk)) {
-                                // nothing else needed
-                            }
-
+                            seek_relative_seconds(stream, &mp3, -step, mp3.sampleRate, &decoded_next_chunk);
                             left_last_seek_us = now_us;
                         }
                     }
@@ -817,10 +743,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             int step = adaptive_seek_step_ms(held_ms);
                             printf("Fast-forward +%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
-                            if (seek_relative_seconds(stream, &mp3, step, &played_frames, mp3.sampleRate, &decoded_next_chunk)) {
-                                // nothing else needed
-                            }
-
+                            seek_relative_seconds(stream, &mp3, step, mp3.sampleRate, &decoded_next_chunk);
                             right_last_seek_us = now_us;
                         }
                     }
@@ -905,7 +828,7 @@ void play_mp3_stream(const char *start_filename) {
         return;
     }
 
-    watchdog_enable(WATCHDOG_TIMEOUT_MS*12, true); // 4 second timeout, pause-on-debug = true
+    watchdog_enable(WATCHDOG_TIMEOUT_MS*2, true); // 4 second timeout, pause-on-debug = true
 #if ENABLE_SAVE_ON_POWER_OFF
 	hold_power(); // keep power on for saving mp3 state
 #endif

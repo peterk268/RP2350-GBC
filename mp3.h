@@ -33,14 +33,26 @@
 // Directory used for music; fallback is root ("")
 #define MUSIC_DIR                 "music"
 
-// ---- Seek behaviour tuning ----
-#define SEEK_HOLD_TIME_MS         250           // Hold LEFT/RIGHT this long to start seeking
-#define SEEK_REPEAT_INTERVAL_MS   150           // Seek step repeat while held
-#define SEEK_STEP_SECONDS         2             // Each seek step in seconds (~2s)
+// Adaptive seek curve (seconds)
+#define SEEK_STEP_1S          1
+#define SEEK_STEP_2S          2
+#define SEEK_STEP_3S          3
+#define SEEK_STEP_5S          5
+#define SEEK_STEP_10S        10
+
+// Hold thresholds
+#define SEEK_STAGE_1_MS     1500
+#define SEEK_STAGE_2_MS     3000
+#define SEEK_STAGE_3_MS     5000
+#define SEEK_STAGE_4_MS     10000
+
+// Base repeat interval
+#define SEEK_REPEAT_INTERVAL_MS  200
+#define SEEK_HOLD_TIME_MS        350
 
 // Maximum playlist size and path length
 #define MP3_MAX_TRACKS            4096
-#define MP3_MAX_PATH_LEN          96
+#define MP3_MAX_PATH_LEN          256
 
 
 // ===================================================================
@@ -346,6 +358,18 @@ static bool seek_relative_seconds(
 }
 
 
+static inline int adaptive_seek_step_ms(uint64_t held_ms) {
+    if (held_ms < SEEK_STAGE_1_MS)
+        return SEEK_STEP_1S;
+    if (held_ms < SEEK_STAGE_2_MS)
+        return SEEK_STEP_2S;
+    if (held_ms < SEEK_STAGE_3_MS)
+        return SEEK_STEP_3S;
+    if (held_ms < SEEK_STAGE_4_MS)
+        return SEEK_STEP_5S;
+    return SEEK_STEP_10S;
+}
+
 // ===================================================================
 // Single-track player: returns what the playlist should do next
 // ===================================================================
@@ -595,42 +619,35 @@ static play_result_t mp3_play_single_track(const char *filepath) {
             // LEFT: tap = prev track, hold = seek backward
             if (btn_left) {
                 if (!prev_btn_left) {
-                    // New press
                     left_press_us     = now_us;
                     left_last_seek_us = now_us;
                     left_held_seek    = false;
                 } else {
-                    // Held
                     uint64_t held_ms = (now_us - left_press_us) / 1000;
+
                     if (!left_held_seek && held_ms >= SEEK_HOLD_TIME_MS && !paused) {
                         left_held_seek = true;
-                        printf("Start rewind (hold LEFT)\n");
+                        printf("Start rewind (adaptive)\n");
                     }
+
                     if (left_held_seek && !paused) {
-                        uint64_t since_last_ms =
-                            (now_us - left_last_seek_us) / 1000;
+                        uint64_t since_last_ms = (now_us - left_last_seek_us) / 1000;
                         if (since_last_ms >= SEEK_REPEAT_INTERVAL_MS) {
-                            printf("Rewind -%ds\n", SEEK_STEP_SECONDS);
-                            seek_relative_seconds(stream, &mp3,
-                                                  -SEEK_STEP_SECONDS,
-                                                  mp3.sampleRate,
-                                                  &decoded_next_chunk);
+
+                            int step = adaptive_seek_step_ms(held_ms);
+                            printf("Rewind -%ds (held %llums)\n", step, (unsigned long long)held_ms);
+
+                            seek_relative_seconds(stream, &mp3, -step, mp3.sampleRate, &decoded_next_chunk);
                             left_last_seek_us = now_us;
                         }
                     }
                 }
             } else {
-                // Released
-                if (prev_btn_left) {
-                    if (!left_held_seek) {
-                        // Short tap → previous track
-                        printf("<< Previous track\n");
-                        prev_track_requested = true;
-                        result = PLAY_RESULT_PREV;
-                        left_held_seek = false;
-                        prev_btn_left  = false;
-                        goto END_PLAYBACK;
-                    }
+                if (prev_btn_left && !left_held_seek) {
+                    printf("<< Previous track\n");
+                    prev_track_requested = true;
+                    result = PLAY_RESULT_PREV;
+                    goto END_PLAYBACK;
                 }
                 left_held_seek = false;
             }
@@ -638,42 +655,35 @@ static play_result_t mp3_play_single_track(const char *filepath) {
             // RIGHT: tap = next track, hold = seek forward
             if (btn_right) {
                 if (!prev_btn_right) {
-                    // New press
                     right_press_us     = now_us;
                     right_last_seek_us = now_us;
                     right_held_seek    = false;
                 } else {
-                    // Held
                     uint64_t held_ms = (now_us - right_press_us) / 1000;
+
                     if (!right_held_seek && held_ms >= SEEK_HOLD_TIME_MS && !paused) {
                         right_held_seek = true;
-                        printf("Start fast-forward (hold RIGHT)\n");
+                        printf("Start fast-forward (adaptive)\n");
                     }
+
                     if (right_held_seek && !paused) {
-                        uint64_t since_last_ms =
-                            (now_us - right_last_seek_us) / 1000;
+                        uint64_t since_last_ms = (now_us - right_last_seek_us) / 1000;
                         if (since_last_ms >= SEEK_REPEAT_INTERVAL_MS) {
-                            printf("Fast-forward +%ds\n", SEEK_STEP_SECONDS);
-                            seek_relative_seconds(stream, &mp3,
-                                                  SEEK_STEP_SECONDS,
-                                                  mp3.sampleRate,
-                                                  &decoded_next_chunk);
+
+                            int step = adaptive_seek_step_ms(held_ms);
+                            printf("Fast-forward +%ds (held %llums)\n", step, (unsigned long long)held_ms);
+
+                            seek_relative_seconds(stream, &mp3, step, mp3.sampleRate, &decoded_next_chunk);
                             right_last_seek_us = now_us;
                         }
                     }
                 }
             } else {
-                // Released
-                if (prev_btn_right) {
-                    if (!right_held_seek) {
-                        // Short tap → next track
-                        printf(">> Next track\n");
-                        next_track_requested = true;
-                        result = PLAY_RESULT_NEXT;
-                        right_held_seek = false;
-                        prev_btn_right  = false;
-                        goto END_PLAYBACK;
-                    }
+                if (prev_btn_right && !right_held_seek) {
+                    printf(">> Next track\n");
+                    next_track_requested = true;
+                    result = PLAY_RESULT_NEXT;
+                    goto END_PLAYBACK;
                 }
                 right_held_seek = false;
             }

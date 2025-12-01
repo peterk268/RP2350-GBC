@@ -99,8 +99,13 @@ typedef enum {
     REPEAT_INFINITE    // loop forever
 } repeat_mode_t;
 
-static repeat_mode_t g_repeat_mode = REPEAT_OFF;
-static bool          g_shuffle_enabled = false;
+static repeat_mode_t g_repeat_mode       = REPEAT_OFF;
+static bool          g_shuffle_enabled   = false;
+
+// This flag means "shuffle state changed while a track was playing;
+// rebuild the shuffle order once the track returns to the playlist layer".
+static bool          g_shuffle_needs_rebuild = false;
+
 
 // ===================================================================
 // Saving MP3 State and settings
@@ -225,6 +230,54 @@ static drmp3_bool32 mp3_stream_seek(void *pUserData, int offset, drmp3_seek_orig
 static char (*g_playlist)[MP3_MAX_PATH_LEN] = NULL;
 static int   g_track_count  = 0;
 static int   g_playlist_cap = 0;
+
+// ===================================================================
+// Playlist shuffle order (full playlist shuffling)
+// ===================================================================
+
+// Stores a permutation of [0..g_track_count-1]
+static int *g_shuffle_order = NULL;
+// Index into g_shuffle_order for the *current* track when shuffle is ON
+static int  g_shuffle_pos   = 0;
+
+// Build shuffle order using Fisher–Yates, and ensure current_track is first
+static void build_shuffle_order(int current_track) {
+    if (g_track_count <= 0)
+        return;
+
+    if (!g_shuffle_order) {
+        g_shuffle_order = (int *)malloc(sizeof(int) * g_track_count);
+        if (!g_shuffle_order) {
+            printf("shuffle malloc fail\n");
+            return;
+        }
+    }
+
+    // Fill 0..N-1
+    for (int i = 0; i < g_track_count; i++) {
+        g_shuffle_order[i] = i;
+    }
+
+    // Fisher–Yates shuffle
+    for (int i = g_track_count - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+        int tmp = g_shuffle_order[i];
+        g_shuffle_order[i] = g_shuffle_order[j];
+        g_shuffle_order[j] = tmp;
+    }
+
+    // Ensure current track is at position 0
+    for (int i = 0; i < g_track_count; i++) {
+        if (g_shuffle_order[i] == current_track) {
+            int tmp = g_shuffle_order[0];
+            g_shuffle_order[0] = g_shuffle_order[i];
+            g_shuffle_order[i] = tmp;
+            break;
+        }
+    }
+
+    g_shuffle_pos = 0;
+}
 
 // Lowercase helper
 static char tolower_ascii(char c) {
@@ -674,11 +727,11 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 }
             }
 
-            // SELECT → Shuffle toggle (global)
+            // SELECT → Shuffle toggle (global flag ONLY; playlist will rebuild order)
             if (!prev_btn_select && select_btn) {
-                g_shuffle_enabled = !g_shuffle_enabled;
+                g_shuffle_enabled       = !g_shuffle_enabled;
+                g_shuffle_needs_rebuild = true;   // handled in playlist-level loop
                 printf("Shuffle: %s\n", g_shuffle_enabled ? "ON" : "OFF");
-
                 // FUTURE GUI:
                 // if (audio_mode == AUDIO_HP_ONLY)      audio_mode = AUDIO_SPK_ONLY;
                 // else if (audio_mode == AUDIO_SPK_ONLY) audio_mode = AUDIO_BOTH;
@@ -880,13 +933,18 @@ void play_mp3_stream(const char *start_filename) {
             g_resume.track_index >= 0 &&
             g_resume.track_index < g_track_count) {
 
-        current_index = g_resume.track_index;
-        resume_position_ms = g_resume.position_ms * 0;
-        g_shuffle_enabled = g_resume.shuffle;
-        g_repeat_mode    = (repeat_mode_t)g_resume.repeat_mode;
+        current_index        = g_resume.track_index;
+        resume_position_ms   = g_resume.position_ms * 0;
+        g_shuffle_enabled    = g_resume.shuffle;
+        g_repeat_mode        = (repeat_mode_t)g_resume.repeat_mode;
 
         printf("Resuming track %d at %u ms\n",
             current_index, resume_position_ms);
+
+        if (g_shuffle_enabled) {
+            // Rebuild shuffle order based on resumed track
+            build_shuffle_order(current_index);
+        }
     }
 
     // Optional: seed shuffle from time
@@ -901,25 +959,42 @@ void play_mp3_stream(const char *start_filename) {
 
         play_result_t r = mp3_play_single_track(path, resume_position_ms, current_index);
 
-        // reset it for next tracks now that we're done with it.
+        // Any resume was only for the first track
         resume_position_ms = 0;
 
+        // If shuffle toggle happened during this track, rebuild order now
+        if (g_shuffle_needs_rebuild) {
+            g_shuffle_needs_rebuild = false;
+            if (g_shuffle_enabled) {
+                build_shuffle_order(current_index);
+            }
+            // If shuffle was turned OFF, we just leave things linear;
+            // current_index already matches the just-played track.
+        }
+
         if (r == PLAY_RESULT_STOP) {
-            // Stop playback (e.g., user quits in future menu)
+            // Stop playback (e.g., future menu/quit)
             break;
         } else if (r == PLAY_RESULT_PREV) {
-            // Previous track (linear)
-            current_index--;
-            if (current_index < 0)
-                current_index = g_track_count - 1;
+            // Previous track (linear or shuffled)
+            if (g_shuffle_enabled && g_shuffle_order && g_track_count > 0) {
+                g_shuffle_pos--;
+                if (g_shuffle_pos < 0)
+                    g_shuffle_pos = g_track_count - 1;
+                current_index = g_shuffle_order[g_shuffle_pos];
+            } else {
+                current_index--;
+                if (current_index < 0)
+                    current_index = g_track_count - 1;
+            }
+
         } else if (r == PLAY_RESULT_NEXT) {
-            // Next track (respect shuffle)
-            if (g_shuffle_enabled && g_track_count > 1) {
-                int new_idx = current_index;
-                while (new_idx == current_index) {
-                    new_idx = rand() % g_track_count;
-                }
-                current_index = new_idx;
+            // Next track (playlist shuffle or linear)
+            if (g_shuffle_enabled && g_shuffle_order && g_track_count > 0) {
+                g_shuffle_pos++;
+                if (g_shuffle_pos >= g_track_count)
+                    g_shuffle_pos = 0;
+                current_index = g_shuffle_order[g_shuffle_pos];
             } else {
                 current_index++;
                 if (current_index >= g_track_count)
@@ -931,4 +1006,5 @@ void play_mp3_stream(const char *start_filename) {
     f_unmount(pSD->pcName);
     // If you ever want to free playlist:
     // if (g_playlist) { free(g_playlist); g_playlist = NULL; g_playlist_cap = 0; }
+    // if (g_shuffle_order) { free(g_shuffle_order); g_shuffle_order = NULL; g_shuffle_pos = 0; }
 }

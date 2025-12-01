@@ -8,8 +8,19 @@
 static lv_obj_t *rom_list;
 static uint16_t num_page = 0;
 static uint16_t num_file = 0;
-static char filename[MAX_FILES][256];
+static char (*filename)[256] = NULL;
 static uint16_t selected = 0;
+
+static bool sd_filename_init(void) {
+    if (filename) return true;
+    filename = (char (*)[256])malloc(MAX_FILES * 256);
+    if (!filename) {
+        printf("filename malloc fail\n");
+        return false;
+    }
+    memset(filename, 0, MAX_FILES * 256);
+    return true;
+}
 
 uint8_t sd_prev_lcd_led_duty_cycle;
 
@@ -383,6 +394,8 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
  * Function used by the rom file selector to display one page of .gb rom files
  */
 uint16_t rom_file_selector_display_page(char filename[MAX_FILES][256],uint16_t num_page) {
+    if (!sd_filename_init()) return 0;
+    char (*names)[256] = filename;
 	sd_card_t *pSD=sd_get_by_num(0);
     DIR dj;
     FILINFO fno;
@@ -396,7 +409,7 @@ uint16_t rom_file_selector_display_page(char filename[MAX_FILES][256],uint16_t n
 
 	/* clear the filenames array */
 	for(uint8_t ifile=0;ifile<MAX_FILES;ifile++) {
-		strcpy(filename[ifile],"");
+		strcpy(names[ifile],"");
 	}
 
     /* search *.gb files */
@@ -419,7 +432,7 @@ uint16_t rom_file_selector_display_page(char filename[MAX_FILES][256],uint16_t n
     while(num_file<MAX_FILES && fr == FR_OK && fno.fname[0]) {
 		if (fno.fname[0] != '.') {
 			printf(fno.fname);
-			strcpy(filename[num_file],fno.fname);
+			strcpy(names[num_file],fno.fname);
 			num_file++;
 		}
 		fr=f_findnext(&dj, &fno);
@@ -454,6 +467,7 @@ static void event_handler(lv_event_t * e){
 }
 
 static void rom_list_update() {
+    if (!sd_filename_init()) return;
     lv_obj_clean(rom_list);
 
 	lv_list_add_text(rom_list, "Roms");
@@ -580,6 +594,9 @@ void my_input_read(lv_indev_drv_t * indev, lv_indev_data_t * data)
 /*
 // Main ROM selector
 void rom_file_selector() {	
+    if (!sd_filename_init()) return;
+    // Ensure the global pointer is used consistently
+    char (*names)[256] = filename;
     // Create list
     lv_init();
 
@@ -609,7 +626,7 @@ void rom_file_selector() {
     lv_obj_center(rom_list);
 
 
-	num_file = rom_file_selector_display_page(filename, num_page);
+	num_file = rom_file_selector_display_page(names, num_page);
 
 	lv_obj_clean(rom_list);
 
@@ -1021,6 +1038,8 @@ void update_bottom_bar(lv_obj_t *left, lv_obj_t *right, bool show_settings) {
 }
 
 void rom_file_selector() {	
+    if (!sd_filename_init()) return;
+    char (*names)[256] = filename;
     // Create list
     lv_init();
 
@@ -1036,7 +1055,7 @@ void rom_file_selector() {
 	lv_disp_t * disp = lv_disp_drv_register(&disp_drv);
 	///
 
-	num_file = rom_file_selector_display_page(filename, num_page);
+	num_file = rom_file_selector_display_page(names, num_page);
 
     // Create a container to hold UI
 	lv_obj_t *cont = lv_obj_create(lv_scr_act());
@@ -1064,7 +1083,7 @@ void rom_file_selector() {
     lv_obj_set_style_border_width(list, 0, 0);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
 
-    draw_rom_list(list, filename, num_file, selected, page_start);
+    draw_rom_list(list, names, num_file, selected, page_start);
         
     lv_obj_t *status_label;
     lv_obj_t *top_bar = create_top_bar(cont, &status_label);

@@ -795,6 +795,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
     }
 
 END_PLAYBACK:
+    // Push a short silence to let the output settle before freeing buffers
+    i2s_dma_write(&i2s_config, (const uint16_t *)silence_buf);
+    i2s_dma_write(&i2s_config, (const uint16_t *)silence_buf);
+
     free(pcmA);
     free(pcmB);
     free(pcmC);

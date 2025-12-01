@@ -102,6 +102,39 @@ typedef enum {
 static repeat_mode_t g_repeat_mode = REPEAT_OFF;
 static bool          g_shuffle_enabled = false;
 
+// ===================================================================
+// Saving MP3 State and settings
+// ===================================================================
+typedef struct {
+    uint32_t magic;           // for corruption check
+    int      track_index;     // playlist index
+    uint32_t position_ms;     // timestamp inside track
+    bool     shuffle;
+    uint8_t  repeat_mode;
+} mp3_resume_t;
+
+#define RESUME_MAGIC 0x504D3352   // "PM3R"
+#define RESUME_FILE  "mp3_resume.bin"
+
+static mp3_resume_t g_resume = {0};
+
+static void mp3_save_resume(int track_index, uint32_t position_ms) {
+    FIL wf;
+    UINT bw;
+
+    g_resume.magic       = RESUME_MAGIC;
+    g_resume.track_index = track_index;
+    g_resume.position_ms = position_ms;
+    g_resume.shuffle     = g_shuffle_enabled;
+    g_resume.repeat_mode = (uint8_t)g_repeat_mode;
+
+    if (f_open(&wf, RESUME_FILE, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
+        f_write(&wf, &g_resume, sizeof(g_resume), &bw);
+        f_close(&wf);
+        printf("Resume saved: track=%d pos=%ums\n",
+               track_index, position_ms);
+    }
+}
 
 // ===================================================================
 // SD ring buffer logic (HEAP-BASED, in PSRAM via malloc)
@@ -176,11 +209,26 @@ static size_t mp3_stream_read(void *pUserData, void *pBufferOut, size_t bytesToR
     return copied;
 }
 
-static drmp3_bool32 mp3_stream_seek(void *pUserData, int offset, drmp3_seek_origin origin) {
-    (void)pUserData;
-    (void)offset;
-    (void)origin;
-    return DRMP3_FALSE;
+static drmp3_bool32 mp3_stream_seek(void *pUserData, int offset, drmp3_seek_origin origin)
+{
+    mp3_stream_t *s = (mp3_stream_t *)pUserData;
+    if (!s) return DRMP3_FALSE;
+
+    // We ignore origin and treat 'offset' as absolute byte offset from start.
+    // This matches how dr_mp3 uses it for MP3 files in practice.
+    if (offset < 0) offset = 0;
+
+    if (f_lseek(&s->file, (DWORD)offset) != FR_OK)
+        return DRMP3_FALSE;
+
+    // Invalidate ring buffer because file position changed.
+    s->rd   = 0;
+    s->wr   = 0;
+    s->count = 0;
+    s->eof   = false;
+
+    (void)origin; // avoid unused warning
+    return DRMP3_TRUE;
 }
 
 
@@ -313,50 +361,6 @@ static void mp3_build_playlist(void) {
 // ===================================================================
 // Seek helper: approximate seek by jumping compressed bytes
 // ===================================================================
-static bool seek_relative_seconds(
-    mp3_stream_t *stream,
-    drmp3 *mp3,
-    int seconds,
-    int sample_rate,
-    bool *decoded_next_chunk
-){
-    if (!stream) return false;
-
-    DWORD pos = f_tell(&stream->file);
-
-    // Rough byte estimate: sample_rate * 2 bytes/sample * seconds
-    int64_t delta_bytes = (int64_t)sample_rate * 2 * seconds;
-    int64_t new_pos = (int64_t)pos + delta_bytes;
-
-    if (new_pos < 0) new_pos = 0;
-    if (new_pos > (int64_t)f_size(&stream->file))
-        new_pos = f_size(&stream->file);
-
-    f_lseek(&stream->file, (DWORD)new_pos);
-
-    // Reset ring buffer
-    stream->rd = 0;
-    stream->wr = 0;
-    stream->count = 0;
-    stream->eof = false;
-
-    // Re-init decoder
-    drmp3_uninit(mp3);
-    if (!drmp3_init(mp3,
-                    mp3_stream_read,
-                    NULL,
-                    NULL,
-                    NULL,
-                    stream,
-                    NULL)) {
-        printf("E drmp3_init after seek\n");
-        return false;
-    }
-
-    *decoded_next_chunk = false;
-    return true;
-}
-
 
 static inline int adaptive_seek_step_ms(uint64_t held_ms) {
     if (held_ms < SEEK_STAGE_1_MS)
@@ -370,6 +374,22 @@ static inline int adaptive_seek_step_ms(uint64_t held_ms) {
     return SEEK_STEP_10S;
 }
 
+static bool seek_relative_seconds_pcm(drmp3* mp3, int seconds, uint64_t* played_frames)
+{
+    if (!mp3 || !played_frames) return false;
+
+    int64_t delta_frames = (int64_t)seconds * mp3->sampleRate;
+    int64_t target       = (int64_t)(*played_frames) + delta_frames;
+
+    if (target < 0) target = 0;
+
+    drmp3_bool32 ok = drmp3_seek_to_pcm_frame(mp3, (drmp3_uint64)target);
+    if (!ok) return false;
+
+    *played_frames = (uint64_t)target;
+    return true;
+}
+
 // ===================================================================
 // Single-track player: returns what the playlist should do next
 // ===================================================================
@@ -380,7 +400,12 @@ typedef enum {
 } play_result_t;
 
 // Non-blocking MP3 playback for a single file
-static play_result_t mp3_play_single_track(const char *filepath) {
+static play_result_t mp3_play_single_track(const char *filepath,
+                                           uint32_t resume_position_ms,
+                                           int current_track_index) {
+
+    uint64_t played_frames = 0;
+
     FRESULT fr;
     play_result_t result = PLAY_RESULT_STOP;
 
@@ -416,7 +441,7 @@ static play_result_t mp3_play_single_track(const char *filepath) {
     drmp3 mp3;
     if (!drmp3_init(&mp3,
                     mp3_stream_read,
-                    NULL,   // no seek callback
+                    mp3_stream_seek,   // no seek callback
                     NULL,   // no tell
                     NULL,   // no meta
                     stream, // pUserData
@@ -452,6 +477,24 @@ static play_result_t mp3_play_single_track(const char *filepath) {
     for (int i = 0; i < 4 && !stream->eof; i++) {
         mp3_refill(stream);
     }
+
+    // Resume position (if any)
+    if (resume_position_ms > 0) {
+        printf("Seeking to resume position %u ms...\n", resume_position_ms);
+
+        if (mp3.sampleRate > 0) {
+            drmp3_uint64 target_frames =
+                (drmp3_uint64)resume_position_ms * mp3.sampleRate / 1000;
+
+            if (drmp3_seek_to_pcm_frame(&mp3, target_frames)) {
+                played_frames = (uint64_t)target_frames;
+            } else {
+                printf("drmp3_seek_to_pcm_frame failed for resume\n");
+                played_frames = 0;
+            }
+        }
+    }
+
 
     // First buffer: decode & start DMA
     drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, buf_play);
@@ -506,6 +549,17 @@ static play_result_t mp3_play_single_track(const char *filepath) {
         while (!i2s_dma_write_non_blocking(&i2s_config,
                                            (const uint16_t *)(paused ? silence_buf : buf_ready))) {
 
+            watchdog_update();
+            if (!gpio_read(GPIO_SW_OUT)) {
+                uint32_t final_position_ms =
+                (played_frames * 1000ULL) / mp3.sampleRate;
+
+                // Save resume info
+                mp3_save_resume(current_track_index, final_position_ms);
+
+                release_power();
+            }
+
             // SD mini-refills
             for (int i = 0;
                  i < 2 && stream->count < (MP3_STREAM_BUF_SIZE * 3 / 4) && !stream->eof;
@@ -517,6 +571,9 @@ static play_result_t mp3_play_single_track(const char *filepath) {
             if (!decoded_next_chunk && !paused) {
                 drmp3_uint64 frames =
                     drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, buf_fill);
+
+                if (frames > 0)
+                    played_frames += frames;
 
                 if (frames == 0) {
                     if (stream->eof) {
@@ -536,7 +593,7 @@ static play_result_t mp3_play_single_track(const char *filepath) {
 
                         drmp3_uninit(&mp3);
                         if (!drmp3_init(&mp3, mp3_stream_read,
-                                        NULL, NULL, NULL, stream, NULL)) {
+                                        mp3_stream_seek, NULL, NULL, stream, NULL)) {
                             printf("E drmp3_init after repeat\n");
                             result = PLAY_RESULT_NEXT;
                             goto END_PLAYBACK;
@@ -637,7 +694,10 @@ static play_result_t mp3_play_single_track(const char *filepath) {
                             int step = adaptive_seek_step_ms(held_ms);
                             printf("Rewind -%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
-                            seek_relative_seconds(stream, &mp3, -step, mp3.sampleRate, &decoded_next_chunk);
+                            if (seek_relative_seconds_pcm(&mp3, -step, &played_frames)) {
+                                decoded_next_chunk = false;  // force fresh decode after seek
+                            }
+
                             left_last_seek_us = now_us;
                         }
                     }
@@ -673,7 +733,10 @@ static play_result_t mp3_play_single_track(const char *filepath) {
                             int step = adaptive_seek_step_ms(held_ms);
                             printf("Fast-forward +%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
-                            seek_relative_seconds(stream, &mp3, step, mp3.sampleRate, &decoded_next_chunk);
+                            if (seek_relative_seconds_pcm(&mp3, step, &played_frames)) {
+                                decoded_next_chunk = false;  // force fresh decode after seek
+                            }
+
                             right_last_seek_us = now_us;
                         }
                     }
@@ -758,6 +821,27 @@ void play_mp3_stream(const char *start_filename) {
         return;
     }
 
+    watchdog_enable(WATCHDOG_TIMEOUT_MS*6, true); // 4 second timeout, pause-on-debug = true
+#if ENABLE_SAVE_ON_POWER_OFF
+	hold_power(); // keep power on for saving mp3 state
+#endif
+
+    // Load resume info
+    memset(&g_resume, 0, sizeof(g_resume));
+
+    FIL rf;
+    UINT br;
+    if (f_open(&rf, RESUME_FILE, FA_READ) == FR_OK) {
+        if (f_read(&rf, &g_resume, sizeof(g_resume), &br) == FR_OK &&
+            br == sizeof(g_resume) &&
+            g_resume.magic == RESUME_MAGIC) {
+
+            printf("Resume loaded: track=%d pos=%ums\n",
+                g_resume.track_index, g_resume.position_ms);
+        }
+        f_close(&rf);
+    }
+
     // Build playlist from /music, then root fallback
     mp3_build_playlist();
 
@@ -769,7 +853,9 @@ void play_mp3_stream(const char *start_filename) {
 
     // Choose initial track index
     int current_index = 0;
+    uint32_t resume_position_ms = 0;
 
+    // Priority: explicit filename → saved resume → default 0
     if (start_filename && start_filename[0] != '\0') {
         for (int i = 0; i < g_track_count; i++) {
             const char *base = basename_from_path(g_playlist[i]);
@@ -778,6 +864,18 @@ void play_mp3_stream(const char *start_filename) {
                 break;
             }
         }
+    }
+    else if (g_resume.magic == RESUME_MAGIC &&
+            g_resume.track_index >= 0 &&
+            g_resume.track_index < g_track_count) {
+
+        current_index = g_resume.track_index;
+        resume_position_ms = g_resume.position_ms;
+        g_shuffle_enabled = g_resume.shuffle;
+        g_repeat_mode    = (repeat_mode_t)g_resume.repeat_mode;
+
+        printf("Resuming track %d at %u ms\n",
+            current_index, resume_position_ms);
     }
 
     // Optional: seed shuffle from time
@@ -790,7 +888,10 @@ void play_mp3_stream(const char *start_filename) {
         printf("\n--- Now playing [%d/%d]: %s ---\n",
                current_index + 1, g_track_count, base);
 
-        play_result_t r = mp3_play_single_track(path);
+        play_result_t r = mp3_play_single_track(path, resume_position_ms, current_index);
+
+        // reset it for next tracks now that we're done with it.
+        resume_position_ms = 0;
 
         if (r == PLAY_RESULT_STOP) {
             // Stop playback (e.g., user quits in future menu)

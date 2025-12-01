@@ -148,6 +148,15 @@ typedef struct {
     bool eof;
 } mp3_stream_t;
 
+// Reset ring buffer state after an external seek
+static inline void mp3_stream_flush(mp3_stream_t *s) {
+    if (!s) return;
+    s->rd = 0;
+    s->wr = 0;
+    s->count = 0;
+    s->eof = false;
+}
+
 // SD → ring buffer refill, capped to MP3_REFILL_CHUNK to avoid stalls
 static void mp3_refill(mp3_stream_t *s) {
     if (!s || !s->buf) return;
@@ -222,10 +231,7 @@ static drmp3_bool32 mp3_stream_seek(void *pUserData, int offset, drmp3_seek_orig
         return DRMP3_FALSE;
 
     // Invalidate ring buffer because file position changed.
-    s->rd   = 0;
-    s->wr   = 0;
-    s->count = 0;
-    s->eof   = false;
+    mp3_stream_flush(s);
 
     (void)origin; // avoid unused warning
     return DRMP3_TRUE;
@@ -388,24 +394,8 @@ static bool seek_relative_seconds_pcm(
     int64_t target       = (int64_t)(*played_frames) + delta_frames;
     if (target < 0) target = 0;
 
-    // 2) FULL RESET (this is what fixes your problem)
-    stream->rd    = 0;
-    stream->wr    = 0;
-    stream->count = 0;
-    stream->eof   = false;
-
-    drmp3_uninit(mp3);
-
-    if (!drmp3_init(mp3,
-                    mp3_stream_read,
-                    mp3_stream_seek,
-                    NULL,
-                    NULL,
-                    stream,
-                    NULL)) {
-        printf("E drmp3_init (pcm seek)\n");
-        return false;
-    }
+    // 2) Flush buffered data and let dr_mp3 handle internal reset on seek.
+    mp3_stream_flush(stream);
 
     // 3) Accurate PCM seek
     if (!drmp3_seek_to_pcm_frame(mp3, (drmp3_uint64)target)) {
@@ -430,50 +420,66 @@ static bool seek_relative_seconds(
 
     int abs_sec = (seconds < 0 ? -seconds : seconds);
 
+    // Rough bytes-per-second estimate using current playback position.
+    int64_t cur_pos = f_tell(&stream->file);
+    int64_t cur_size = f_size(&stream->file);
+    int64_t bytes_per_sec = 16000; // fallback ~128 kbps
+    if (sample_rate > 0 && *played_frames > 0 && cur_pos > 0) {
+        int64_t bytes_per_frame_est = cur_pos / (int64_t)(*played_frames);
+        if (bytes_per_frame_est > 0) {
+            int64_t est = bytes_per_frame_est * sample_rate;
+            if (est > 0) bytes_per_sec = est;
+        }
+    }
+
+    int64_t delta_frames = (int64_t)seconds * sample_rate;
+    int64_t target_frames = (int64_t)(*played_frames) + delta_frames;
+    if (target_frames < 0) target_frames = 0;
+
     // ----------------------------------------------------------
-    // SMALL SEEK (<5s): use pure PCM seek (your existing method)
+    // SMALL SEEK (<5s): fast byte jump only (no PCM realign)
     // ----------------------------------------------------------
     if (abs_sec < 5) {
-        return seek_relative_seconds_pcm(stream, mp3, seconds, played_frames, decoded_next_chunk);
+        int64_t byte_jump = (int64_t)seconds * bytes_per_sec;
+        int64_t target = cur_pos + byte_jump;
+
+        if (target < 0) target = 0;
+        if (target > cur_size) target = cur_size;
+
+        f_lseek(&stream->file, (DWORD)target);
+        mp3_stream_flush(stream);
+
+        *played_frames = (uint64_t)target_frames;
+        *decoded_next_chunk = false;
+        return true;
     }
 
     // ----------------------------------------------------------
     // LARGE SEEK (>=5s):
     // 1) Fast byte jump (approx)
-    // 2) Reset decoder + reinit
+    // 2) Flush ring buffer (keep decoder alive)
     // 3) Accurate PCM seek to correct frame
     // ----------------------------------------------------------
 
-    // Approximate skip (fast)
-    int64_t byte_jump = (int64_t)abs_sec * 16000;  // ~16 KB/s ballpark
-    if (seconds < 0) byte_jump = -byte_jump;
-
-    int64_t pos = f_tell(&stream->file);
-    int64_t target = pos + byte_jump;
+    // Approximate skip (fast) using runtime bitrate estimate
+    int64_t byte_jump = (int64_t)seconds * bytes_per_sec;
+    int64_t target = cur_pos + byte_jump;
 
     if (target < 0) target = 0;
-    if (target > (int64_t)f_size(&stream->file))
-        target = f_size(&stream->file);
+    if (target > cur_size)
+        target = cur_size;
 
     f_lseek(&stream->file, (DWORD)target);
 
-    // Reset ring buffer fully
-    stream->rd = stream->wr = 0;
-    stream->count = 0;
-    stream->eof = false;
+    // Reset ring buffer fully so the decoder reads from the new position.
+    mp3_stream_flush(stream);
 
-    // Reinit decoder
-    drmp3_uninit(mp3);
-    if (!drmp3_init(mp3, mp3_stream_read, NULL, NULL, NULL, stream, NULL)) {
-        printf("E drmp3_init fast-seek\n");
+    // Accurate PCM seek for perfect alignment without tearing down the decoder
+    if (!drmp3_seek_to_pcm_frame(mp3, (drmp3_uint64)target_frames)) {
         return false;
     }
 
-    // Now do accurate PCM seek for perfect alignment
-    if (!seek_relative_seconds_pcm(stream, mp3, seconds, played_frames, decoded_next_chunk)) {
-        return false;
-    }
-
+    *played_frames = (uint64_t)target_frames;
     *decoded_next_chunk = false;
     return true;
 }

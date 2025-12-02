@@ -239,10 +239,12 @@ while(true)
 
 	// read_io_expander_states(0);
 	if (!gpio_read(IOX_B_B)) {
+		underclock_cpu(true); // 10mA saved
 		run_gmeter_dashboard();
 		while (1) { tight_loop_contents(); }
 	}
 	if (gpio_read(IOX_B_UP)) {
+		// hyper_underclock_cpu(true); // ~52mA consumed, 62mA with regular underclock, 75mA with overclock
 		play_mp3_stream(NULL);
 		while (1) { tight_loop_contents(); }
 	}

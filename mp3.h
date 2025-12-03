@@ -910,7 +910,7 @@ lv_obj_t *create_mp3_bottom_bar(lv_obj_t *parent,
 
     // Right label first (so we know how much space it takes)
     lv_obj_t *right = lv_label_create(bottom_bar);
-    lv_label_set_text(right, "");
+    lv_label_set_text(right, "R/S");
     lv_obj_set_style_text_font(right, &lv_font_montserrat_10, 0);
     lv_obj_set_style_text_color(right, lv_color_hex(0x202020), 0);
     lv_obj_align(right, LV_ALIGN_RIGHT_MID, -5, 0);
@@ -978,7 +978,7 @@ void update_mp3_bottom_bar_shuffle_repeat(lv_obj_t *right,
 }
 void update_mp3_bottom_bar_left(lv_obj_t *left, const char *text)
 {
-    lv_label_set_text(left, text);
+    lv_label_set_text(left, basename_from_path(text));
 }
 
 

@@ -645,6 +645,7 @@ void draw_settings(lv_obj_t *list) {
     lv_obj_align_to(time_label, time_title, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
 }
 
+static const char* basename_from_path(const char *path);
 void draw_rom_list(lv_obj_t *list, char filenames[][256], uint16_t num_file, uint16_t selected, uint16_t page_start) {
     lv_obj_clean(list);
     if (show_settings) {
@@ -652,7 +653,7 @@ void draw_rom_list(lv_obj_t *list, char filenames[][256], uint16_t num_file, uin
         return;
     }
     for (uint16_t i = 0; i < VISIBLE_ITEMS && (i + page_start) < num_file; i++) {
-        lv_obj_t *list_title = lv_list_add_text(list, filenames[i + page_start]);
+        lv_obj_t *list_title = lv_list_add_text(list, basename_from_path(filenames[i + page_start]));
         lv_obj_set_style_text_font(list_title, LV_FONT_DEFAULT, 0); // &lv_font_dejavu_16_persian_hebrew
         lv_obj_set_style_text_color(list_title, lv_color_black(), 0);
         lv_obj_set_style_bg_color(list_title, lv_color_hex(0xFFFFFF), 0);

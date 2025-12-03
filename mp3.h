@@ -879,17 +879,108 @@ CLEANUP_STREAM_ONLY:
 // Playlist-level player
 // ===================================================================
 #define EMPTY_TRACK_STRING "-------- - --------------.mp3"
+#define NOW_PLAYING_SCROLL 0
 const char *loading_msgs[VISIBLE_ITEMS] = {
-    "loading.mp3",
-    "scanning sdcard.mp3",
-    "almost there.mp3",
-    "lots of music here.mp3",
-    "organizing tracks.mp3",
-    "tuning audio chips.mp3",
-    "warming up speakers.mp3",
-    "one second.mp3",
-    "pico pal almost ready.mp3"
+    "Loading.mp3",
+    "Scanning SD Card.mp3",
+    "Almost There.mp3",
+    "Lots of Music Here.mp3",
+    "Organizing Tracks.mp3",
+    "Tuning Audio Chip.mp3",
+    "Warming Up Speakers.mp3",
+    "One Second.mp3",
+    "Pico Pal Almost Ready.mp3"
 };
+
+lv_obj_t *create_mp3_bottom_bar(lv_obj_t *parent,
+                                lv_obj_t **left_out,
+                                lv_obj_t **right_out)
+{
+    lv_obj_t *bottom_bar = lv_obj_create(parent);
+    lv_obj_set_size(bottom_bar, DISP_HOR_RES, 20);
+    lv_obj_align(bottom_bar, LV_ALIGN_BOTTOM_MID, 0, 15);
+    lv_obj_set_style_bg_color(bottom_bar, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_set_style_border_width(bottom_bar, 0, 0);
+    lv_obj_set_scrollbar_mode(bottom_bar, LV_SCROLLBAR_MODE_OFF);
+
+    // Top border
+    lv_obj_set_style_border_width(bottom_bar, 1, 0);
+    lv_obj_set_style_border_side(bottom_bar, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_color(bottom_bar, lv_color_hex(0x000000), 0);
+
+    // Right label first (so we know how much space it takes)
+    lv_obj_t *right = lv_label_create(bottom_bar);
+    lv_label_set_text(right, "");
+    lv_obj_set_style_text_font(right, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(right, lv_color_hex(0x202020), 0);
+    lv_obj_align(right, LV_ALIGN_RIGHT_MID, -5, 0);
+
+    // Left label (scrolling)
+    lv_obj_t *left = lv_label_create(bottom_bar);
+    lv_label_set_text(left, "Now Playing");
+
+    // Fix width so it cannot expand over R/S
+    int left_width = DISP_HOR_RES - 65;   // 60px reserved for right label margin
+    lv_obj_set_width(left, left_width);
+
+    // Only scroll *after* width is fixed
+    lv_label_set_long_mode(left, NOW_PLAYING_SCROLL ? LV_LABEL_LONG_SCROLL_CIRCULAR : LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_anim_speed(left, 7, 0); // adjust speed
+
+    lv_obj_set_style_text_font(left, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(left, lv_color_hex(0x202020), 0);
+    lv_obj_align(left, LV_ALIGN_LEFT_MID, 5, 0);
+
+    if (left_out)  *left_out = left;
+    if (right_out) *right_out = right;
+    return bottom_bar;
+}
+void update_mp3_bottom_bar(lv_obj_t *left, lv_obj_t *right, const char *left_string, const char *right_string) {
+    lv_label_set_text(left,  left_string);
+    lv_label_set_text(right, right_string);
+}
+void update_mp3_bottom_bar_shuffle_repeat(lv_obj_t *right,
+                                          uint8_t repeat_state,
+                                          bool shuffle)
+{
+    char buf[8] = {0};
+    uint8_t idx = 0;
+
+    // Repeat status
+    switch (repeat_state) {
+        case REPEAT_ONE:
+            buf[idx++] = 'R';
+            buf[idx++] = '1';
+            break;
+
+        case REPEAT_INFINITE:
+            buf[idx++] = 'R';
+            break;
+
+        case REPEAT_OFF:
+        default:
+            break;
+    }
+
+    // Space between repeat + shuffle if both exist
+    if ((repeat_state != REPEAT_OFF) && shuffle) {
+        buf[idx++] = '/';
+    }
+
+    // Shuffle status
+    if (shuffle) {
+        buf[idx++] = 'S';
+    }
+
+    buf[idx] = '\0';   // null terminate
+
+    lv_label_set_text(right, buf);
+}
+void update_mp3_bottom_bar_left(lv_obj_t *left, const char *text)
+{
+    lv_label_set_text(left, text);
+}
+
 
 void play_mp3_stream(const char *start_filename) {
     // Create list
@@ -946,8 +1037,7 @@ void play_mp3_stream(const char *start_filename) {
     // === Bottom hint bar ===
     lv_obj_t *hint_left;
     lv_obj_t *hint_right;
-    lv_obj_t *hint_bar = create_bottom_bar(cont, &hint_left, &hint_right);
-    update_bottom_bar(hint_left, hint_right, show_settings);
+    lv_obj_t *hint_bar = create_mp3_bottom_bar(cont, &hint_left, &hint_right);
 
     lv_tick_inc(1);
     lv_timer_handler();
@@ -1025,6 +1115,8 @@ void play_mp3_stream(const char *start_filename) {
     srand((unsigned)time_us_64());
 
     draw_rom_list(list, g_playlist, g_track_count, current_index, current_index);
+    update_mp3_bottom_bar_shuffle_repeat(hint_right, g_repeat_mode, g_shuffle_enabled);
+    update_mp3_bottom_bar_left(hint_left, g_playlist[current_index]);
     lv_tick_inc(1);
     lv_timer_handler();
 

@@ -24,7 +24,7 @@
 #include "pico/time.h"   // time_us_64()
 
 #ifndef PCM_FRAME_COUNT
-#define PCM_FRAME_COUNT 6144 // 16384
+#define PCM_FRAME_COUNT 6144 // 16384 takes too long to load next
 #endif
 
 #define MP3_STREAM_BUF_SIZE       (16 * 1024)   // 16 KB ring buffer (in PSRAM via malloc)
@@ -621,9 +621,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                            (const uint16_t *)(paused ? silence_buf : buf_ready))) {
 
             watchdog_update();
-            // LVGL TICK //
-            lv_tick_inc(1);
-            lv_timer_handler();
 
             if (!gpio_read(GPIO_SW_OUT)) {
                 uint32_t final_position_ms =
@@ -871,6 +868,19 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // BATTERY MONITORING //
             minimal_battery_monitoring_cb();
         }
+
+        // ==================================================
+        // LVGL UPDATE (safe spot - DMA just accepted buffer)
+        // ==================================================
+        static uint64_t last_lvgl_update = 0;
+        uint64_t now = time_us_64();
+        uint64_t time_since_last_update = now - last_lvgl_update;
+        if (time_since_last_update >= 10000) {   // 10 ms (100 Hz UI updates)
+            lv_tick_inc(time_since_last_update);
+            lv_timer_handler();
+            last_lvgl_update = now;
+        }
+        // ==================================================
 
         // DMA accepted buf_ready and started playing it.
         int16_t *old = buf_play;

@@ -24,7 +24,7 @@
 #include "pico/time.h"   // time_us_64()
 
 #ifndef PCM_FRAME_COUNT
-#define PCM_FRAME_COUNT 6144
+#define PCM_FRAME_COUNT 6144 // 16384
 #endif
 
 #define MP3_STREAM_BUF_SIZE       (16 * 1024)   // 16 KB ring buffer (in PSRAM via malloc)

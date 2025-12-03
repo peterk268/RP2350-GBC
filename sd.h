@@ -990,7 +990,7 @@ void rom_file_selector() {
 		// in a 1ms timer interrupt or loop
 		lv_tick_inc(5);
 		lv_timer_handler();
-		sleep_ms(5);
+		sleep_ms(3);
 	}
 }
 

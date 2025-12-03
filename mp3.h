@@ -581,8 +581,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
     printf("Starting MP3 stream...\n");
 
-    set_sd_busy(true);
-
     bool decoded_next_chunk = false;
     bool paused = false;
 
@@ -616,6 +614,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                            (const uint16_t *)(paused ? silence_buf : buf_ready))) {
 
             watchdog_update();
+            // LVGL TICK //
+            lv_tick_inc(1);
+            lv_timer_handler();
+
             if (!gpio_read(GPIO_SW_OUT)) {
                 uint32_t final_position_ms =
                 (played_frames * 1000ULL) / mp3.sampleRate;
@@ -876,8 +878,80 @@ CLEANUP_STREAM_ONLY:
 // ===================================================================
 // Playlist-level player
 // ===================================================================
+#define EMPTY_TRACK_STRING "-------- - --------------.mp3"
+const char *loading_msgs[VISIBLE_ITEMS] = {
+    "loading.mp3",
+    "scanning sdcard.mp3",
+    "almost there.mp3",
+    "lots of music here.mp3",
+    "organizing tracks.mp3",
+    "tuning audio chips.mp3",
+    "warming up speakers.mp3",
+    "one second.mp3",
+    "pico pal almost ready.mp3"
+};
 
 void play_mp3_stream(const char *start_filename) {
+    // Create list
+    lv_init();
+
+    lv_disp_draw_buf_t draw_buf;
+    lv_disp_draw_buf_init(&draw_buf, lv_buf1, NULL, DISP_HOR_RES * LV_BUF_LINES);
+
+    lv_disp_drv_init(&disp_drv);
+    disp_drv.hor_res = DISP_HOR_RES;
+    disp_drv.ver_res = DISP_VER_RES;
+    disp_drv.flush_cb = lvgl_flush_cb;
+    disp_drv.draw_buf = &draw_buf;
+
+	lv_disp_t * disp = lv_disp_drv_register(&disp_drv);
+	///
+
+    // Create a container to hold UI
+	lv_obj_t *cont = lv_obj_create(lv_scr_act());
+	lv_obj_set_size(cont, DISP_HOR_RES, DISP_VER_RES);
+	lv_obj_center(cont);
+    lv_obj_set_style_bg_color(cont, lv_color_hex(0xFFFFFF), 0);  // dark gray background
+    lv_obj_set_scrollbar_mode(cont, LV_SCROLLBAR_MODE_OFF);
+
+    lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0xFFFFFF), 0);  // match your container
+
+    // === Music List ===
+    lv_obj_t *list = lv_list_create(cont);
+    lv_obj_set_size(list, DISP_HOR_RES, DISP_VER_RES - 20);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 7);
+    lv_obj_set_style_bg_color(list, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(list, lv_color_black(), 0);
+    lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+
+    // Skeleton tracks until loaded.
+    if (!mp3_playlist_init()) {
+        printf("Playlist init failed\n");
+        g_track_count = 0;
+        return;
+    }
+    for (uint8_t i = 0; i < VISIBLE_ITEMS; i++) {
+        snprintf(g_playlist[i], MP3_MAX_PATH_LEN, "%s", loading_msgs[i]);
+    }
+
+    draw_rom_list(list, g_playlist, VISIBLE_ITEMS, 0, 0);
+        
+    lv_obj_t *status_label;
+    lv_obj_t *top_bar = create_top_bar(cont, &status_label);
+
+    // Initial update
+    update_status_label(status_label);
+
+    // === Bottom hint bar ===
+    lv_obj_t *hint_left;
+    lv_obj_t *hint_right;
+    lv_obj_t *hint_bar = create_bottom_bar(cont, &hint_left, &hint_right);
+    update_bottom_bar(hint_left, hint_right, show_settings);
+
+    lv_tick_inc(1);
+    lv_timer_handler();
+
     sd_card_t *pSD = sd_get_by_num(0);
     FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
     if (fr != FR_OK) {
@@ -949,6 +1023,10 @@ void play_mp3_stream(const char *start_filename) {
 
     // Optional: seed shuffle from time
     srand((unsigned)time_us_64());
+
+    draw_rom_list(list, g_playlist, g_track_count, current_index, current_index);
+    lv_tick_inc(1);
+    lv_timer_handler();
 
     while (1) {
         const char *path = g_playlist[current_index];

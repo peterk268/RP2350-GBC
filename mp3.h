@@ -882,8 +882,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
         // ==================================================
 
         // BATTERY MONITORING //
-        minimal_battery_monitoring_cb();
-        update_status_label(mp3_status_label_obj);
+        bool timer_task_flagged = minimal_battery_monitoring_cb();
+        if (timer_task_flagged) update_status_label(mp3_status_label_obj);
 
         // DMA accepted buf_ready and started playing it.
         int16_t *old = buf_play;

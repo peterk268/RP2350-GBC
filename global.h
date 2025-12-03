@@ -196,12 +196,14 @@ bool watchdog_callback(repeating_timer_t *rt) {
 
 void process_bat_percent();
 void shutdown_peripherals(bool keep_i2c);
-void minimal_battery_monitoring_cb() {
+bool minimal_battery_monitoring_cb() {
 #if ENABLE_BAT_MONITORING
+	bool was_task_flagged = false;
 	// Check battery status periodically
 	if (battery_task_flag) {
 		battery_task_flag = false;
 		process_bat_percent();
+		was_task_flagged = true;
 	}
 	if (low_power_shutdown) {
 		release_power(); // Cut power hold
@@ -214,5 +216,6 @@ void minimal_battery_monitoring_cb() {
 		process_bat_percent();
 		sleep_ms(BATTERY_TIMER_INTERVAL_MS);
 	}
+	return was_task_flagged;
 #endif
 }

@@ -469,7 +469,8 @@ static inline int adaptive_seek_step_ms(uint64_t held_ms) {
 typedef enum {
     PLAY_RESULT_STOP = 0,
     PLAY_RESULT_NEXT,
-    PLAY_RESULT_PREV
+    PLAY_RESULT_PREV,
+    PLAY_RESULT_SELECTED
 } play_result_t;
 
 // Non-blocking MP3 playback for a single file
@@ -714,24 +715,16 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             uint64_t now_us = time_us_64();
 
-            // A → Play / Pause
+            // A → Play Selected Track
             if (!prev_btn_a && btn_a) {
-                paused = !paused;
-                printf(paused ? "Paused\n" : "Playing\n");
-                update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
+                result = PLAY_RESULT_SELECTED;
+                goto END_PLAYBACK;
             }
 
-            // B → Repeat mode cycle (global)
+            // B → Play / Pause
             if (!prev_btn_b && btn_b) {
-                g_repeat_mode = (repeat_mode_t)((g_repeat_mode + 1) % 3);
-
-                if (g_repeat_mode == REPEAT_OFF) {
-                    printf("Repeat: OFF\n");
-                } else if (g_repeat_mode == REPEAT_ONE) {
-                    printf("Repeat: ONE (play once more)\n");
-                } else if (g_repeat_mode == REPEAT_INFINITE) {
-                    printf("Repeat: INFINITE\n");
-                }
+                paused = !paused;
+                printf(paused ? "Paused\n" : "Playing\n");
                 update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
             }
 
@@ -850,9 +843,18 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 );
             }
 
-            // START reserved
+            // START → Repeat mode cycle (global)
             if (!prev_btn_start && btn_start) {
-                printf("[MENU] (TODO)\n");
+                g_repeat_mode = (repeat_mode_t)((g_repeat_mode + 1) % 3);
+
+                if (g_repeat_mode == REPEAT_OFF) {
+                    printf("Repeat: OFF\n");
+                } else if (g_repeat_mode == REPEAT_ONE) {
+                    printf("Repeat: ONE (play once more)\n");
+                } else if (g_repeat_mode == REPEAT_INFINITE) {
+                    printf("Repeat: INFINITE\n");
+                }
+                update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
             }
 
             // Save previous button states
@@ -1235,6 +1237,8 @@ void play_mp3_stream(const char *start_filename) {
                 if (current_index >= g_track_count)
                     current_index = 0;
             }
+        } else if (r == PLAY_RESULT_SELECTED) {
+            current_index = g_selected_file;
         }
         update_mp3_bottom_bar_left(mp3_hint_left_obj, g_playlist[current_index]);
     }

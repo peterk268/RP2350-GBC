@@ -910,7 +910,7 @@ lv_obj_t *create_mp3_bottom_bar(lv_obj_t *parent,
 
     // Right label first (so we know how much space it takes)
     lv_obj_t *right = lv_label_create(bottom_bar);
-    lv_label_set_text(right, "R/S");
+    lv_label_set_text(right, "R1/S/P");
     lv_obj_set_style_text_font(right, &lv_font_montserrat_10, 0);
     lv_obj_set_style_text_color(right, lv_color_hex(0x202020), 0);
     lv_obj_align(right, LV_ALIGN_RIGHT_MID, -5, 0);
@@ -920,7 +920,7 @@ lv_obj_t *create_mp3_bottom_bar(lv_obj_t *parent,
     lv_label_set_text(left, "Now Playing");
 
     // Fix width so it cannot expand over R/S
-    int left_width = DISP_HOR_RES - 65;   // 60px reserved for right label margin
+    int left_width = DISP_HOR_RES - 77;   // 60px reserved for right label margin
     lv_obj_set_width(left, left_width);
 
     // Only scroll *after* width is fixed
@@ -941,7 +941,8 @@ void update_mp3_bottom_bar(lv_obj_t *left, lv_obj_t *right, const char *left_str
 }
 void update_mp3_bottom_bar_shuffle_repeat(lv_obj_t *right,
                                           uint8_t repeat_state,
-                                          bool shuffle)
+                                          bool shuffle, 
+                                          bool paused)
 {
     char buf[8] = {0};
     uint8_t idx = 0;
@@ -970,6 +971,21 @@ void update_mp3_bottom_bar_shuffle_repeat(lv_obj_t *right,
     // Shuffle status
     if (shuffle) {
         buf[idx++] = 'S';
+    }
+
+    // Slash between shuffle and paused
+    if (shuffle && paused) {
+        buf[idx++] = '/';
+    }
+
+    // Slash between repeat and paused when NO shuffle
+    if ((repeat_state != REPEAT_OFF) && !shuffle && paused) {
+        buf[idx++] = '/';
+    }
+
+    // --- Pause status ---
+    if (paused) {
+        buf[idx++] = 'P';
     }
 
     buf[idx] = '\0';   // null terminate
@@ -1115,7 +1131,7 @@ void play_mp3_stream(const char *start_filename) {
     srand((unsigned)time_us_64());
 
     draw_rom_list(list, g_playlist, g_track_count, current_index, current_index);
-    update_mp3_bottom_bar_shuffle_repeat(hint_right, g_repeat_mode, g_shuffle_enabled);
+    update_mp3_bottom_bar_shuffle_repeat(hint_right, g_repeat_mode, g_shuffle_enabled, false);
     update_mp3_bottom_bar_left(hint_left, g_playlist[current_index]);
     lv_tick_inc(1);
     lv_timer_handler();

@@ -54,6 +54,11 @@
 #define MP3_MAX_TRACKS            4096
 #define MP3_MAX_PATH_LEN          256
 
+// === MP3 UI Global Objects ===
+static lv_obj_t *mp3_list_obj         = NULL;
+static lv_obj_t *mp3_hint_left_obj    = NULL;
+static lv_obj_t *mp3_hint_right_obj   = NULL;
+static lv_obj_t *mp3_status_label_obj = NULL;
 
 // ===================================================================
 // Audio output mode (headphones / speaker / both)
@@ -239,6 +244,8 @@ static int   g_playlist_cap = 0;
 static int *g_shuffle_order = NULL;
 // Index into g_shuffle_order for the *current* track when shuffle is ON
 static int  g_shuffle_pos   = 0;
+
+static int g_selected_file = 0;
 
 // Build shuffle order using Fisher–Yates, and ensure current_track is first
 static void build_shuffle_order(int current_track) {
@@ -714,6 +721,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             if (!prev_btn_a && btn_a) {
                 paused = !paused;
                 printf(paused ? "Paused\n" : "Playing\n");
+                update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
             }
 
             // B → Repeat mode cycle (global)
@@ -727,6 +735,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 } else if (g_repeat_mode == REPEAT_INFINITE) {
                     printf("Repeat: INFINITE\n");
                 }
+                update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
             }
 
             // SELECT → Shuffle toggle (global flag ONLY; playlist will rebuild order)
@@ -734,6 +743,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 g_shuffle_enabled       = !g_shuffle_enabled;
                 g_shuffle_needs_rebuild = true;   // handled in playlist-level loop
                 printf("Shuffle: %s\n", g_shuffle_enabled ? "ON" : "OFF");
+                update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
                 // FUTURE GUI:
                 // if (audio_mode == AUDIO_HP_ONLY)      audio_mode = AUDIO_SPK_ONLY;
                 // else if (audio_mode == AUDIO_SPK_ONLY) audio_mode = AUDIO_BOTH;
@@ -813,12 +823,34 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 right_held_seek = false;
             }
 
-            // UP / DOWN reserved
+            // UP
             if (!prev_btn_up && btn_up) {
-                // TODO: integrate with GUI navigation
+                g_selected_file--;
+                if (g_selected_file < 0)
+                    g_selected_file = g_track_count - 1;
+
+                draw_rom_list(
+                    mp3_list_obj,
+                    g_playlist,
+                    g_track_count,
+                    g_selected_file,
+                    g_selected_file
+                );
             }
+
+            // DOWN
             if (!prev_btn_down && btn_down) {
-                // TODO: integrate with GUI navigation
+                g_selected_file++;
+                if (g_selected_file >= g_track_count)
+                    g_selected_file = 0;
+
+                draw_rom_list(
+                    mp3_list_obj,
+                    g_playlist,
+                    g_track_count,
+                    g_selected_file,
+                    g_selected_file
+                );
             }
 
             // START reserved
@@ -1133,6 +1165,13 @@ void play_mp3_stream(const char *start_filename) {
     draw_rom_list(list, g_playlist, g_track_count, current_index, current_index);
     update_mp3_bottom_bar_shuffle_repeat(hint_right, g_repeat_mode, g_shuffle_enabled, false);
     update_mp3_bottom_bar_left(hint_left, g_playlist[current_index]);
+
+    mp3_list_obj = list;
+    mp3_status_label_obj = status_label;
+    mp3_hint_left_obj  = hint_left;
+    mp3_hint_right_obj = hint_right;
+    g_selected_file = current_index;
+    
     lv_tick_inc(1);
     lv_timer_handler();
 
@@ -1187,6 +1226,7 @@ void play_mp3_stream(const char *start_filename) {
                     current_index = 0;
             }
         }
+        update_mp3_bottom_bar_left(mp3_hint_left_obj, g_playlist[current_index]);
     }
 
     f_unmount(pSD->pcName);

@@ -866,9 +866,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
             prev_btn_right  = btn_right;
             prev_btn_start  = btn_start;
             prev_btn_select = select_btn;
-
-            // BATTERY MONITORING //
-            minimal_battery_monitoring_cb();
         }
 
         // ==================================================
@@ -883,6 +880,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
             last_lvgl_update = now;
         }
         // ==================================================
+
+        // BATTERY MONITORING //
+        minimal_battery_monitoring_cb();
+        update_status_label(mp3_status_label_obj);
 
         // DMA accepted buf_ready and started playing it.
         int16_t *old = buf_play;

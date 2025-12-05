@@ -1212,80 +1212,82 @@ void draw_now_playing(lv_obj_t *parent)
 
     lv_color_t txt_color       = lv_color_hex(0x202020);
     lv_color_t highlight_color = lv_color_hex(0x33CC66);
+    lv_color_t txt_highlight_color = lv_color_hex(0x00A000);
+    int spacing = 6;
 
-    int y = 6;
-    int spacing = 8;
-
-    // ------------------------------
+    // ============================================================
     // TRACK TITLE
-    // ------------------------------
+    // ============================================================
     lv_obj_t *title_label = lv_label_create(parent);
-    lv_obj_set_style_text_color(title_label, txt_color, 0);
+    lv_obj_set_style_text_color(title_label, txt_highlight_color, 0);
 
     const char *filename = g_playlist[current_index];
-    lv_label_set_text(title_label, basename_from_path(filename)); 
-    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, y);
-    y += 20 + spacing;
+    char title_with_break[256];
+    snprintf(title_with_break, sizeof(title_with_break),
+            "%s\n", basename_from_path(filename));   // <-- add line break here
 
-    // ------------------------------
-    // TRACK NUMBER (e.g. "3 / 25")
-    // ------------------------------
+    lv_label_set_text(title_label, title_with_break);
+
+    lv_obj_align(title_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
+
+    // ============================================================
+    // TRACK NUMBER   (e.g. "3 / 25")
+    // ============================================================
     lv_obj_t *tracknum_label = lv_label_create(parent);
     lv_obj_set_style_text_color(tracknum_label, txt_color, 0);
 
     char tn[32];
     snprintf(tn, sizeof(tn), "%d / %d", current_index + 1, g_track_count);
     lv_label_set_text(tracknum_label, tn);
-    lv_obj_align_to(tracknum_label, title_label, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
-    y += 14 + spacing;
 
-    // ------------------------------
-    // ARTIST PLACEHOLDER
-    // ------------------------------
+    lv_obj_align_to(tracknum_label, title_label, LV_ALIGN_TOP_LEFT, 6, 6);
+
+    // ============================================================
+    // ARTIST  (placeholder)
+    // ============================================================
     lv_obj_t *artist_label = lv_label_create(parent);
     lv_obj_set_style_text_color(artist_label, txt_color, 0);
     lv_label_set_text(artist_label, "Artist: Unknown");
-    lv_obj_align_to(artist_label, tracknum_label, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
-    y += 14 + spacing;
 
-    // ------------------------------
-    // ALBUM PLACEHOLDER
-    // ------------------------------
+    lv_obj_align_to(artist_label, title_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
+
+    // ============================================================
+    // ALBUM  (placeholder)
+    // ============================================================
     lv_obj_t *album_label = lv_label_create(parent);
     lv_obj_set_style_text_color(album_label, txt_color, 0);
-    lv_label_set_text(album_label, "Album: Unknown");
-    lv_obj_align_to(album_label, artist_label, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
-    y += 14 + spacing;
+    lv_label_set_text(album_label, "Album: Unknown\n\n");
 
+    lv_obj_align_to(album_label, artist_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
-    // ------------------------------
-    // TIME INFO (elapsed / total)
-    // ------------------------------
+    // ============================================================
+    // TIME  (0:00 / 0:00)
+    // ============================================================
     lv_obj_t *time_label = lv_label_create(parent);
     lv_obj_set_style_text_color(time_label, txt_color, 0);
-    lv_label_set_text(time_label, "0:00 / 0:00");   // placeholder
-    lv_obj_align_to(time_label, album_label, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
-    y += 14 + spacing;
+    lv_label_set_text(time_label, "0:39 / 2:54");
 
-    // ------------------------------
+    lv_obj_align_to(time_label, album_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
+
+    // ============================================================
     // PROGRESS BAR
-    // ------------------------------
+    // ============================================================
     lv_obj_t *bar = lv_bar_create(parent);
-    lv_obj_set_size(bar, DISP_HOR_RES - 20, 8);
-    lv_obj_align_to(bar, time_label, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
 
-    // Style bar background
+    lv_obj_set_size(bar, DISP_HOR_RES - 20, 8);
+    lv_obj_align_to(bar, time_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
+
+    // bar background
     lv_obj_set_style_bg_color(bar, lv_color_hex(0xD0D0D0), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
 
-    // Style bar fill using highlight color
+    // highlight fill
     lv_obj_set_style_bg_color(bar, highlight_color, LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
 
-    lv_bar_set_range(bar, 0, 100);    // 0–100% for now
-    lv_bar_set_value(bar, 0, LV_ANIM_OFF);
+    lv_bar_set_range(bar, 0, 100);
+    lv_bar_set_value(bar, 35, LV_ANIM_OFF);
 }
-
 
 
 void play_mp3_stream(const char *start_filename) {

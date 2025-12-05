@@ -1220,6 +1220,9 @@ void draw_now_playing(lv_obj_t *parent)
     // ============================================================
     lv_obj_t *title_label = lv_label_create(parent);
     lv_obj_set_style_text_color(title_label, txt_highlight_color, 0);
+    lv_obj_set_width(title_label, DISP_HOR_RES - 26);
+    lv_label_set_long_mode(title_label, LV_LABEL_LONG_SCROLL_CIRCULAR); // enable scroll
+    lv_obj_set_style_anim_speed(title_label, 20, 0); // adjust speed
 
     const char *filename = g_playlist[current_index];
     char title_with_break[256];
@@ -1274,7 +1277,7 @@ void draw_now_playing(lv_obj_t *parent)
     // ============================================================
     lv_obj_t *bar = lv_bar_create(parent);
 
-    lv_obj_set_size(bar, DISP_HOR_RES - 20, 8);
+    lv_obj_set_size(bar, DISP_HOR_RES - 26, 8);
     lv_obj_align_to(bar, time_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
     // bar background
@@ -1471,6 +1474,7 @@ void play_mp3_stream(const char *start_filename) {
                 if (current_index < 0)
                     current_index = g_track_count - 1;
             }
+            if (show_now_playing) g_selected_file = current_index;
 
         } else if (r == PLAY_RESULT_NEXT) {
             // Next track (playlist shuffle or linear)
@@ -1484,6 +1488,8 @@ void play_mp3_stream(const char *start_filename) {
                 if (current_index >= g_track_count)
                     current_index = 0;
             }
+            if (show_now_playing) g_selected_file = current_index;
+
         } else if (r == PLAY_RESULT_SELECTED) {
             current_index = g_selected_file;
         }

@@ -272,10 +272,6 @@ while(true)
 		goto out;
 	}
 
-	#if ENABLE_RTC
-	synchronize_gb_rtc(&gb);
-	#endif
-
 	// MARK: - Auto Assign Palette
 	char rom_title[16];
 	auto_assign_palette(palette, gb_colour_hash(&gb),gb_get_rom_name(&gb,rom_title));

@@ -54,6 +54,8 @@
 #define MP3_MAX_TRACKS            4096
 #define MP3_MAX_PATH_LEN          256
 
+#define MP3_INACTIVE_TIMEOUT_US   (3000000ULL)   // 3 seconds
+
 // === MP3 UI Global Objects ===
 static lv_obj_t *mp3_list_obj         = NULL;
 static lv_obj_t *mp3_hint_left_obj    = NULL;
@@ -106,11 +108,40 @@ typedef enum {
 
 static repeat_mode_t g_repeat_mode       = REPEAT_OFF;
 static bool          g_shuffle_enabled   = false;
-
+static bool          g_mp3_inactive      = false;
+static bool          paused              = false;
 // This flag means "shuffle state changed while a track was playing;
 // rebuild the shuffle order once the track returns to the playlist layer".
 static bool          g_shuffle_needs_rebuild = false;
 
+// uint8_t saved_lcd_brightness = 0;
+uint8_t saved_button_brightness = 0;
+
+// bool mp3_led_faded = false;
+
+// void fade_out_leds_mp3_inactive(void) {
+//     if (mp3_led_faded) return;
+
+//     saved_lcd_brightness    = lcd_led_duty_cycle;
+//     saved_button_brightness = button_led_duty_cycle;
+
+//     // Fade-out DOWN using the correct timer
+//     fade_out_leds_powerdown();
+
+//     mp3_led_faded = true;
+// }
+// void fade_in_leds_mp3_restore(void) {
+//     if (!mp3_led_faded) return;
+
+//     lcd_target_brightness    = saved_lcd_brightness;
+//     button_target_brightness = saved_button_brightness;
+
+//     // DO NOT touch pwr_target_brightness (power LED stays on always)
+
+//     fade_in_leds_startup(); // fades towards new target brightness levels
+
+//     mp3_led_faded = false;
+// }
 
 // ===================================================================
 // Saving MP3 State and settings
@@ -590,7 +621,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
     printf("Starting MP3 stream...\n");
 
     bool decoded_next_chunk = false;
-    bool paused = false;
 
     bool next_track_requested = false;
     bool prev_track_requested = false;
@@ -611,6 +641,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
     uint64_t right_last_seek_us = 0;
     bool left_held_seek  = false;
     bool right_held_seek = false;
+
+    // Inactivity tracking
+    uint64_t last_interaction_us = time_us_64();
 
     // ================================================================
     // MAIN PLAYBACK LOOP
@@ -701,6 +734,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
             bool btn_right = false;
             bool btn_start = false;
 
+
+            #define ANY_BUTTON_PRESSED \
+                (btn_a || btn_b || btn_up || btn_down || btn_left || btn_right || btn_start || select_btn)
+
             if (!iox_nint) {
                 read_io_expander_states(0);
 
@@ -714,6 +751,24 @@ static play_result_t mp3_play_single_track(const char *filepath,
             }
 
             uint64_t now_us = time_us_64();
+
+            // -------------- MP3 Inactivity Detection --------------
+            if (g_mp3_inactive && ANY_BUTTON_PRESSED) {
+                // Wake up immediately
+                g_mp3_inactive = false;
+                last_interaction_us = now_us;
+            }
+
+            if (ANY_BUTTON_PRESSED) {
+                last_interaction_us = now_us;
+            }
+
+            if (!g_mp3_inactive &&
+                (now_us - last_interaction_us >= MP3_INACTIVE_TIMEOUT_US)) {
+
+                g_mp3_inactive = true;
+                printf("MP3 → inactive mode\n");
+            }
 
             // A → Play Selected Track
             if (!prev_btn_a && btn_a) {
@@ -874,7 +929,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
         static uint64_t last_lvgl_update = 0;
         uint64_t now = time_us_64();
         uint64_t time_since_last_update = now - last_lvgl_update;
-        if (time_since_last_update >= 10000) {   // 10 ms (100 Hz UI updates)
+        if (time_since_last_update >= 10000 && !g_mp3_inactive) {   // 10 ms (100 Hz UI updates)
             lv_tick_inc(time_since_last_update);
             lv_timer_handler();
             last_lvgl_update = now;
@@ -884,6 +939,32 @@ static play_result_t mp3_play_single_track(const char *filepath,
         // BATTERY MONITORING //
         bool timer_task_flagged = minimal_battery_monitoring_cb();
         if (timer_task_flagged) update_status_label(mp3_status_label_obj);
+
+        static bool prev_inactive = false;
+
+        if (g_mp3_inactive && !prev_inactive) {
+
+            // Fade out ONLY LCD + button LEDs
+            // fade_out_leds_mp3_inactive();
+            saved_button_brightness = button_led_duty_cycle;
+            decrease_button_brightness(MAX_BRIGHTNESS);
+
+            // Dim LCD via SD busy if applicable
+            set_sd_busy(true);
+
+            prev_inactive = true;
+        }
+        else if (!g_mp3_inactive && prev_inactive) {
+
+            // Remove SD busy right before restoring LEDs
+            set_sd_busy(false);
+
+            // Fade LCD + button LEDs back in
+            // fade_in_leds_mp3_restore();
+            increase_button_brightness(saved_button_brightness);
+
+            prev_inactive = false;
+        }
 
         // DMA accepted buf_ready and started playing it.
         int16_t *old = buf_play;

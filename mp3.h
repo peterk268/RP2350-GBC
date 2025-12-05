@@ -54,14 +54,16 @@
 #define MP3_MAX_TRACKS            4096
 #define MP3_MAX_PATH_LEN          256
 
-#define MP3_INACTIVE_TIMEOUT_US   (3000000ULL)   // 3 seconds
+#define MP3_INACTIVE_TIMEOUT_US    (4500000ULL)   // 4.5 seconds
+#define MP3_NOW_PLAYING_TIMEOUT_US (2500000ULL)   // 2.5 seconds
 
 // === MP3 UI Global Objects ===
 static lv_obj_t *mp3_list_obj         = NULL;
 static lv_obj_t *mp3_hint_left_obj    = NULL;
 static lv_obj_t *mp3_hint_right_obj   = NULL;
 static lv_obj_t *mp3_status_label_obj = NULL;
-
+static lv_obj_t *mp3_top_bar          = NULL;
+static lv_obj_t *mp3_bottom_bar       = NULL;
 // ===================================================================
 // Audio output mode (headphones / speaker / both)
 // ===================================================================
@@ -110,6 +112,7 @@ static repeat_mode_t g_repeat_mode       = REPEAT_OFF;
 static bool          g_shuffle_enabled   = false;
 static bool          g_mp3_inactive      = false;
 static bool          paused              = false;
+static bool          show_now_playing    = true;
 // This flag means "shuffle state changed while a track was playing;
 // rebuild the shuffle order once the track returns to the playlist layer".
 static bool          g_shuffle_needs_rebuild = false;
@@ -644,6 +647,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
     // Inactivity tracking
     uint64_t last_interaction_us = time_us_64();
+    uint64_t last_nav_us         = last_interaction_us; // UP/DOWN/A (for now-playing auto)
+
+    static bool prev_inactive = false;
 
     // ================================================================
     // MAIN PLAYBACK LOOP
@@ -738,6 +744,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
             #define ANY_BUTTON_PRESSED \
                 (btn_a || btn_b || btn_up || btn_down || btn_left || btn_right || btn_start || select_btn)
 
+            #define NAV_BUTTON_PRESSED \
+                (btn_up || btn_down || btn_a)
+
             if (!iox_nint) {
                 read_io_expander_states(0);
 
@@ -770,10 +779,33 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 printf("MP3 → inactive mode\n");
             }
 
+            // --------- "Now Playing" auto swap (ONLY UP/DOWN/A) ---------
+            if (NAV_BUTTON_PRESSED) {
+                last_nav_us = now_us;
+            }
+
+            if (!g_mp3_inactive &&
+                !show_now_playing &&
+                (now_us - last_nav_us) >= MP3_NOW_PLAYING_TIMEOUT_US) {
+
+                show_now_playing = true;
+                printf("MP3 → now playing\n");
+            }
+
+
             // A → Play Selected Track
             if (!prev_btn_a && btn_a) {
-                result = PLAY_RESULT_SELECTED;
-                goto END_PLAYBACK;
+                // only if mp3 is active can we toggle now playing and play the selected track.
+                if (!prev_inactive && !show_now_playing) {
+                    show_now_playing = true;
+                    paused = false;
+                    update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
+                    result = PLAY_RESULT_SELECTED;
+                    goto END_PLAYBACK;
+                }
+                if (!prev_inactive && show_now_playing) {
+                    show_now_playing = false;
+                }
             }
 
             // B → Play / Pause
@@ -785,15 +817,17 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             // SELECT → Shuffle toggle (global flag ONLY; playlist will rebuild order)
             if (!prev_btn_select && select_btn) {
-                g_shuffle_enabled       = !g_shuffle_enabled;
-                g_shuffle_needs_rebuild = true;   // handled in playlist-level loop
-                printf("Shuffle: %s\n", g_shuffle_enabled ? "ON" : "OFF");
-                update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
-                // FUTURE GUI:
-                // if (audio_mode == AUDIO_HP_ONLY)      audio_mode = AUDIO_SPK_ONLY;
-                // else if (audio_mode == AUDIO_SPK_ONLY) audio_mode = AUDIO_BOTH;
-                // else                                   audio_mode = AUDIO_HP_ONLY;
-                // apply_audio_mode();
+                if (!prev_inactive) {
+                    g_shuffle_enabled       = !g_shuffle_enabled;
+                    g_shuffle_needs_rebuild = true;   // handled in playlist-level loop
+                    printf("Shuffle: %s\n", g_shuffle_enabled ? "ON" : "OFF");
+                    update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
+                    // FUTURE GUI:
+                    // if (audio_mode == AUDIO_HP_ONLY)      audio_mode = AUDIO_SPK_ONLY;
+                    // else if (audio_mode == AUDIO_SPK_ONLY) audio_mode = AUDIO_BOTH;
+                    // else                                   audio_mode = AUDIO_HP_ONLY;
+                    // apply_audio_mode();
+                }
             }
 
             // LEFT: tap = prev track, hold = seek backward
@@ -870,46 +904,57 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             // UP
             if (!prev_btn_up && btn_up) {
-                g_selected_file--;
-                if (g_selected_file < 0)
-                    g_selected_file = g_track_count - 1;
+                // dont navigate yet.
+                if (show_now_playing) {
+                    show_now_playing = false;
+                } else {
+                    g_selected_file--;
+                    if (g_selected_file < 0)
+                        g_selected_file = g_track_count - 1;
 
-                draw_rom_list(
-                    mp3_list_obj,
-                    g_playlist,
-                    g_track_count,
-                    g_selected_file,
-                    g_selected_file
-                );
+                    draw_rom_list(
+                        mp3_list_obj,
+                        g_playlist,
+                        g_track_count,
+                        g_selected_file,
+                        g_selected_file
+                    );
+                }
             }
 
             // DOWN
             if (!prev_btn_down && btn_down) {
-                g_selected_file++;
-                if (g_selected_file >= g_track_count)
-                    g_selected_file = 0;
+                if (show_now_playing) {
+                    show_now_playing = false;
+                } else {
+                    g_selected_file++;
+                    if (g_selected_file >= g_track_count)
+                        g_selected_file = 0;
 
-                draw_rom_list(
-                    mp3_list_obj,
-                    g_playlist,
-                    g_track_count,
-                    g_selected_file,
-                    g_selected_file
-                );
+                    draw_rom_list(
+                        mp3_list_obj,
+                        g_playlist,
+                        g_track_count,
+                        g_selected_file,
+                        g_selected_file
+                    );
+                }
             }
 
             // START → Repeat mode cycle (global)
             if (!prev_btn_start && btn_start) {
-                g_repeat_mode = (repeat_mode_t)((g_repeat_mode + 1) % 3);
+                if (!prev_inactive) {
+                    g_repeat_mode = (repeat_mode_t)((g_repeat_mode + 1) % 3);
 
-                if (g_repeat_mode == REPEAT_OFF) {
-                    printf("Repeat: OFF\n");
-                } else if (g_repeat_mode == REPEAT_ONE) {
-                    printf("Repeat: ONE (play once more)\n");
-                } else if (g_repeat_mode == REPEAT_INFINITE) {
-                    printf("Repeat: INFINITE\n");
+                    if (g_repeat_mode == REPEAT_OFF) {
+                        printf("Repeat: OFF\n");
+                    } else if (g_repeat_mode == REPEAT_ONE) {
+                        printf("Repeat: ONE (play once more)\n");
+                    } else if (g_repeat_mode == REPEAT_INFINITE) {
+                        printf("Repeat: INFINITE\n");
+                    }
+                    update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
                 }
-                update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
             }
 
             // Save previous button states
@@ -921,6 +966,26 @@ static play_result_t mp3_play_single_track(const char *filepath,
             prev_btn_right  = btn_right;
             prev_btn_start  = btn_start;
             prev_btn_select = select_btn;
+        }
+
+        // Now Playing shift
+        static bool prev_now_playing = false;
+        if (show_now_playing && !prev_now_playing) {
+            // switch to now playing ui
+            mp3_apply_now_playing_theme();
+            prev_now_playing = true;
+        }
+        else if (!show_now_playing && prev_now_playing) {
+            // switch to track list ui
+            mp3_apply_now_playing_theme();
+            draw_rom_list(
+                mp3_list_obj,
+                g_playlist,
+                g_track_count,
+                g_selected_file,
+                g_selected_file
+            );
+            prev_now_playing = false;
         }
 
         // ==================================================
@@ -939,8 +1004,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
         // BATTERY MONITORING //
         bool timer_task_flagged = minimal_battery_monitoring_cb();
         if (timer_task_flagged) update_status_label(mp3_status_label_obj);
-
-        static bool prev_inactive = false;
 
         if (g_mp3_inactive && !prev_inactive) {
 
@@ -1123,6 +1186,19 @@ void update_mp3_bottom_bar_left(lv_obj_t *left, const char *text)
     lv_label_set_text(left, basename_from_path(text));
 }
 
+void mp3_apply_now_playing_theme() {
+    lv_color_t col = show_now_playing ? lv_color_hex(0xFFFFFF)
+                                : lv_color_hex(0xE0E0E0);
+    // bottom bar bg
+    if (mp3_bottom_bar) {
+        lv_obj_set_style_bg_color(mp3_bottom_bar, col, 0);
+    }
+    // top bar bg
+    if (mp3_top_bar) {
+        lv_obj_set_style_bg_color(mp3_top_bar, col, 0);
+    }
+}
+
 
 void play_mp3_stream(const char *start_filename) {
     // Create list
@@ -1171,7 +1247,7 @@ void play_mp3_stream(const char *start_filename) {
     draw_rom_list(list, g_playlist, VISIBLE_ITEMS, 0, 0);
         
     lv_obj_t *status_label;
-    lv_obj_t *top_bar = create_top_bar(cont, &status_label);
+    mp3_top_bar = create_top_bar(cont, &status_label);
 
     // Initial update
     update_status_label(status_label);
@@ -1179,7 +1255,7 @@ void play_mp3_stream(const char *start_filename) {
     // === Bottom hint bar ===
     lv_obj_t *hint_left;
     lv_obj_t *hint_right;
-    lv_obj_t *hint_bar = create_mp3_bottom_bar(cont, &hint_left, &hint_right);
+    mp3_bottom_bar = create_mp3_bottom_bar(cont, &hint_left, &hint_right);
 
     lv_tick_inc(1);
     lv_timer_handler();

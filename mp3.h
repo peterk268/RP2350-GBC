@@ -116,6 +116,7 @@ static bool          show_now_playing    = true;
 // This flag means "shuffle state changed while a track was playing;
 // rebuild the shuffle order once the track returns to the playlist layer".
 static bool          g_shuffle_needs_rebuild = false;
+static int current_index = 0;
 
 // uint8_t saved_lcd_brightness = 0;
 uint8_t saved_button_brightness = 0;
@@ -1197,6 +1198,11 @@ void mp3_apply_now_playing_theme() {
     if (mp3_top_bar) {
         lv_obj_set_style_bg_color(mp3_top_bar, col, 0);
     }
+    if (show_now_playing) {
+        update_mp3_bottom_bar_left(mp3_hint_left_obj, "Now Playing");
+    } else {
+        update_mp3_bottom_bar_left(mp3_hint_left_obj, g_playlist[current_index]);
+    }
 }
 
 
@@ -1298,7 +1304,6 @@ void play_mp3_stream(const char *start_filename) {
     }
 
     // Choose initial track index
-    int current_index = 0;
     uint32_t resume_position_ms = 0;
 
     // Priority: explicit filename → saved resume → default 0

@@ -473,7 +473,7 @@
 
 #define LV_USE_ARC        1
 
-#define LV_USE_BAR        0
+#define LV_USE_BAR        1
 
 #define LV_USE_BTN        1
 

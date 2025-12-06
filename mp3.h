@@ -1400,6 +1400,9 @@ void play_mp3_stream(const char *start_filename) {
     // Choose initial track index
     uint32_t resume_position_ms = 0;
 
+    // seed shuffle from time
+    seed_shuffle();
+
     // Priority: explicit filename → saved resume → default 0
     if (start_filename && start_filename[0] != '\0') {
         for (int i = 0; i < g_track_count; i++) {
@@ -1427,9 +1430,6 @@ void play_mp3_stream(const char *start_filename) {
             build_shuffle_order(current_index);
         }
     }
-
-    // Optional: seed shuffle from time
-    srand((unsigned)time_us_64());
 
     draw_rom_list(list, g_playlist, g_track_count, current_index, current_index);
     update_mp3_bottom_bar_shuffle_repeat(hint_right, g_repeat_mode, g_shuffle_enabled, false);

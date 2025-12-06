@@ -50,6 +50,10 @@
 #define SEEK_REPEAT_INTERVAL_MS  200
 #define SEEK_HOLD_TIME_MS        350
 
+// How long you need to hold before paging instead of 1-by-1
+#define NAV_PAGE_HOLD_TIME_MS       350   // tweak to taste
+#define NAV_PAGE_REPEAT_INTERVAL_MS 600   // how often to page while held
+
 // Maximum playlist size and path length
 #define MP3_MAX_TRACKS            4096
 #define MP3_MAX_PATH_LEN          256
@@ -185,6 +189,94 @@ void toggle_speakers_if_paused() {
     if (!headphones_present) paused ? spk_off() : spk_on();
 }
 
+void draw_track_list(lv_obj_t *list,
+                     char filenames[][256],
+                     uint16_t num_file,
+                     uint16_t selected,
+                     uint16_t page_start)
+{
+    lv_obj_clean(list);
+
+    if (show_settings) {
+        draw_settings(list);
+        return;
+    }
+
+    if (num_file == 0) {
+        return;
+    }
+
+    // Start from the selected track (your "page start")
+    uint16_t start = selected % num_file;
+
+    // Base number of slots we want on screen
+    uint16_t base_slots = (num_file < VISIBLE_ITEMS)
+                            ? num_file
+                            : VISIBLE_ITEMS;
+
+    // Does this window cross the end of the list?
+    bool will_wrap = (start + base_slots) > num_file;
+
+    // If we wrap, reserve one slot for the separator
+    uint16_t to_show = base_slots;
+    if (will_wrap && to_show > 0) {
+        to_show -= 1;
+    }
+
+    bool inserted_separator = false;
+
+    for (uint16_t i = 0; i < to_show; i++) {
+
+        uint16_t raw = start + i;
+
+        // If we wrap in the middle of the visible window, drop the separator HERE
+        if (will_wrap && !inserted_separator && raw >= num_file) {
+            lv_obj_t *sep = lv_list_add_text(list, "-------------------------------------");
+            lv_obj_set_style_text_font(sep, LV_FONT_DEFAULT, 0);
+            lv_obj_set_style_bg_color(sep, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_text_color(sep, lv_color_black(), 0);
+            lv_obj_set_width(sep, DISP_HOR_RES - 30);
+            lv_label_set_long_mode(sep, LV_LABEL_LONG_CLIP);
+
+            inserted_separator = true;
+        }
+
+        uint16_t idx = raw % num_file;
+
+        // Actual item
+        lv_obj_t *item = lv_list_add_text(
+            list,
+            basename_from_path(filenames[idx])
+        );
+
+        lv_obj_set_style_text_font(item, LV_FONT_DEFAULT, 0);
+        lv_obj_set_style_text_color(item, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(item, lv_color_hex(0xFFFFFF), 0);
+
+        if (idx == selected) {
+            lv_obj_set_style_bg_color(item, lv_color_hex(0x33CC66), LV_PART_MAIN);
+            lv_obj_set_style_text_color(item, lv_color_black(), 0);
+
+            lv_label_set_long_mode(item, LV_LABEL_LONG_SCROLL_CIRCULAR);
+            lv_obj_set_style_anim_speed(item, 20, 0);
+        } else {
+            lv_obj_set_width(item, DISP_HOR_RES - 30);
+            lv_label_set_long_mode(item, LV_LABEL_LONG_CLIP);
+        }
+    }
+
+    // Edge case: we *know* the window wraps, but the wrap point
+    // landed just after the last visible item in the loop.
+    // Use the reserved slot now and put the separator at the bottom.
+    if (will_wrap && !inserted_separator) {
+        lv_obj_t *sep = lv_list_add_text(list, "-------------------------------------");
+        lv_obj_set_style_text_font(sep, LV_FONT_DEFAULT, 0);
+        lv_obj_set_style_bg_color(sep, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_color(sep, lv_color_black(), 0);
+        lv_obj_set_width(sep, DISP_HOR_RES - 30);
+        lv_label_set_long_mode(sep, LV_LABEL_LONG_CLIP);
+    }
+}
 // ===================================================================
 // SD ring buffer logic (HEAP-BASED, in PSRAM via malloc)
 // ===================================================================
@@ -502,6 +594,33 @@ static inline int adaptive_seek_step_ms(uint64_t held_ms) {
     return SEEK_STEP_10S;
 }
 
+static inline void mp3_select_relative(int delta,
+                                       lv_obj_t *mp3_list_obj,
+                                       char **g_playlist,
+                                       int g_track_count)
+{
+    if (g_track_count <= 0) return;
+
+    int new_index = g_selected_file + delta;
+
+    // Wrap around nicely
+    if (new_index < 0) {
+        new_index = (new_index % g_track_count + g_track_count) % g_track_count;
+    } else if (new_index >= g_track_count) {
+        new_index = new_index % g_track_count;
+    }
+
+    g_selected_file = new_index;
+
+    draw_track_list(
+        mp3_list_obj,
+        g_playlist,
+        g_track_count,
+        g_selected_file,
+        g_selected_file
+    );
+}
+
 // ===================================================================
 // Single-track player: returns what the playlist should do next
 // ===================================================================
@@ -650,6 +769,15 @@ static play_result_t mp3_play_single_track(const char *filepath,
     uint64_t right_last_seek_us = 0;
     bool left_held_seek  = false;
     bool right_held_seek = false;
+
+    // UP/DOWN hold state
+    static uint64_t up_press_us        = 0;
+    static uint64_t up_last_page_us    = 0;
+    static bool     up_held_paging     = false;
+
+    static uint64_t down_press_us      = 0;
+    static uint64_t down_last_page_us  = 0;
+    static bool     down_held_paging   = false;
 
     // Inactivity tracking
     uint64_t last_interaction_us = time_us_64();
@@ -821,7 +949,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 toggle_speakers_if_paused();
                 printf(paused ? "Paused\n" : "Playing\n");
                 update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
-                sleep_ms(100); // dollar store debouncing
+                sleep_ms(200); // dollar store debouncing
             }
 
             // SELECT → Shuffle toggle (global flag ONLY; playlist will rebuild order)
@@ -911,43 +1039,95 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 right_held_seek = false;
             }
 
-            // UP
-            if (!prev_btn_up && btn_up) {
-                // dont navigate yet.
-                if (show_now_playing) {
-                    show_now_playing = false;
-                } else {
-                    g_selected_file--;
-                    if (g_selected_file < 0)
-                        g_selected_file = g_track_count - 1;
+            // ===================== UP (single step + page on hold) =====================
+            if (btn_up) {
+                if (!prev_btn_up) {
+                    // First press
+                    up_press_us     = now_us;
+                    up_last_page_us = now_us;
+                    up_held_paging  = false;
 
-                    draw_rom_list(
-                        mp3_list_obj,
-                        g_playlist,
-                        g_track_count,
-                        g_selected_file,
-                        g_selected_file
-                    );
+                    if (show_now_playing) {
+                        // First UP just exits Now Playing
+                        show_now_playing = false;
+                    } else {
+                        // Tap immediately moves 1 item for "short press"
+                        mp3_select_relative(-1, mp3_list_obj, g_playlist, g_track_count);
+                    }
+                } else {
+                    // Still holding UP
+                    if (!show_now_playing) {  // only page when list is visible
+                        uint64_t held_ms = (now_us - up_press_us) / 1000;
+
+                        if (held_ms >= NAV_PAGE_HOLD_TIME_MS) {
+                            if (!up_held_paging) {
+                                // First time we detect a "hold":
+                                // we already moved -1 on press, so move -(VISIBLE_ITEMS-1)
+                                // to get a total of -VISIBLE_ITEMS from the original.
+                                up_held_paging = true;
+                                mp3_select_relative(-(VISIBLE_ITEMS - 1),
+                                                    mp3_list_obj, g_playlist, g_track_count);
+                                up_last_page_us = now_us;
+                            } else {
+                                // Optional auto-repeat paging while held
+                                uint64_t since_last_ms = (now_us - up_last_page_us) / 1000;
+                                if (since_last_ms >= NAV_PAGE_REPEAT_INTERVAL_MS) {
+                                    mp3_select_relative(-VISIBLE_ITEMS,
+                                                        mp3_list_obj, g_playlist, g_track_count);
+                                    up_last_page_us = now_us;
+                                }
+                            }
+                        }
+                    }
                 }
+            } else {
+                // Released
+                up_held_paging = false;
             }
 
-            // DOWN
-            if (!prev_btn_down && btn_down) {
-                if (show_now_playing) {
-                    show_now_playing = false;
-                } else {
-                    g_selected_file++;
-                    if (g_selected_file >= g_track_count)
-                        g_selected_file = 0;
+            // =================== DOWN (single step + page on hold) =====================
+            if (btn_down) {
+                if (!prev_btn_down) {
+                    // First press
+                    down_press_us     = now_us;
+                    down_last_page_us = now_us;
+                    down_held_paging  = false;
 
-                    draw_rom_list(
-                        mp3_list_obj,
-                        g_playlist,
-                        g_track_count,
-                        g_selected_file,
-                        g_selected_file
-                    );
+                    if (show_now_playing) {
+                        // First DOWN just exits Now Playing
+                        show_now_playing = false;
+                    } else {
+                        // Tap immediately moves 1 item for "short press"
+                        mp3_select_relative(+1, mp3_list_obj, g_playlist, g_track_count);
+                    }
+                } else {
+                    // Still holding DOWN
+                    if (!show_now_playing) {
+                        uint64_t held_ms = (now_us - down_press_us) / 1000;
+
+                        if (held_ms >= NAV_PAGE_HOLD_TIME_MS) {
+                            if (!down_held_paging) {
+                                // First "hold" page:
+                                // already moved +1, so add +(VISIBLE_ITEMS-1)
+                                // -> net +VISIBLE_ITEMS from original.
+                                down_held_paging = true;
+                                mp3_select_relative(+(VISIBLE_ITEMS - 1),
+                                                    mp3_list_obj, g_playlist, g_track_count);
+                                down_last_page_us = now_us;
+                            } else {
+                                // Auto-repeat pages while held
+                                uint64_t since_last_ms = (now_us - down_last_page_us) / 1000;
+                                if (since_last_ms >= NAV_PAGE_REPEAT_INTERVAL_MS) {
+                                    mp3_select_relative(+VISIBLE_ITEMS,
+                                                        mp3_list_obj, g_playlist, g_track_count);
+                                    down_last_page_us = now_us;
+                                }
+                            }
+                        }
+                    }
                 }
+            } else {
+                down_held_paging = false;
             }
 
             // START → Repeat mode cycle (global)
@@ -988,7 +1168,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
         else if (!show_now_playing && prev_now_playing) {
             // switch to track list ui
             mp3_apply_now_playing_theme();
-            draw_rom_list(
+            draw_track_list(
                 mp3_list_obj,
                 g_playlist,
                 g_track_count,
@@ -1348,7 +1528,7 @@ void play_mp3_stream(const char *start_filename) {
         snprintf(g_playlist[i], MP3_MAX_PATH_LEN, "%s", loading_msgs[i]);
     }
 
-    draw_rom_list(list, g_playlist, VISIBLE_ITEMS, 0, 0);
+    draw_track_list(list, g_playlist, VISIBLE_ITEMS, 0, 0);
         
     lv_obj_t *status_label;
     mp3_top_bar = create_top_bar(cont, &status_label);
@@ -1435,7 +1615,7 @@ void play_mp3_stream(const char *start_filename) {
         }
     }
 
-    draw_rom_list(list, g_playlist, g_track_count, current_index, current_index);
+    draw_track_list(list, g_playlist, g_track_count, current_index, current_index);
     update_mp3_bottom_bar_shuffle_repeat(hint_right, g_repeat_mode, g_shuffle_enabled, false);
     update_mp3_bottom_bar_left(hint_left, g_playlist[current_index]);
 

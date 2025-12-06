@@ -54,8 +54,8 @@
 #define MP3_MAX_TRACKS            4096
 #define MP3_MAX_PATH_LEN          256
 
-#define MP3_INACTIVE_TIMEOUT_US    (4500000ULL)   // 4.5 seconds
-#define MP3_NOW_PLAYING_TIMEOUT_US (2500000ULL)   // 2.5 seconds
+#define MP3_INACTIVE_TIMEOUT_US    (6000000ULL)   // 6 seconds
+#define MP3_NOW_PLAYING_TIMEOUT_US (3000000ULL)   // 3 seconds
 
 // === MP3 UI Global Objects ===
 static lv_obj_t *mp3_list_obj         = NULL;

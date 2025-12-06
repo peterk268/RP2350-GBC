@@ -181,6 +181,10 @@ static void mp3_save_resume(int track_index, uint32_t position_ms) {
     }
 }
 
+void toggle_speakers_if_paused() {
+    if (!headphones_present) paused ? spk_off() : spk_on();
+}
+
 // ===================================================================
 // SD ring buffer logic (HEAP-BASED, in PSRAM via malloc)
 // ===================================================================
@@ -800,6 +804,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 if (!prev_inactive && !show_now_playing) {
                     show_now_playing = true;
                     paused = false;
+                    toggle_speakers_if_paused();
                     update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
                     result = PLAY_RESULT_SELECTED;
                     goto END_PLAYBACK;
@@ -812,6 +817,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // B → Play / Pause
             if (!prev_btn_b && btn_b) {
                 paused = !paused;
+                toggle_speakers_if_paused();
                 printf(paused ? "Paused\n" : "Playing\n");
                 update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
             }

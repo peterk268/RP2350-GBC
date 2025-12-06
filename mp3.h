@@ -821,6 +821,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 toggle_speakers_if_paused();
                 printf(paused ? "Paused\n" : "Playing\n");
                 update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
+                sleep_ms(100); // dollar store debouncing
             }
 
             // SELECT → Shuffle toggle (global flag ONLY; playlist will rebuild order)

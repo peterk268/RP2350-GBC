@@ -1039,13 +1039,16 @@ static play_result_t mp3_play_single_track(const char *filepath,
             prev_inactive = false;
         }
 
-        // DMA accepted buf_ready and started playing it.
-        int16_t *old = buf_play;
-        buf_play  = buf_ready;   // now playing
-        buf_ready = buf_fill;    // next ready
-        buf_fill  = old;         // to be filled
+        // Only rotate audio buffers when we’re actually queuing AUDIO, not silence.
+        if (!paused) {
+            // DMA accepted buf_ready and started playing it.
+            int16_t *old = buf_play;
+            buf_play  = buf_ready;   // now playing
+            buf_ready = buf_fill;    // next ready
+            buf_fill  = old;         // to be filled
 
-        decoded_next_chunk = false;  // decode again on next loop
+            decoded_next_chunk = false;  // decode again on next loop
+        }
     }
 
 END_PLAYBACK:

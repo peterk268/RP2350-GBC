@@ -571,9 +571,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
     int sample_count = PCM_FRAME_COUNT * channels;
 
     // Triple PCM buffers + silence buffer for pause (all in PSRAM)
-    int16_t *pcmA        = (int16_t *)malloc(sample_count * sizeof(int16_t));
-    int16_t *pcmB        = (int16_t *)malloc(sample_count * sizeof(int16_t));
-    int16_t *pcmC        = (int16_t *)malloc(sample_count * sizeof(int16_t));
+    // Make sure all PCM buffers start as silence (no old track data)
+    int16_t *pcmA        = (int16_t *)calloc(sample_count, sizeof(int16_t));
+    int16_t *pcmB        = (int16_t *)calloc(sample_count, sizeof(int16_t));
+    int16_t *pcmC        = (int16_t *)calloc(sample_count, sizeof(int16_t));
     int16_t *silence_buf = (int16_t *)calloc(sample_count, sizeof(int16_t));
 
     if (!pcmA || !pcmB || !pcmC || !silence_buf) {
@@ -611,7 +612,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
     // First buffer: decode & start DMA
     drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, buf_play);
-    i2s_dma_write(&i2s_config, (const uint16_t *)buf_play);
+    i2s_dma_write(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_play));
 
     // More prefill before second buffer
     for (int i = 0; i < 4 && !stream->eof; i++) {

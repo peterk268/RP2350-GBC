@@ -193,6 +193,15 @@ static void mp3_save_resume(int track_index, uint32_t position_ms, bool hold_sd_
         set_sd_busy(false);
 }
 
+typedef struct {
+    uint32_t magic;    // "SHUF"
+    int32_t  count;    // number of tracks
+    int32_t  pos;      // current g_shuffle_pos
+} mp3_shuffle_hdr_t;
+
+#define SHUFFLE_MAGIC 0x53485546   // 'SHUF'
+#define SHUFFLE_FILE  "mp3_shuffle.bin"
+
 void toggle_speakers_if_paused() {
     if (!headphones_present) paused ? spk_off() : spk_on();
 }
@@ -423,6 +432,83 @@ static void build_shuffle_order(int current_track) {
     }
 
     g_shuffle_pos = 0;
+}
+
+static void shuffle_save_state(bool hold_sd_busy) {
+    if (!g_shuffle_order || g_track_count <= 0)
+        return;
+
+    FIL f;
+    UINT bw;
+
+    mp3_shuffle_hdr_t hdr;
+    hdr.magic = SHUFFLE_MAGIC;
+    hdr.count = g_track_count;
+    hdr.pos   = g_shuffle_pos;
+
+    set_sd_busy(true);
+
+    if (f_open(&f, SHUFFLE_FILE, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
+        // header
+        f_write(&f, &hdr, sizeof(hdr), &bw);
+
+        if (bw == sizeof(hdr)) {
+            size_t bytes = sizeof(int) * g_track_count;
+            f_write(&f, g_shuffle_order, bytes, &bw);
+        }
+
+        f_close(&f);
+    }
+    
+    if (!hold_sd_busy)
+        set_sd_busy(false);
+}
+
+static bool shuffle_load_state(void) {
+    FIL f;
+    UINT br;
+    mp3_shuffle_hdr_t hdr;
+
+    if (f_open(&f, SHUFFLE_FILE, FA_READ) != FR_OK)
+        return false;
+
+    if (f_read(&f, &hdr, sizeof(hdr), &br) != FR_OK ||
+        br != sizeof(hdr) ||
+        hdr.magic != SHUFFLE_MAGIC) {
+
+        f_close(&f);
+        return false;
+    }
+
+    // Track count mismatch → discard old shuffle state
+    if (hdr.count <= 0 || hdr.count != g_track_count) {
+        f_close(&f);
+        return false;
+    }
+
+    if (hdr.pos < 0 || hdr.pos >= hdr.count) {
+        f_close(&f);
+        return false;
+    }
+
+    if (!g_shuffle_order) {
+        g_shuffle_order = (int *)malloc(sizeof(int) * g_track_count);
+        if (!g_shuffle_order) {
+            f_close(&f);
+            return false;
+        }
+    }
+
+    size_t bytes = sizeof(int) * g_track_count;
+    if (f_read(&f, g_shuffle_order, bytes, &br) != FR_OK || br != bytes) {
+        f_close(&f);
+        return false;
+    }
+
+    f_close(&f);
+
+    g_shuffle_pos = hdr.pos;
+    return true;
 }
 
 // Lowercase helper
@@ -813,6 +899,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
                 // Save resume info
                 mp3_save_resume(current_track_index, final_position_ms, true);
+
+                // Save shuffle order
+                shuffle_save_state(true);
 
 #if TIE_PWR_LED_TO_LCD
                 pwr_led_duty_cycle = temp_lcd_led;
@@ -1692,8 +1781,27 @@ void play_mp3_stream(const char *start_filename) {
             current_index, resume_position_ms);
 
         if (g_shuffle_enabled) {
-            // Rebuild shuffle order based on resumed track
-            build_shuffle_order(current_index);
+            // Try to restore existing shuffle order from disk
+            if (!shuffle_load_state()) {
+                // Fallback: build fresh order anchored on current_index
+                build_shuffle_order(current_index);
+            } else {
+                // Make sure current_index exists in the loaded permutation
+                int found = -1;
+                for (int i = 0; i < g_track_count; i++) {
+                    if (g_shuffle_order[i] == current_index) {
+                        found = i;
+                        break;
+                    }
+                }
+
+                if (found >= 0) {
+                    g_shuffle_pos = found;
+                } else {
+                    // Playlist changed; rebuild + save
+                    build_shuffle_order(current_index);
+                }
+            }
         }
     }
 

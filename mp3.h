@@ -848,6 +848,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                         // REPEAT_ONE: do only one extra loop, then OFF
                         if (g_repeat_mode == REPEAT_ONE) {
                             g_repeat_mode = REPEAT_OFF;
+                            update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
                             printf("Repeat ONE complete -> Repeat OFF\n");
                         }
 
@@ -952,18 +953,19 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 sleep_ms(200); // dollar store debouncing
             }
 
-            // SELECT → Shuffle toggle (global flag ONLY; playlist will rebuild order)
+            // SELECT → Repeat mode cycle (global)
             if (!prev_btn_select && select_btn) {
                 if (!prev_inactive) {
-                    g_shuffle_enabled       = !g_shuffle_enabled;
-                    g_shuffle_needs_rebuild = true;   // handled in playlist-level loop
-                    printf("Shuffle: %s\n", g_shuffle_enabled ? "ON" : "OFF");
+                    g_repeat_mode = (repeat_mode_t)((g_repeat_mode + 1) % 3);
+
+                    if (g_repeat_mode == REPEAT_OFF) {
+                        printf("Repeat: OFF\n");
+                    } else if (g_repeat_mode == REPEAT_ONE) {
+                        printf("Repeat: ONE (play once more)\n");
+                    } else if (g_repeat_mode == REPEAT_INFINITE) {
+                        printf("Repeat: INFINITE\n");
+                    }
                     update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
-                    // FUTURE GUI:
-                    // if (audio_mode == AUDIO_HP_ONLY)      audio_mode = AUDIO_SPK_ONLY;
-                    // else if (audio_mode == AUDIO_SPK_ONLY) audio_mode = AUDIO_BOTH;
-                    // else                                   audio_mode = AUDIO_HP_ONLY;
-                    // apply_audio_mode();
                 }
             }
 
@@ -1130,19 +1132,18 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 down_held_paging = false;
             }
 
-            // START → Repeat mode cycle (global)
+            // START → Shuffle toggle (global flag ONLY; playlist will rebuild order)
             if (!prev_btn_start && btn_start) {
                 if (!prev_inactive) {
-                    g_repeat_mode = (repeat_mode_t)((g_repeat_mode + 1) % 3);
-
-                    if (g_repeat_mode == REPEAT_OFF) {
-                        printf("Repeat: OFF\n");
-                    } else if (g_repeat_mode == REPEAT_ONE) {
-                        printf("Repeat: ONE (play once more)\n");
-                    } else if (g_repeat_mode == REPEAT_INFINITE) {
-                        printf("Repeat: INFINITE\n");
-                    }
+                    g_shuffle_enabled       = !g_shuffle_enabled;
+                    g_shuffle_needs_rebuild = true;   // handled in playlist-level loop
+                    printf("Shuffle: %s\n", g_shuffle_enabled ? "ON" : "OFF");
                     update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
+                    // FUTURE GUI:
+                    // if (audio_mode == AUDIO_HP_ONLY)      audio_mode = AUDIO_SPK_ONLY;
+                    // else if (audio_mode == AUDIO_SPK_ONLY) audio_mode = AUDIO_BOTH;
+                    // else                                   audio_mode = AUDIO_HP_ONLY;
+                    // apply_audio_mode();
                 }
             }
 
@@ -1292,7 +1293,7 @@ lv_obj_t *create_mp3_bottom_bar(lv_obj_t *parent,
 
     // Right label first (so we know how much space it takes)
     lv_obj_t *right = lv_label_create(bottom_bar);
-    lv_label_set_text(right, "R1/S/P");
+    lv_label_set_text(right, "R/S/P");
     lv_obj_set_style_text_font(right, &lv_font_montserrat_10, 0);
     lv_obj_set_style_text_color(right, lv_color_hex(0x202020), 0);
     lv_obj_align(right, LV_ALIGN_RIGHT_MID, -5, 0);
@@ -1326,51 +1327,33 @@ void update_mp3_bottom_bar_shuffle_repeat(lv_obj_t *right,
                                           bool shuffle, 
                                           bool paused)
 {
-    char buf[8] = {0};
+    char buf[8];
     uint8_t idx = 0;
+    bool need_sep = false;
 
-    // Repeat status
-    switch (repeat_state) {
-        case REPEAT_ONE:
-            buf[idx++] = 'R';
+    // ---- Repeat ----
+    if (repeat_state != REPEAT_OFF) {
+        buf[idx++] = 'R';
+        if (repeat_state == REPEAT_ONE)
             buf[idx++] = '1';
-            break;
 
-        case REPEAT_INFINITE:
-            buf[idx++] = 'R';
-            break;
-
-        case REPEAT_OFF:
-        default:
-            break;
+        need_sep = true;
     }
 
-    // Space between repeat + shuffle if both exist
-    if ((repeat_state != REPEAT_OFF) && shuffle) {
-        buf[idx++] = '/';
-    }
-
-    // Shuffle status
+    // ---- Shuffle ----
     if (shuffle) {
+        if (need_sep) buf[idx++] = '/';
         buf[idx++] = 'S';
+        need_sep = true;
     }
 
-    // Slash between shuffle and paused
-    if (shuffle && paused) {
-        buf[idx++] = '/';
-    }
-
-    // Slash between repeat and paused when NO shuffle
-    if ((repeat_state != REPEAT_OFF) && !shuffle && paused) {
-        buf[idx++] = '/';
-    }
-
-    // --- Pause status ---
+    // ---- Paused ----
     if (paused) {
+        if (need_sep) buf[idx++] = '/';
         buf[idx++] = 'P';
     }
 
-    buf[idx] = '\0';   // null terminate
+    buf[idx] = '\0';
 
     lv_label_set_text(right, buf);
 }

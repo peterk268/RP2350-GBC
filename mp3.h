@@ -122,6 +122,9 @@ static bool          show_now_playing    = true;
 static bool          g_shuffle_needs_rebuild = false;
 static int current_index = 0;
 
+static bool g_buttons_locked   = false;   // START+SELECT toggle
+static bool select_was_combo   = false;   // tracks if SELECT was used in a combo
+
 // uint8_t saved_lcd_brightness = 0;
 uint8_t saved_button_brightness = 0;
 
@@ -167,7 +170,7 @@ typedef struct {
 
 static mp3_resume_t g_resume = {0};
 
-static void mp3_save_resume(int track_index, uint32_t position_ms) {
+static void mp3_save_resume(int track_index, uint32_t position_ms, bool hold_sd_busy) {
     FIL wf;
     UINT bw;
 
@@ -177,12 +180,17 @@ static void mp3_save_resume(int track_index, uint32_t position_ms) {
     g_resume.shuffle     = g_shuffle_enabled;
     g_resume.repeat_mode = (uint8_t)g_repeat_mode;
 
+    set_sd_busy(true);
+
     if (f_open(&wf, RESUME_FILE, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
         f_write(&wf, &g_resume, sizeof(g_resume), &bw);
         f_close(&wf);
         printf("Resume saved: track=%d pos=%ums\n",
                track_index, position_ms);
     }
+
+    if (!hold_sd_busy)
+        set_sd_busy(false);
 }
 
 void toggle_speakers_if_paused() {
@@ -800,8 +808,16 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 uint32_t final_position_ms =
                 (played_frames * 1000ULL) / mp3.sampleRate;
 
+                uint8_t temp_lcd_led = g_mp3_inactive ? sd_prev_lcd_led_duty_cycle : lcd_led_duty_cycle;
+                uint8_t temp_button_led = g_mp3_inactive ? saved_button_brightness : button_led_duty_cycle;
+
                 // Save resume info
-                mp3_save_resume(current_track_index, final_position_ms);
+                mp3_save_resume(current_track_index, final_position_ms, true);
+
+#if TIE_PWR_LED_TO_LCD
+                pwr_led_duty_cycle = temp_lcd_led;
+#endif
+                save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, true);
 
                 release_power();
             }
@@ -896,14 +912,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             uint64_t now_us = time_us_64();
 
-            // -------------- MP3 Inactivity Detection --------------
-            if (g_mp3_inactive && ANY_BUTTON_PRESSED) {
-                // Wake up immediately
-                g_mp3_inactive = false;
-                last_interaction_us = now_us;
-            }
-
-            if (ANY_BUTTON_PRESSED) {
+            if (ANY_BUTTON_PRESSED && !g_buttons_locked) {
                 last_interaction_us = now_us;
             }
 
@@ -912,6 +921,110 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
                 g_mp3_inactive = true;
                 printf("MP3 → inactive mode\n");
+            }
+
+            // ==================================================================
+            // NEW: SELECT combos (brightness + lock) + SELECT tap handling
+            // ==================================================================
+
+            // If SELECT participates in any combo this time it's pressed,
+            // we mark it so we DON'T treat it as a repeat-mode tap later.
+            if (!select_btn) {
+                // SELECT released: if it was NOT part of a combo, treat as repeat tap
+                if (prev_btn_select && !select_was_combo) {
+                    if (!prev_inactive) {
+                        g_repeat_mode = (repeat_mode_t)((g_repeat_mode + 1) % 3);
+
+                        if (g_repeat_mode == REPEAT_OFF) {
+                            printf("Repeat: OFF\n");
+                        } else if (g_repeat_mode == REPEAT_ONE) {
+                            printf("Repeat: ONE (play once more)\n");
+                        } else if (g_repeat_mode == REPEAT_INFINITE) {
+                            printf("Repeat: INFINITE\n");
+                        }
+                        update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj,
+                                                            g_repeat_mode,
+                                                            g_shuffle_enabled,
+                                                            paused);
+                    }
+                }
+                // Reset combo flag once SELECT is up
+                select_was_combo = false;
+            } else {
+                // SELECT is held: check for combos
+
+                // 1) START + SELECT → lock/unlock all buttons
+                if (btn_start && !(prev_btn_start && prev_btn_select)) {
+                    g_buttons_locked = !g_buttons_locked;
+                    select_was_combo = true;
+                    // sleep mp3
+                    g_mp3_inactive = g_buttons_locked; 
+                    if (!g_buttons_locked) last_interaction_us = now_us;
+                    printf("Buttons %s\n", g_buttons_locked ? "LOCKED" : "UNLOCKED");
+                }
+
+                // Only allow brightness combos when NOT locked
+                if (!g_buttons_locked) {
+                    // SELECT + UP   → LCD brighter
+                    if (btn_up && (!prev_btn_up || !prev_btn_select)) {
+                        if (!low_power) {
+#if TIE_PWR_LED_TO_LCD
+                            pwr_led_duty_cycle = lcd_led_duty_cycle;
+#endif
+                            step_pwr_brightness(true);
+                        }
+                        step_lcd_brightness(true);
+                        select_was_combo = true;
+                    }
+
+                    // SELECT + DOWN → LCD dimmer
+                    if (btn_down && (!prev_btn_down || !prev_btn_select)) {
+                        if (!low_power) {
+#if TIE_PWR_LED_TO_LCD
+                            pwr_led_duty_cycle = lcd_led_duty_cycle;
+#endif
+                            step_pwr_brightness(false);
+                        }
+                        step_lcd_brightness(false);
+                        select_was_combo = true;
+                    }
+
+                    // SELECT + RIGHT → button LEDs brighter
+                    if (btn_right && (!prev_btn_right || !prev_btn_select)) {
+                        step_button_brightness(true); 
+                        select_was_combo = true;
+                    }
+
+                    // SELECT + LEFT → button LEDs dimmer
+                    if (btn_left && (!prev_btn_left || !prev_btn_select)) {
+                        step_button_brightness(false);
+                        select_was_combo = true;
+                    }
+
+                    // SELECT + A → something
+                    if (btn_a && (!prev_btn_a || !prev_btn_select)) {
+                        select_was_combo = true;
+                    }
+
+                    // SELECT + B → something
+                    if (btn_b && (!prev_btn_b || !prev_btn_select)) {
+                        select_was_combo = true;
+                    }
+
+                }
+            }
+
+            // If buttons are locked, ignore everything EXCEPT the lock combo above.
+            // (We still got here, so START+SELECT can always unlock.)
+            if (g_buttons_locked || select_was_combo) {
+                goto STORE_PREV_BUTTONS;
+            }
+
+            // -------------- MP3 Inactivity Detection --------------
+            if (g_mp3_inactive && ANY_BUTTON_PRESSED) {
+                // Wake up immediately
+                g_mp3_inactive = false;
+                last_interaction_us = now_us;
             }
 
             // --------- "Now Playing" auto swap (ONLY UP/DOWN/A) ---------
@@ -951,22 +1064,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 printf(paused ? "Paused\n" : "Playing\n");
                 update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
                 sleep_ms(200); // dollar store debouncing
-            }
-
-            // SELECT → Repeat mode cycle (global)
-            if (!prev_btn_select && select_btn) {
-                if (!prev_inactive) {
-                    g_repeat_mode = (repeat_mode_t)((g_repeat_mode + 1) % 3);
-
-                    if (g_repeat_mode == REPEAT_OFF) {
-                        printf("Repeat: OFF\n");
-                    } else if (g_repeat_mode == REPEAT_ONE) {
-                        printf("Repeat: ONE (play once more)\n");
-                    } else if (g_repeat_mode == REPEAT_INFINITE) {
-                        printf("Repeat: INFINITE\n");
-                    }
-                    update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
-                }
             }
 
             // LEFT: tap = prev track, hold = seek backward
@@ -1134,19 +1231,21 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             // START → Shuffle toggle (global flag ONLY; playlist will rebuild order)
             if (!prev_btn_start && btn_start) {
-                if (!prev_inactive) {
-                    g_shuffle_enabled       = !g_shuffle_enabled;
-                    g_shuffle_needs_rebuild = true;   // handled in playlist-level loop
-                    printf("Shuffle: %s\n", g_shuffle_enabled ? "ON" : "OFF");
-                    update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
-                    // FUTURE GUI:
-                    // if (audio_mode == AUDIO_HP_ONLY)      audio_mode = AUDIO_SPK_ONLY;
-                    // else if (audio_mode == AUDIO_SPK_ONLY) audio_mode = AUDIO_BOTH;
-                    // else                                   audio_mode = AUDIO_HP_ONLY;
-                    // apply_audio_mode();
-                }
+                g_shuffle_enabled       = !g_shuffle_enabled;
+                g_shuffle_needs_rebuild = true;   // handled in playlist-level loop
+                printf("Shuffle: %s\n", g_shuffle_enabled ? "ON" : "OFF");
+                update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
+                // FUTURE GUI:
+                // if (audio_mode == AUDIO_HP_ONLY)      audio_mode = AUDIO_SPK_ONLY;
+                // else if (audio_mode == AUDIO_SPK_ONLY) audio_mode = AUDIO_BOTH;
+                // else                                   audio_mode = AUDIO_HP_ONLY;
+                // apply_audio_mode();
             }
 
+            // -----------------------------------------------------------------
+            // Label used for the lock early-exit above:
+            // -----------------------------------------------------------------
+            STORE_PREV_BUTTONS:
             // Save previous button states
             prev_btn_a      = btn_a;
             prev_btn_b      = btn_b;

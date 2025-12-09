@@ -316,24 +316,3 @@ void sync_gb_rtc(struct gb_s *gb) {
 		printf("Failed to read RTC\n");
 	}
 }
-
-void seed_shuffle(void) {
-    unsigned seed = (unsigned)time_us_64();  // fallback
-
-    struct tm now_tm;
-
-    if (mcp7940n_get_tm(RTC_I2C_PORT, &now_tm)) {
-
-        // Compress tm into a 32-bit-ish seed
-        // (day of year + time of day)
-        time_t epoch = mktime(&now_tm);  // seconds since 1970
-        if (epoch != (time_t)-1) {
-            seed = (unsigned)epoch;
-        } else {
-            while(1) {}
-            // if mktime somehow fails, keep fallback seed
-        }
-    }
-
-    srand(seed);
-}

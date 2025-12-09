@@ -194,12 +194,14 @@ static void mp3_save_resume(int track_index, uint32_t position_ms, bool hold_sd_
 }
 
 typedef struct {
-    uint32_t magic;    // "SHUF"
+    uint32_t magic;    // "SHU2"
     int32_t  count;    // number of tracks
-    int32_t  pos;      // current g_shuffle_pos
+    int32_t  pos;      // last g_shuffle_pos (optional)
+    uint32_t seed;     // PRNG seed for this permutation
 } mp3_shuffle_hdr_t;
 
-#define SHUFFLE_MAGIC 0x53485546   // 'SHUF'
+// New magic so old files are ignored and we rebuild cleanly
+#define SHUFFLE_MAGIC 0x53485532   // 'SHU2'
 #define SHUFFLE_FILE  "mp3_shuffle.bin"
 
 void toggle_speakers_if_paused() {
@@ -395,8 +397,32 @@ static int  g_shuffle_pos   = 0;
 
 static int g_selected_file = 0;
 
-// Build shuffle order using Fisher–Yates, and ensure current_track is first
-static void build_shuffle_order(int current_track) {
+// Shuffle state
+static uint32_t g_shuffle_seed = 0;
+
+// Simple local PRNG so we don't depend on global rand()
+static uint32_t shuffle_prng_next(uint32_t *state) {
+    // LCG: X_{n+1} = aX_n + c  (Numerical Recipes constants)
+    *state = (*state * 1664525u) + 1013904223u;
+    return *state;
+}
+
+static uint32_t shuffle_generate_seed(void) {
+    uint32_t seed = (uint32_t)time_us_64();
+
+    struct tm now_tm;
+    if (mcp7940n_get_tm(RTC_I2C_PORT, &now_tm)) {
+        time_t epoch = mktime(&now_tm);
+        if (epoch != (time_t)-1) {
+            seed ^= (uint32_t)epoch;
+        }
+    }
+
+    if (seed == 0) seed = 1;  // avoid zero state
+    return seed;
+}
+
+static void build_shuffle_order_from_seed(uint32_t seed) {
     if (g_track_count <= 0)
         return;
 
@@ -408,34 +434,51 @@ static void build_shuffle_order(int current_track) {
         }
     }
 
-    // Fill 0..N-1
+    // Start with 0..N-1
     for (int i = 0; i < g_track_count; i++) {
         g_shuffle_order[i] = i;
     }
 
-    // Fisher–Yates shuffle
-    for (int i = g_track_count - 1; i > 0; i--) {
-        int j = rand() % (i + 1);
-        int tmp = g_shuffle_order[i];
-        g_shuffle_order[i] = g_shuffle_order[j];
-        g_shuffle_order[j] = tmp;
-    }
+    uint32_t state = (seed == 0) ? 1u : seed;
 
-    // Ensure current track is at position 0
-    for (int i = 0; i < g_track_count; i++) {
-        if (g_shuffle_order[i] == current_track) {
-            int tmp = g_shuffle_order[0];
-            g_shuffle_order[0] = g_shuffle_order[i];
-            g_shuffle_order[i] = tmp;
-            break;
+    // Fisher–Yates using our local PRNG
+    for (int i = g_track_count - 1; i > 0; --i) {
+        uint32_t r = shuffle_prng_next(&state);
+        int j = (int)(r % (uint32_t)(i + 1));
+
+        int tmp              = g_shuffle_order[i];
+        g_shuffle_order[i]   = g_shuffle_order[j];
+        g_shuffle_order[j]   = tmp;
+    }
+}
+
+// Build shuffle order using Fisher–Yates, and ensure current_track is first
+static void build_shuffle_order(int current_track_index) {
+    if (g_track_count <= 0)
+        return;
+
+    // Fresh seed for a new shuffle permutation
+    g_shuffle_seed = shuffle_generate_seed();
+
+    // Build permutation from that seed
+    build_shuffle_order_from_seed(g_shuffle_seed);
+
+    // Default to start at index 0
+    g_shuffle_pos = 0;
+
+    // If current track is valid, move shuffle_pos to where that track landed
+    if (current_track_index >= 0 && current_track_index < g_track_count) {
+        for (int i = 0; i < g_track_count; i++) {
+            if (g_shuffle_order[i] == current_track_index) {
+                g_shuffle_pos = i;
+                break;
+            }
         }
     }
-
-    g_shuffle_pos = 0;
 }
 
 static void shuffle_save_state(bool hold_sd_busy) {
-    if (!g_shuffle_order || g_track_count <= 0)
+    if (!g_shuffle_order || g_track_count <= 0 || g_shuffle_seed == 0)
         return;
 
     FIL f;
@@ -445,21 +488,15 @@ static void shuffle_save_state(bool hold_sd_busy) {
     hdr.magic = SHUFFLE_MAGIC;
     hdr.count = g_track_count;
     hdr.pos   = g_shuffle_pos;
+    hdr.seed  = g_shuffle_seed;
 
     set_sd_busy(true);
 
     if (f_open(&f, SHUFFLE_FILE, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
-        // header
         f_write(&f, &hdr, sizeof(hdr), &bw);
-
-        if (bw == sizeof(hdr)) {
-            size_t bytes = sizeof(int) * g_track_count;
-            f_write(&f, g_shuffle_order, bytes, &bw);
-        }
-
         f_close(&f);
     }
-    
+
     if (!hold_sd_busy)
         set_sd_busy(false);
 }
@@ -491,23 +528,20 @@ static bool shuffle_load_state(void) {
         return false;
     }
 
-    if (!g_shuffle_order) {
-        g_shuffle_order = (int *)malloc(sizeof(int) * g_track_count);
-        if (!g_shuffle_order) {
-            f_close(&f);
-            return false;
-        }
-    }
-
-    size_t bytes = sizeof(int) * g_track_count;
-    if (f_read(&f, g_shuffle_order, bytes, &br) != FR_OK || br != bytes) {
+    if (hdr.seed == 0) {
         f_close(&f);
         return false;
     }
 
     f_close(&f);
 
+    // Restore seed and rebuild permutation
+    g_shuffle_seed = hdr.seed;
+    build_shuffle_order_from_seed(g_shuffle_seed);
+
+    // Restore last known pos (resume code will re-adjust for current_index anyway)
     g_shuffle_pos = hdr.pos;
+
     return true;
 }
 
@@ -1754,9 +1788,6 @@ void play_mp3_stream(const char *start_filename) {
 
     // Choose initial track index
     uint32_t resume_position_ms = 0;
-
-    // seed shuffle from time
-    seed_shuffle();
 
     // Priority: explicit filename → saved resume → default 0
     if (start_filename && start_filename[0] != '\0') {

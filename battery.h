@@ -68,7 +68,7 @@ void shutdown_peripherals(bool keep_i2c);
 #define LOW_POWER_THRESHOLD      20  // Warning threshold
 #define CRITICAL_SHUTDOWN_THRESH 5   // Shutdown threshold
 #define RECOVERY_THRESHOLD       7   // Recovery threshold
-#define BATTERY_VOLTAGE_SHUTDOWN_mV 3300 // Voltage threshold for shutdown 
+#define BATTERY_VOLTAGE_SHUTDOWN_mV 3700 // Voltage threshold for shutdown 
 
 void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy);
 

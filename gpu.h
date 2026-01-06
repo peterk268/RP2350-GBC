@@ -121,19 +121,39 @@ static uint32_t fps_counter = 0;
 uint8_t fps_divider = 4;
 uint8_t fps_skip_counter = 0;
 #endif
+volatile bool core1_parked = false;
 
 void render_loop() {
     static uint32_t last_frame_num = 0;
     static uint32_t y = 0;
 
     while (true) {
-        if(sd_busy) {
-            // sleep until an event (wakes on SEV)
-            __wfe();
-            continue; // check again after waking
+        if (sd_busy) {
+            // HARD park: no IRQs allowed while we claim we're parked
+            uint32_t irq_state = save_and_disable_interrupts();
+
+            core1_parked = true;
+            __dmb();      // publish core1_parked before sleeping
+
+            // real sleep (clear stale event then wait)
+            __sev(); __wfe(); __wfe();
+
+            core1_parked = false;
+            __dmb();
+
+            restore_interrupts(irq_state);
+            continue;
         }
         // Wait for scanvideo to be ready for next scanline
-        struct scanvideo_scanline_buffer *scanline_buffer = scanvideo_begin_scanline_generation(true);
+        struct scanvideo_scanline_buffer *scanline_buffer =
+            scanvideo_begin_scanline_generation(false);
+
+        if (!scanline_buffer) {
+            // no scanline ready right now; allow sd_busy to be observed quickly
+            __wfe();
+            continue;
+        }
+
         uint32_t frame_num = scanvideo_frame_number(scanline_buffer->scanline_id);
 
         // Only update frame pointer when a new frame is ready

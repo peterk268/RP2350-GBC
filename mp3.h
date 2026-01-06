@@ -1418,21 +1418,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
         bool timer_task_flagged = minimal_battery_monitoring_cb();
         if (timer_task_flagged) update_status_label(mp3_status_label_obj);
 
-        static uint8_t core1_reset_ready = 0;
-        static bool core1_needs_reset = false;
-        if (g_mp3_inactive && core1_needs_reset) {
-            core1_reset_ready++;
-        } else {
-            core1_reset_ready = 0;
-        }
-        if (core1_reset_ready > 50) {
-            // wait for core1 to be asleep and in a safe state before resetting
-            printf("Resetting core1\n");
-            multicore_reset_core1();
-            core1_reset_ready = 0;
-            core1_needs_reset = false;
-        }
-
+        // ================= MP3 Inactivity Handling =================
         if (g_mp3_inactive && !prev_inactive) {
 
             // Fade out ONLY LCD + button LEDs
@@ -1440,23 +1426,25 @@ static play_result_t mp3_play_single_track(const char *filepath,
             saved_button_brightness = button_led_duty_cycle;
             decrease_button_brightness(MAX_BRIGHTNESS);
 
-            sleep_lcd();
-            // Dim LCD via SD busy if applicable
             set_sd_busy(true);
-            core1_reset_ready = 0;
-            core1_needs_reset = true;
+            __sev();  // kick core1 so it can reach the sd_busy path
+
+            while (!core1_parked) { tight_loop_contents(); }
+
+            // NOW safe: core1 is not inside scanvideo
+            sleep_lcd();
+            multicore_reset_core1();
 
             prev_inactive = true;
         }
         else if (!g_mp3_inactive && prev_inactive) {
-            if (!core1_needs_reset) {
-                // Wake up core1 if core1_needs_reset has been false meaning it has been reset
-                multicore_launch_core1(main_core1);
-            }
-            core1_needs_reset = false;
+            // launch core1
+            multicore_launch_core1(main_core1);
 
-            // Remove SD busy right before restoring LEDs
+            // THEN clear sd_busy and SEV to wake core1 out of WFE
             set_sd_busy(false);
+            __sev();
+
             wake_lcd();
 
             // Fade LCD + button LEDs back in

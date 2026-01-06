@@ -44,7 +44,6 @@ const scanvideo_mode_t tft_mode_320x320_60 = {
 
 #define ADD_BLACK_BAR 0
 
-static struct mutex frame_logic_mutex;
 static void frame_update_logic();
 static void scanline_update_logic();
 static void render_scanline(struct scanvideo_scanline_buffer *dest, const uint16_t *fb);
@@ -228,13 +227,9 @@ void render_loop() {
     }
 }
 
-struct semaphore video_setup_complete;
-
 // MARK: - MAIN CORE1 LOOP
 _Noreturn
 void main_core1(void) {
-    sem_acquire_blocking(&video_setup_complete);
-
     #if !PICO_SCANVIDEO_ENABLE_DEN_PIN
     #warning "We'll take this out at some point"
     gpio_write(GPIO_DPI_DEN, 1);
@@ -247,9 +242,6 @@ void main_core1(void) {
 // MARK: - DPI SETUP
 // Must be done before sd and i2s init
 void setup_dpi() {
-    mutex_init(&frame_logic_mutex);
-    sem_init(&video_setup_complete, 0, 1);
-
     fb0.state = FB_DISPLAYED;
     fb1.state = FB_FREE;
     fb2.state = FB_FREE;
@@ -260,8 +252,6 @@ void setup_dpi() {
 
     scanvideo_setup(&VGA_MODE);
     scanvideo_timing_enable(true);
-
-    sem_release(&video_setup_complete);
 }
 
 static inline uint16_t *raw_scanline_prepare(struct scanvideo_scanline_buffer *dest, uint width) {
@@ -421,6 +411,8 @@ void writedata(uint8_t data) {
 
 // disea config:
 void lcd_config() {
+    writecommand(0x11); // Exit Sleep just in case watchdog reset while sleeping
+
     writecommand(0xC0); writedata(0x14); writedata(0x14);
     writecommand(0xC1); writedata(0x66); // VGH = 4*VCI   VGL = -4*VCI
 
@@ -455,6 +447,30 @@ void lcd_config() {
     sleep_ms(1);
     writecommand(0x2C);
 }
+
+void sleep_lcd() {
+    init_spi_lcd();
+    gpio_write(IOX_LCD_nCS, 0);  // Start transmission
+    writecommand(0x10); // Enter Sleep
+    gpio_write(IOX_LCD_nCS, 1);  // End transmission
+
+    sleep_ms(1);
+    gpio_set_function(GPIO_SPI0_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(GPIO_SPI0_MOSI, GPIO_FUNC_SPI);
+    gpio_set_function(GPIO_SPI0_MISO, GPIO_FUNC_SPI);
+}
+void wake_lcd() {
+    init_spi_lcd();
+    gpio_write(IOX_LCD_nCS, 0);  // Start transmission
+    writecommand(0x11); // Exit Sleep
+    gpio_write(IOX_LCD_nCS, 1);  // End transmission
+
+    sleep_ms(1);
+    gpio_set_function(GPIO_SPI0_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(GPIO_SPI0_MOSI, GPIO_FUNC_SPI);
+    gpio_set_function(GPIO_SPI0_MISO, GPIO_FUNC_SPI);
+}
+
 // MARK: - WASH OUT
 uint8_t wash_out_level = 0;
 static inline void washed_desaturate_level(uint8_t *r, uint8_t *g, uint8_t *b, uint8_t level) {
@@ -634,7 +650,6 @@ void lvgl_render_loop() {
 
 _Noreturn
 void lvgl_core1(void) {
-    sem_acquire_blocking(&video_setup_complete);
     lvgl_render_loop();
     HEDLEY_UNREACHABLE();
 }

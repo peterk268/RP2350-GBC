@@ -58,8 +58,8 @@
 #define MP3_MAX_TRACKS            4096
 #define MP3_MAX_PATH_LEN          256
 
-#define MP3_INACTIVE_TIMEOUT_US    (6000000ULL)   // 6 seconds
-#define MP3_NOW_PLAYING_TIMEOUT_US (3000000ULL)   // 3 seconds
+#define MP3_INACTIVE_TIMEOUT_US    (9000000ULL)   // 9 seconds
+#define MP3_NOW_PLAYING_TIMEOUT_US (7000000ULL)   // 2 seconds on now playing
 
 // === MP3 UI Global Objects ===
 static lv_obj_t *mp3_list_obj         = NULL;
@@ -1420,6 +1420,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
         // ================= MP3 Inactivity Handling =================
         if (g_mp3_inactive && !prev_inactive) {
+            // safety
+            uint32_t irq = save_and_disable_interrupts();
 
             // Fade out ONLY LCD + button LEDs
             // fade_out_leds_mp3_inactive();
@@ -1434,6 +1436,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // NOW safe: core1 is not inside scanvideo
             sleep_lcd();
             multicore_reset_core1();
+
+            restore_interrupts(irq);
 
             prev_inactive = true;
         }

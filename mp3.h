@@ -1442,6 +1442,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
             prev_inactive = true;
         }
         else if (!g_mp3_inactive && prev_inactive) {
+            // safety
+            uint32_t irq = save_and_disable_interrupts();
+
             // launch core1
             multicore_launch_core1(main_core1);
 
@@ -1454,6 +1457,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // Fade LCD + button LEDs back in
             // fade_in_leds_mp3_restore();
             increase_button_brightness(saved_button_brightness);
+
+            restore_interrupts(irq);
 
             prev_inactive = false;
         }

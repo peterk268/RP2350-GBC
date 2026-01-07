@@ -129,19 +129,21 @@ void render_loop() {
 
     while (true) {
         if (sd_busy) {
-            // HARD park: no IRQs allowed while we claim we're parked
-            uint32_t irq_state = save_and_disable_interrupts();
+            printf("Core1 parking for SD busy\n");
 
-            core1_parked = true;
-            __dmb();      // publish core1_parked before sleeping
+            core1_parked = true;   
 
-            // real sleep (clear stale event then wait)
-            __sev(); __wfe(); __wfe();
+            // Clear any stale event so WFE doesn't instantly return
+            __sev();
+            __wfe();
+            __wfe();
+
+            // Park until sd_busy clears
+            while (sd_busy) {
+                __wfe();
+            }
 
             core1_parked = false;
-            __dmb();
-
-            restore_interrupts(irq_state);
             continue;
         }
         // Wait for scanvideo to be ready for next scanline

@@ -1429,7 +1429,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
             decrease_button_brightness(MAX_BRIGHTNESS);
 
             set_sd_busy(true);
-            __sev();  // kick core1 so it can reach the sd_busy path
 
             while (!core1_parked) { tight_loop_contents(); }
 
@@ -1450,7 +1449,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             // THEN clear sd_busy and SEV to wake core1 out of WFE
             set_sd_busy(false);
-            __sev();
 
             wake_lcd();
 

@@ -1446,12 +1446,11 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // safety
             uint32_t irq = save_and_disable_interrupts();
 
-            // launch core1
-            multicore_launch_core1(main_core1);
-
-            // THEN clear sd_busy and SEV to wake core1 out of WFE
+            // clear sd_busy and SEV to start core1 out of parked state
             set_sd_busy(false);
 
+            // launch core1
+            multicore_launch_core1(main_core1);
             wake_lcd();
 
             // Fade LCD + button LEDs back in

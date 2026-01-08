@@ -1428,9 +1428,11 @@ static play_result_t mp3_play_single_track(const char *filepath,
             saved_button_brightness = button_led_duty_cycle;
             decrease_button_brightness(MAX_BRIGHTNESS);
 
+            printf("Setting sd busy\n");
+
             set_sd_busy(true);
 
-            while (!core1_parked) { tight_loop_contents(); }
+            wait_for_core1_parked(10 * 1000);
 
             // NOW safe: core1 is not inside scanvideo
             sleep_lcd();

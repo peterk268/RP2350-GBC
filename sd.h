@@ -25,18 +25,24 @@ static bool sd_filename_init(void) {
 uint8_t sd_prev_lcd_led_duty_cycle;
 
 void set_sd_busy(bool is_sd_busy) {
-    if (sd_busy == is_sd_busy) {
+    // Atomic read current state
+    bool cur = __atomic_load_n(&sd_busy, __ATOMIC_ACQUIRE);
+    if (cur == is_sd_busy) {
         return; // No change
     }
-	sd_busy = is_sd_busy;
+
+    // Publish new state
+    __atomic_store_n(&sd_busy, is_sd_busy, __ATOMIC_RELEASE);
+   
+    // Wake core1 regardless so it can observe the new state immediately
+    __sev();
+
     if (sd_busy) {
         sd_prev_lcd_led_duty_cycle = lcd_led_duty_cycle;
         // LCD LED off
         decrease_lcd_brightness(MAX_BRIGHTNESS);
         // sleep_ms(20);
-        __sev();
     } else {
-        __sev();
         sleep_ms(20); // waiting the 16.7ms to let a frame be output to the lcd.
         increase_lcd_brightness(sd_prev_lcd_led_duty_cycle);
     }

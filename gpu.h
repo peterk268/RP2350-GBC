@@ -121,17 +121,29 @@ static uint32_t fps_counter = 0;
 uint8_t fps_divider = 4;
 uint8_t fps_skip_counter = 0;
 #endif
-volatile bool core1_parked = false;
+static bool core1_parked = false;
+
+bool wait_for_core1_parked(uint32_t timeout_us) {
+    uint64_t start = time_us_64();
+
+    while (!__atomic_load_n(&core1_parked, __ATOMIC_ACQUIRE)) {
+        if ((time_us_64() - start) > timeout_us) {
+            return false;   // timed out
+        }
+        tight_loop_contents();
+    }
+    return true;
+}
 
 void render_loop() {
     static uint32_t last_frame_num = 0;
     static uint32_t y = 0;
 
     while (true) {
-        if (sd_busy) {
+        if (__atomic_load_n(&sd_busy, __ATOMIC_ACQUIRE)) {
             printf("Core1 parking for SD busy\n");
 
-            core1_parked = true;   
+            __atomic_store_n(&core1_parked, true, __ATOMIC_RELEASE);
 
             // Clear any stale event so WFE doesn't instantly return
             __sev();
@@ -139,11 +151,11 @@ void render_loop() {
             __wfe();
 
             // Park until sd_busy clears
-            while (sd_busy) {
+            while (__atomic_load_n(&sd_busy, __ATOMIC_ACQUIRE)) {
                 __wfe();
             }
 
-            core1_parked = false;
+            __atomic_store_n(&core1_parked, false, __ATOMIC_RELEASE);
             continue;
         }
         // Wait for scanvideo to be ready for next scanline
@@ -152,7 +164,7 @@ void render_loop() {
 
         if (!scanline_buffer) {
             // no scanline ready right now; allow sd_busy to be observed quickly
-            __wfe();
+            tight_loop_contents();
             continue;
         }
 

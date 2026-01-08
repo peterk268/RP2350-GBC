@@ -88,7 +88,7 @@ bool low_power_shutdown = false;
 
 static bool do_rtc_update = false;
 
-volatile bool sd_busy = false;
+static bool sd_busy = false;
 
 bool ram_changed = false;
 

@@ -416,7 +416,8 @@ while(true)
 
 		bool iox_nint = gpio_read(GPIO_IOX_nINT);
 		if (!iox_nint) {
-			printf("ioxlo\n");
+			// iox interrupt not working :/ or its always interrupted huh
+			// printf("ioxlo\n");
 			// Read IOX port 0
 			read_io_expander_states(0);
 			// Store previous joypad states

@@ -1,6 +1,9 @@
 #define MAX_BRIGHTNESS 255
 #define MIN_BRIGHTNESS 0
 
+#define HIGHEST_BRIGHTNESS_LEVEL 230
+#define LOWEST_BRIGHTNESS_LEVEL 0
+
 // Duty Cycle Values
 uint8_t lcd_led_duty_cycle = MAX_BRIGHTNESS/8;   
 uint8_t pwr_led_duty_cycle = MAX_BRIGHTNESS/8;  
@@ -8,8 +11,8 @@ uint8_t button_led_duty_cycle = MAX_BRIGHTNESS/8;
 
 // perceptual brightness curve 
 static const uint8_t brightness_levels[16] = {
-     0,  6,  8, 10, 14, 19, 25, 33,
-    43, 55, 70, 90,115,145,185,230
+     LOWEST_BRIGHTNESS_LEVEL,  6,  8, 10, 14, 19, 25, 33,
+    43, 55, 70, 90,115,145,185,HIGHEST_BRIGHTNESS_LEVEL
 };
 
 // Generalized LED Configuration Function

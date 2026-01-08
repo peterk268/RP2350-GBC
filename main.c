@@ -329,6 +329,11 @@ while(true)
 			// Suffering from success I guess but it's fine..
 			// I don't think anyone will miss their Pico Pal taking longer to turn off just for the LEDs to fade out lol.
 			// Power on made sense because that takes like a second to init everything but power off is instant.
+
+			if (run_mode == MODE_POWERSAVE) {
+				// if run mode was power save, step back up the lcd brightness
+				step_lcd_brightness(true);
+			}
 			uint8_t temp_lcd_led = lcd_led_duty_cycle;
 #if LED_PHASE_OUT_PWR_DOWN
 			uint8_t temp_button_led = button_led_duty_cycle;
@@ -371,6 +376,11 @@ while(true)
 			do_rtc_update = !do_rtc_update; // toggle for next round
         }
 		if (low_power_shutdown) {
+			if (run_mode == MODE_POWERSAVE) {
+				// if run mode was power save, step back up the lcd brightness
+				step_lcd_brightness(true);
+			}
+
 			uint8_t temp_lcd_led = lcd_led_duty_cycle;
 #if ENABLE_SDCARD
 			write_cart_ram_file(&gb, true);
@@ -489,6 +499,10 @@ while(true)
 					/* select + A: enable/disable frame-skip => fast-forward */
 					// Peanut GB frame skip toggle puts it at 60 fps.. skipping 1 frame every other frame
 					// My implementation runs at 120 fps.
+					if (run_mode == MODE_POWERSAVE) {
+						// if run mode was power save, step back up the lcd brightness
+						step_lcd_brightness(true);
+					}
 					run_mode = (run_mode == MODE_TURBO) ? MODE_NORMAL : MODE_TURBO;
 					if (run_mode == MODE_TURBO) {
 						gb.direct.frame_skip = true;   // 2× speed
@@ -536,11 +550,13 @@ while(true)
 						// enable power save
 						run_mode = MODE_POWERSAVE;
 						underclock_cpu(true);           // 180 MHz
+						step_lcd_brightness(false);     // lower brightness since lcd looks brighter with less refresh
 						gb.direct.frame_skip = true;    // skip each other frame
 					} else {
 						// disable power save → back to normal
 						run_mode = MODE_NORMAL;
 						underclock_cpu(false);
+						step_lcd_brightness(true);
 						gb.direct.frame_skip = false;
 					}
 				}

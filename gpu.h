@@ -52,20 +52,27 @@ static uint16_t black_fb[LCD_WIDTH] = {0}; // all black
 // MARK: - RENDER LOOP
 // "Worker thread" for each core
 
-typedef enum { FB_FREE, FB_READY, FB_DISPLAYED } fb_state_t;
+typedef enum { FB_FREE = 0, FB_READY = 1, FB_DISPLAYED = 2 } fb_state_t;
 
 typedef struct {
     uint16_t data[LCD_HEIGHT][LCD_WIDTH];
-    fb_state_t state;
+    uint32_t state;   // store fb_state_t values here
 } framebuffer_t;
 
 // three buffers
 static framebuffer_t fb0, fb1, fb2;
 
-// pointers for convenience
-static framebuffer_t *front_fb;  // displayed by core1
-static framebuffer_t *back_fb;   // being written by core0
-static framebuffer_t *spare_fb;  // free buffer
+// Core1 display pointer (core1 reads it constantly)
+static framebuffer_t *front_fb = NULL;
+
+// Core0-only write/free pointers
+static framebuffer_t *write_fb = NULL;
+static framebuffer_t *free_fb  = NULL;
+
+// Cross-core mailbox: published by core0, consumed by core1
+static framebuffer_t *ready_fb = NULL;  // atomic pointer
+
+static framebuffer_t *freed_fb = NULL; // core1->core0 mailbox
 
 bool double_frame_needs_bfi = 0;
 #define ENABLE_BFI 0
@@ -178,25 +185,26 @@ void render_loop() {
             fps_skip_counter++;
             if (fps_skip_counter == fps_divider) {
 #endif
-                // pick newest READY buffer
-                framebuffer_t *next_fb = NULL;
-                if (back_fb->state == FB_READY)
-                    next_fb = back_fb;
-                else if (spare_fb->state == FB_READY)
-                    next_fb = spare_fb;
+                // Grab newest ready buffer (and clear mailbox)
+                framebuffer_t *next = __atomic_exchange_n(&ready_fb, NULL, __ATOMIC_ACQUIRE);
 
-                if (next_fb) {
-                    // swap front_fb with the ready buffer
-                    framebuffer_t *old_front = front_fb;
-                    front_fb = next_fb;
-                    next_fb->state = FB_DISPLAYED;
-                    old_front->state = FB_FREE;
+                if (next) {
+                    // If somehow it isn't READY, ignore (safety)
+                    if (__atomic_load_n(&next->state, __ATOMIC_ACQUIRE) == FB_READY) {
+                        framebuffer_t *old = front_fb;
+                        front_fb = next;
 
-                    // update back_fb/spare_fb pointers if needed
-                    if (next_fb == back_fb)
-                        back_fb = spare_fb;
-                    else
-                        spare_fb = back_fb;
+                        // States: new is displayed, old becomes free
+                        __atomic_store_n(&next->state, FB_DISPLAYED, __ATOMIC_RELEASE);
+                        __atomic_store_n(&old->state,  FB_FREE,      __ATOMIC_RELEASE);
+
+                        // Hand the freed buffer back to core0 as its free_fb if you want
+                        // (This part is optional; simplest is to let core0 manage free_fb itself.)
+                        free_fb = old; // <-- only do this if free_fb is NOT used by core0 concurrently
+
+                        __atomic_store_n(&freed_fb, old, __ATOMIC_RELEASE);
+                        __sev();
+                    }
                 }
 #if SKIP_FRAMES
             }
@@ -273,16 +281,24 @@ void main_core1(void) {
     HEDLEY_UNREACHABLE();
 }
 
-// MARK: - DPI SETUP
-// Must be done before sd and i2s init
-void setup_dpi() {
+void fb_init(void)
+{
+    // Initial states
     fb0.state = FB_DISPLAYED;
     fb1.state = FB_FREE;
     fb2.state = FB_FREE;
 
-    front_fb = &fb0;
-    back_fb  = &fb1;
-    spare_fb = &fb2;
+    front_fb = &fb0;   // core1 starts by displaying fb0
+    write_fb = &fb1;   // core0 starts writing fb1
+    free_fb  = &fb2;   // spare free buffer
+
+    __atomic_store_n(&ready_fb, (framebuffer_t *)NULL, __ATOMIC_RELAXED);
+}
+
+// MARK: - DPI SETUP
+// Must be done before sd and i2s init
+void setup_dpi() {
+    fb_init();
 
     scanvideo_setup(&VGA_MODE);
     scanvideo_timing_enable(true);
@@ -330,56 +346,53 @@ void render_scanline(struct scanvideo_scanline_buffer *dest, const uint16_t *fb)
 #if ENABLE_LCD
 // MARK: CORE0 LCD RETRIEVE LINE
 void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
-		   const uint_fast8_t line)
+                   const uint_fast8_t line)
 {
+    // Write THIS line into the current write buffer (core0-only pointer)
+    uint16_t *dst = write_fb->data[line];
+
 #if PEANUT_FULL_GBC_SUPPORT
     if (gb->cgb.cgbMode) {
-        // user has not assigned palette.
         if (manual_palette_selected == -1) {
-            for(unsigned int x = 0; x < LCD_WIDTH; x++){
-                back_fb->data[line][x] = shift_components(gb->cgb.fixPalette[pixels[x]]);
-            }
+            for (unsigned int x = 0; x < LCD_WIDTH; x++)
+                dst[x] = shift_components(gb->cgb.fixPalette[pixels[x]]);
         } else {
-            for(unsigned int x = 0; x < LCD_WIDTH; x++){
-                back_fb->data[line][x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4]
-                        [pixels[x] & 3];
-            }
+            for (unsigned int x = 0; x < LCD_WIDTH; x++)
+                dst[x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4][pixels[x] & 3];
         }
-    }
-    else {
+    } else
 #endif
-        for(unsigned int x = 0; x < LCD_WIDTH; x++){
-            back_fb->data[line][x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4]
-                    [pixels[x] & 3];
-        }
-#if PEANUT_FULL_GBC_SUPPORT
+    {
+        for (unsigned int x = 0; x < LCD_WIDTH; x++)
+            dst[x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4][pixels[x] & 3];
     }
-#endif	
 
-    if (line == LCD_HEIGHT - 1) {
-        framebuffer_t *fb_to_write = NULL;
+    // End of frame: publish this buffer as READY
+    if (line == (LCD_HEIGHT - 1)) {
 
-        // pick a free buffer to write
-        if (back_fb->state == FB_FREE) {
-            fb_to_write = back_fb;
-            // printf("BACK\n");
-        }
-        else if (spare_fb->state == FB_FREE) {
-            fb_to_write = spare_fb;
-            // printf("SPARE\n");
-        }
-        else {
-            // all buffers busy, overwrite back_fb as fallback
-            fb_to_write = back_fb;
+        // 1) Pull any buffer core1 just freed (so we know what's actually free)
+        framebuffer_t *ret = __atomic_exchange_n(&freed_fb, NULL, __ATOMIC_ACQUIRE);
+        if (ret) {
+            // Safety: ensure it's marked free (core1 should have done this already)
+            __atomic_store_n(&ret->state, FB_FREE, __ATOMIC_RELEASE);
+            free_fb = ret;
         }
 
-        // --- write your frame into fb_to_write->data ---
-        fb_to_write->state = FB_READY;
+        // 2) Publish the finished frame
+        __atomic_store_n(&write_fb->state, FB_READY, __ATOMIC_RELEASE);
+        __atomic_store_n(&ready_fb, write_fb, __ATOMIC_RELEASE);
+        __sev();
 
-        // --- rotate back_fb/spare_fb pointers unconditionally ---
-        framebuffer_t *tmp = back_fb;
-        back_fb = spare_fb;
-        spare_fb = tmp;
+        // 3) Rotate to a free buffer for the next frame
+        if (free_fb && (__atomic_load_n(&free_fb->state, __ATOMIC_ACQUIRE) == FB_FREE)) {
+            framebuffer_t *tmp = write_fb;
+            write_fb = free_fb;
+            free_fb  = tmp;     // old write_fb becomes our spare candidate
+            // Optional: mark new write_fb as "in progress" if you add such a state
+        } else {
+            // No free buffer available -> drop next frame by reusing write_fb
+            // Optional: drop counter here
+        }
     }
 }
 #endif

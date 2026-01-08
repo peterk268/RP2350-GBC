@@ -235,7 +235,7 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
     while(led_ramp_done == false) sleep_ms(1); // Wait for LED fade-in to complete
     
     // memset(front_fb->data, 0, sizeof(front_fb->data));
-    memset(back_fb->data, 0, sizeof(back_fb->data));
+    memset(write_fb->data, 0, sizeof(write_fb->data));
     // memset(spare_fb->data, 0, sizeof(spare_fb->data));
     // sleep_ms(10); // wait for core1 to render black screen, 8.33ms refresh time
     

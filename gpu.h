@@ -129,7 +129,6 @@ uint8_t fps_divider = 4;
 uint8_t fps_skip_counter = 0;
 #endif
 static bool core1_parked = false;
-static bool parked_once = false;
 
 bool wait_for_core1_parked(uint32_t timeout_us) {
     uint64_t start = time_us_64();
@@ -152,17 +151,11 @@ void render_loop() {
             // Park core1
             __atomic_store_n(&core1_parked, true, __ATOMIC_RELEASE);
 
-            if (!parked_once) {
-                parked_once = true;
-                __sev(); __wfe(); __wfe(); // clear stale event
-            }
-
             // Park until sd_busy clears
             while (__atomic_load_n(&sd_busy, __ATOMIC_ACQUIRE)) {
-                __wfe();
+                __wfi();
             }
 
-            parked_once = false;
             __atomic_store_n(&core1_parked, false, __ATOMIC_RELEASE);
             continue;
         }
@@ -270,9 +263,26 @@ void render_loop() {
     }
 }
 
+// MARK: - CORE1 DOORBELL SETUP
+static uint8_t g_core1_db = 0xFF;
+
+// ISR runs on CORE1 when CORE0 rings the doorbell
+static void __isr core1_doorbell_isr(void) {
+    multicore_doorbell_clear_current_core(g_core1_db);
+}
+
+static inline void core1_doorbell_setup() {
+    g_core1_db = multicore_doorbell_claim_unused((1<<NUM_CORES) -1, true);
+
+    uint irq = multicore_doorbell_irq_num(g_core1_db); // resolves to SIO_IRQ_BELL(_NS) as needed by SDK
+    irq_set_exclusive_handler(irq, core1_doorbell_isr);
+    irq_set_enabled(irq, true);
+}
+
 // MARK: - MAIN CORE1 LOOP
 _Noreturn
 void main_core1(void) {
+    core1_doorbell_setup();
     #if !PICO_SCANVIDEO_ENABLE_DEN_PIN
     #warning "We'll take this out at some point"
     gpio_write(GPIO_DPI_DEN, 1);

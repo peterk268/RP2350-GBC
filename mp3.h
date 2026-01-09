@@ -1451,10 +1451,13 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             // clear sd_busy to start core1 out of parked state
             set_sd_busy(false);
-            sleep_ms(1); // let core1 notice sd_busy cleared
+            // sleep_ms(1); // let core1 notice sd_busy cleared
 
-            // launch core1
+            // launch core1 --- CAN'T due to scanvideo issues
             // multicore_launch_core1(main_core1);
+
+            // wake up core1 from parked state with door bell interrupt
+            multicore_doorbell_set_other_core(g_core1_db);
             wake_lcd();
 
             // Fade LCD + button LEDs back in

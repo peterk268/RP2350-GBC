@@ -129,6 +129,7 @@ uint8_t fps_divider = 4;
 uint8_t fps_skip_counter = 0;
 #endif
 static bool core1_parked = false;
+static bool parked_once = false;
 
 bool wait_for_core1_parked(uint32_t timeout_us) {
     uint64_t start = time_us_64();
@@ -148,20 +149,20 @@ void render_loop() {
 
     while (true) {
         if (__atomic_load_n(&sd_busy, __ATOMIC_ACQUIRE)) {
-            printf("Core1 parking for SD busy\n");
-
+            // Park core1
             __atomic_store_n(&core1_parked, true, __ATOMIC_RELEASE);
 
-            // Clear any stale event so WFE doesn't instantly return
-            __sev();
-            __wfe();
-            __wfe();
+            if (!parked_once) {
+                parked_once = true;
+                __sev(); __wfe(); __wfe(); // clear stale event
+            }
 
             // Park until sd_busy clears
             while (__atomic_load_n(&sd_busy, __ATOMIC_ACQUIRE)) {
                 __wfe();
             }
 
+            parked_once = false;
             __atomic_store_n(&core1_parked, false, __ATOMIC_RELEASE);
             continue;
         }
@@ -171,7 +172,7 @@ void render_loop() {
 
         if (!scanline_buffer) {
             // no scanline ready right now; allow sd_busy to be observed quickly
-            tight_loop_contents();
+            __wfe();
             continue;
         }
 
@@ -341,6 +342,16 @@ void render_scanline(struct scanvideo_scanline_buffer *dest, const uint16_t *fb)
 #endif
 
     raw_scanline_finish(dest);
+}
+
+void scanvideo_display_enable(bool enable) {
+    gpio_set_dir(GPIO_DPI_DEN, GPIO_OUT);
+    gpio_write(GPIO_DPI_DEN, enable);
+
+    sleep_ms(1);
+    if (enable) {
+        gpio_set_function(GPIO_DPI_DEN, GPIO_FUNC_PIO0);
+    }
 }
 
 #if ENABLE_LCD

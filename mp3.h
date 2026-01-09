@@ -1436,7 +1436,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             // NOW safe: core1 is not inside scanvideo
             sleep_lcd();
-            multicore_reset_core1();
+            // we can't reset core1 because of the uncertainties with scanvideo 
+            // when re-launching and it's not a crazy difference in 
+            // current consumption when parking instead. ranges from 1-5mA.
+            // multicore_reset_core1();
 
             restore_interrupts(irq);
 
@@ -1446,11 +1449,12 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // safety
             uint32_t irq = save_and_disable_interrupts();
 
-            // clear sd_busy and SEV to start core1 out of parked state
+            // clear sd_busy to start core1 out of parked state
             set_sd_busy(false);
+            sleep_ms(1); // let core1 notice sd_busy cleared
 
             // launch core1
-            multicore_launch_core1(main_core1);
+            // multicore_launch_core1(main_core1);
             wake_lcd();
 
             // Fade LCD + button LEDs back in

@@ -1378,6 +1378,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
             prev_btn_right  = btn_right;
             prev_btn_start  = btn_start;
             prev_btn_select = select_btn;
+
+            sleep_us(10); // small delay for timers
+            tight_loop_contents();
         }
 
         // Now Playing shift
@@ -1477,6 +1480,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             decoded_next_chunk = false;  // decode again on next loop
         }
+
+        sleep_us(10); // small delay for timers
+        tight_loop_contents();
     }
 
 END_PLAYBACK:

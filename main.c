@@ -638,6 +638,8 @@ while(true)
 		}
 #endif
 
+		sleep_us(10); // small delay for timers
+        tight_loop_contents();
     }
     // MARK: - Ending Emulation
     out:

@@ -123,6 +123,16 @@ void process_bat_percent() {
 
     // --- Low-power warning ---
     if (percent <= LOW_POWER_THRESHOLD) {
+        if (percent <= LOW_POWER_THRESHOLD / 2) {
+            // 10% and below fast flash
+            step = 20;
+        } else if (percent <= (LOW_POWER_THRESHOLD * 3 / 4)) {
+            // 15-10% medium flash
+            step = 10;
+        } else {
+            // 20-15% slow flash
+            step = 5;
+        }
         if (!low_power) {
             low_power = true;
             remove_pwr_led_flash();

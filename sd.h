@@ -313,6 +313,8 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
         }
         if (br == 0) break; // EOF
         total_bytes += br;
+        sleep_us(10);
+        tight_loop_contents();
     }
 
     printf("ROM loaded successfully. Size = %lu bytes (%.2f KB)\n",

@@ -1415,14 +1415,22 @@ static play_result_t mp3_play_single_track(const char *filepath,
         // ==================================================
 
         // BATTERY MONITORING //
-        bool timer_task_flagged = minimal_battery_monitoring_cb();
-        if (timer_task_flagged) update_status_label(mp3_status_label_obj);
+        static bool timer_task_flagged = false;
+        static bool prev_timer_task_flagged = false;
+        timer_task_flagged = minimal_battery_monitoring_cb();
+        // we typically don't want to check the battery and update the rtc at the same time
+        // this is due to both using i2c which we don't want to block for too long with audio running.
+        // so we are going to do the rtc update only when the timer task flag goes from true to false
+        // thus meaning the battery was checked in the previous iteration but not this one.
+        if (!timer_task_flagged && prev_timer_task_flagged) {
+            update_status_label(mp3_status_label_obj);
+            // Refresh core1 every 10s in this timer to keep scanvideo happy in case of long wfi.
+            multicore_doorbell_set_other_core(g_core1_db);
+        }
+        prev_timer_task_flagged = timer_task_flagged;
 
         // ================= MP3 Inactivity Handling =================
         if (g_mp3_inactive && !prev_inactive) {
-            // safety
-            uint32_t irq = save_and_disable_interrupts();
-
             // Fade out ONLY LCD + button LEDs
             // fade_out_leds_mp3_inactive();
             saved_button_brightness = button_led_duty_cycle;
@@ -1441,30 +1449,20 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // current consumption when parking instead. ranges from 1-5mA.
             // multicore_reset_core1();
 
-            restore_interrupts(irq);
-
             prev_inactive = true;
         }
         else if (!g_mp3_inactive && prev_inactive) {
-            // safety
-            uint32_t irq = save_and_disable_interrupts();
-
             // clear sd_busy to start core1 out of parked state
             set_sd_busy(false);
             // sleep_ms(1); // let core1 notice sd_busy cleared
 
             // launch core1 --- CAN'T due to scanvideo issues
             // multicore_launch_core1(main_core1);
-
-            // wake up core1 from parked state with door bell interrupt
-            multicore_doorbell_set_other_core(g_core1_db);
             wake_lcd();
 
             // Fade LCD + button LEDs back in
             // fade_in_leds_mp3_restore();
             increase_button_brightness(saved_button_brightness);
-
-            restore_interrupts(irq);
 
             prev_inactive = false;
         }

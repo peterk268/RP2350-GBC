@@ -153,7 +153,9 @@ void render_loop() {
 
             // Park until sd_busy clears
             while (__atomic_load_n(&sd_busy, __ATOMIC_ACQUIRE)) {
-                __wfe();
+                sleep_us(10);
+                tight_loop_contents();
+                __wfi();
             }
 
             __atomic_store_n(&core1_parked, false, __ATOMIC_RELEASE);

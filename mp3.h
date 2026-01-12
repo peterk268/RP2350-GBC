@@ -61,6 +61,23 @@
 #define MP3_INACTIVE_TIMEOUT_US    (9000000ULL)   // 9 seconds
 #define MP3_NOW_PLAYING_TIMEOUT_US (7000000ULL)   // 2 seconds on now playing
 
+#define BLUE_COLA
+// #define GREEN
+// #define GOLD
+#ifdef BLUE_COLA
+// Blue Cola
+#define ACCENT_COLOR  0x0094E1
+#define ACCENT_COLOR2 0x0076B4
+#elifdef GREEN
+// Green 
+#define ACCENT_COLOR  0x33CC66
+#define ACCENT_COLOR2 0x00A000
+#elifdef GOLD
+// Gold
+#define ACCENT_COLOR  0xFAB71F
+#define ACCENT_COLOR2 0xC89219
+#endif
+
 // === MP3 UI Global Objects ===
 static lv_obj_t *mp3_list_obj         = NULL;
 static lv_obj_t *mp3_hint_left_obj    = NULL;
@@ -273,8 +290,8 @@ void draw_track_list(lv_obj_t *list,
         lv_obj_set_style_bg_color(item, lv_color_hex(0xFFFFFF), 0);
 
         if (idx == selected) {
-            lv_obj_set_style_bg_color(item, lv_color_hex(0x33CC66), LV_PART_MAIN);
-            lv_obj_set_style_text_color(item, lv_color_black(), 0);
+            lv_obj_set_style_bg_color(item, lv_color_hex(ACCENT_COLOR), LV_PART_MAIN);
+            lv_obj_set_style_text_color(item, lv_color_hex(0xFFFFFF), 0);
 
             lv_label_set_long_mode(item, LV_LABEL_LONG_SCROLL_CIRCULAR);
             lv_obj_set_style_anim_speed(item, 20, 0);
@@ -1638,8 +1655,8 @@ void draw_now_playing(lv_obj_t *parent)
     lv_obj_clean(parent);
 
     lv_color_t txt_color       = lv_color_hex(0x202020);
-    lv_color_t highlight_color = lv_color_hex(0x33CC66);
-    lv_color_t txt_highlight_color = lv_color_hex(0x00A000);
+    lv_color_t highlight_color = lv_color_hex(ACCENT_COLOR);
+    lv_color_t txt_highlight_color = lv_color_hex(ACCENT_COLOR);
     int spacing = 6;
 
     // ============================================================

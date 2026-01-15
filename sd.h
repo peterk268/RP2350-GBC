@@ -224,6 +224,363 @@ void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
 	}
 }
 
+// ============================================================
+// Peanut-GB Save State Serialization (SAFE: no function ptrs)
+// ============================================================
+
+#ifndef SAVE_STATE_MAGIC
+#define SAVE_STATE_MAGIC 0x50504753u  // 'PPGS' (PicoPal GB Save) - pick anything
+#endif
+
+#ifndef SAVE_STATE_VERSION
+#define SAVE_STATE_VERSION 1u
+#endif
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t payload_size;   // sizeof(gb_save_state_t)
+    uint32_t crc32;          // optional; 0 if unused
+} save_state_header_t;
+
+// NOTE: This struct ONLY contains deterministic emulation state.
+//       No callbacks, no front-end pointers, no bitfields.
+typedef struct {
+    struct cpu_registers_s cpu_reg;
+    struct count_s         counter;
+
+    uint16_t selected_rom_bank;
+    uint8_t  cart_ram_bank;
+    uint8_t  enable_cart_ram;
+    uint8_t  cart_mode_select;
+
+    union cart_rtc rtc_latched;
+    union cart_rtc rtc_real;
+
+    uint8_t wram[WRAM_SIZE];
+    uint8_t vram[VRAM_SIZE];
+    uint8_t oam[OAM_SIZE];
+    uint8_t hram_io[HRAM_IO_SIZE];
+
+#if PEANUT_FULL_GBC_SUPPORT
+    struct {
+        uint8_t  cgbMode;
+        uint8_t  doubleSpeed;
+        uint8_t  doubleSpeedPrep;
+        uint8_t  wramBank;
+        uint16_t wramBankOffset;
+        uint8_t  vramBank;
+        uint16_t vramBankOffset;
+
+        uint16_t fixPalette[0x40];
+        uint8_t  OAMPalette[0x40];
+        uint8_t  BGPalette[0x40];
+        uint8_t  OAMPaletteID;
+        uint8_t  BGPaletteID;
+        uint8_t  OAMPaletteInc;
+        uint8_t  BGPaletteInc;
+
+        uint8_t  dmaActive;
+        uint8_t  dmaMode;
+        uint8_t  dmaSize;
+        uint16_t dmaSource;
+        uint16_t dmaDest;
+    } cgb;
+#endif
+} gb_save_state_t;
+
+
+// ------------------------------------------------------------
+// Optional CRC32 (FatFS-safe). If you don't want CRC, keep it
+// but return 0 and skip validation.
+// ------------------------------------------------------------
+static uint32_t crc32_ieee(const void *data, size_t len) {
+    // Small, straightforward CRC32 (IEEE 802.3). If you want to save flash,
+    // you can remove CRC usage by always returning 0.
+    const uint8_t *p = (const uint8_t *)data;
+    uint32_t crc = 0xFFFFFFFFu;
+    while (len--) {
+        crc ^= *p++;
+        for (int k = 0; k < 8; k++) {
+            uint32_t mask = -(crc & 1u);
+            crc = (crc >> 1) ^ (0xEDB88320u & mask);
+        }
+    }
+    return ~crc;
+}
+
+
+// ============================================================
+// WRITE SAVE STATE
+// ============================================================
+void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy) {
+    UINT bw = 0;
+
+    if (!gb) return;
+
+    set_sd_busy(true);
+
+    sd_card_t *pSD = sd_get_by_num(0);
+    FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+    if (FR_OK != fr) {
+        printf("E f_mount error: %s (%d)\n", FRESULT_str(fr), fr);
+        if (!hold_sd_busy) set_sd_busy(false);
+        return;
+    }
+
+    char save_path[512];
+    if (build_save_path_from_flash(SAVE_STATE, save_path, sizeof(save_path)) != 0) {
+        printf("E build_save_path_from_flash(SAVE_STATE) failed\n");
+        f_unmount(pSD->pcName);
+        if (!hold_sd_busy) set_sd_busy(false);
+        return;
+    }
+
+    // Build payload
+    gb_save_state_t s;
+    memset(&s, 0, sizeof(s));
+
+    s.cpu_reg = gb->cpu_reg;
+    s.counter = gb->counter;
+
+    s.selected_rom_bank = gb->selected_rom_bank;
+    s.cart_ram_bank     = gb->cart_ram_bank;
+    s.enable_cart_ram   = gb->enable_cart_ram;
+    s.cart_mode_select  = gb->cart_mode_select;
+
+    s.rtc_latched = gb->rtc_latched;
+    s.rtc_real    = gb->rtc_real;
+
+    memcpy(s.wram,    gb->wram,    WRAM_SIZE);
+    memcpy(s.vram,    gb->vram,    VRAM_SIZE);
+    memcpy(s.oam,     gb->oam,     OAM_SIZE);
+    memcpy(s.hram_io, gb->hram_io, HRAM_IO_SIZE);
+
+#if PEANUT_FULL_GBC_SUPPORT
+    s.cgb.cgbMode          = gb->cgb.cgbMode;
+    s.cgb.doubleSpeed      = gb->cgb.doubleSpeed;
+    s.cgb.doubleSpeedPrep  = gb->cgb.doubleSpeedPrep;
+    s.cgb.wramBank         = gb->cgb.wramBank;
+    s.cgb.wramBankOffset   = gb->cgb.wramBankOffset;
+    s.cgb.vramBank         = gb->cgb.vramBank;
+    s.cgb.vramBankOffset   = gb->cgb.vramBankOffset;
+
+    memcpy(s.cgb.fixPalette, gb->cgb.fixPalette, sizeof(s.cgb.fixPalette));
+    memcpy(s.cgb.OAMPalette, gb->cgb.OAMPalette, sizeof(s.cgb.OAMPalette));
+    memcpy(s.cgb.BGPalette,  gb->cgb.BGPalette,  sizeof(s.cgb.BGPalette));
+
+    s.cgb.OAMPaletteID     = gb->cgb.OAMPaletteID;
+    s.cgb.BGPaletteID      = gb->cgb.BGPaletteID;
+    s.cgb.OAMPaletteInc    = gb->cgb.OAMPaletteInc;
+    s.cgb.BGPaletteInc     = gb->cgb.BGPaletteInc;
+
+    s.cgb.dmaActive        = gb->cgb.dmaActive;
+    s.cgb.dmaMode          = gb->cgb.dmaMode;
+    s.cgb.dmaSize          = gb->cgb.dmaSize;
+    s.cgb.dmaSource        = gb->cgb.dmaSource;
+    s.cgb.dmaDest          = gb->cgb.dmaDest;
+#endif
+
+    save_state_header_t hdr;
+    hdr.magic        = SAVE_STATE_MAGIC;
+    hdr.version      = SAVE_STATE_VERSION;
+    hdr.payload_size = (uint32_t)sizeof(s);
+    hdr.crc32        = 0; //crc32_ieee(&s, sizeof(s));   // set to 0 if you want no CRC
+
+    FIL fil;
+    fr = f_open(&fil, save_path, FA_CREATE_ALWAYS | FA_WRITE);
+    if (fr != FR_OK) {
+        printf("E f_open(%s) error: %s (%d)\n", save_path, FRESULT_str(fr), fr);
+        f_unmount(pSD->pcName);
+        if (!hold_sd_busy) set_sd_busy(false);
+        return;
+    }
+
+    // Write header
+    fr = f_write(&fil, &hdr, sizeof(hdr), &bw);
+    if (fr != FR_OK || bw != sizeof(hdr)) {
+        printf("E f_write(hdr) error: %s (%d), bw=%u\n", FRESULT_str(fr), fr, (unsigned)bw);
+        f_close(&fil);
+        f_unmount(pSD->pcName);
+        if (!hold_sd_busy) set_sd_busy(false);
+        return;
+    }
+
+    // Write payload
+    fr = f_write(&fil, &s, sizeof(s), &bw);
+    if (fr != FR_OK || bw != sizeof(s)) {
+        printf("E f_write(state) error: %s (%d), bw=%u\n", FRESULT_str(fr), fr, (unsigned)bw);
+        f_close(&fil);
+        f_unmount(pSD->pcName);
+        if (!hold_sd_busy) set_sd_busy(false);
+        return;
+    }
+
+    fr = f_close(&fil);
+    if (fr != FR_OK) {
+        printf("E f_close error: %s (%d)\n", FRESULT_str(fr), fr);
+    }
+
+    f_unmount(pSD->pcName);
+    if (!hold_sd_busy) set_sd_busy(false);
+
+    printf("I write_cart_save_state(%s) COMPLETE (%u bytes payload)\n",
+           save_path, (unsigned)sizeof(s));
+}
+
+
+// ============================================================
+// READ SAVE STATE
+// Returns true if state loaded, false if missing/invalid.
+// ============================================================
+bool read_cart_save_state(struct gb_s *gb) {
+    UINT br = 0;
+
+    if (!gb) return false;
+
+    set_sd_busy(true);
+
+    sd_card_t *pSD = sd_get_by_num(0);
+    FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+    if (FR_OK != fr) {
+        printf("E f_mount error: %s (%d)\n", FRESULT_str(fr), fr);
+        set_sd_busy(false);
+        return false;
+    }
+
+    char save_path[512];
+    if (build_save_path_from_flash(SAVE_STATE, save_path, sizeof(save_path)) != 0) {
+        printf("E build_save_path_from_flash(SAVE_STATE) failed\n");
+        f_unmount(pSD->pcName);
+        set_sd_busy(false);
+        return false;
+    }
+
+    FIL fil;
+    fr = f_open(&fil, save_path, FA_READ);
+    if (fr != FR_OK) {
+        // Normal if no save state exists
+        printf("I no save state (%s): %s (%d)\n", save_path, FRESULT_str(fr), fr);
+        f_unmount(pSD->pcName);
+        set_sd_busy(false);
+        return false;
+    }
+
+    save_state_header_t hdr;
+    fr = f_read(&fil, &hdr, sizeof(hdr), &br);
+    if (fr != FR_OK || br != sizeof(hdr)) {
+        printf("E f_read(hdr) error: %s (%d), br=%u\n", FRESULT_str(fr), fr, (unsigned)br);
+        f_close(&fil);
+        f_unmount(pSD->pcName);
+        set_sd_busy(false);
+        return false;
+    }
+
+    if (hdr.magic != SAVE_STATE_MAGIC) {
+        printf("E save state magic mismatch: 0x%08lx\n", (unsigned long)hdr.magic);
+        f_close(&fil);
+        f_unmount(pSD->pcName);
+        set_sd_busy(false);
+        return false;
+    }
+
+    if (hdr.version != SAVE_STATE_VERSION) {
+        printf("E save state version mismatch: file=%lu expected=%u\n",
+               (unsigned long)hdr.version, (unsigned)SAVE_STATE_VERSION);
+        f_close(&fil);
+        f_unmount(pSD->pcName);
+        set_sd_busy(false);
+        return false;
+    }
+
+    if (hdr.payload_size != sizeof(gb_save_state_t)) {
+        printf("E save state size mismatch: file=%lu expected=%u\n",
+               (unsigned long)hdr.payload_size, (unsigned)sizeof(gb_save_state_t));
+        f_close(&fil);
+        f_unmount(pSD->pcName);
+        set_sd_busy(false);
+        return false;
+    }
+
+    gb_save_state_t s;
+    fr = f_read(&fil, &s, sizeof(s), &br);
+    if (fr != FR_OK || br != sizeof(s)) {
+        printf("E f_read(state) error: %s (%d), br=%u\n", FRESULT_str(fr), fr, (unsigned)br);
+        f_close(&fil);
+        f_unmount(pSD->pcName);
+        set_sd_busy(false);
+        return false;
+    }
+
+    // Optional CRC check
+    if (hdr.crc32 != 0) {
+        uint32_t crc = crc32_ieee(&s, sizeof(s));
+        if (crc != hdr.crc32) {
+            printf("E save state CRC mismatch: file=0x%08lx calc=0x%08lx\n",
+                   (unsigned long)hdr.crc32, (unsigned long)crc);
+            f_close(&fil);
+            f_unmount(pSD->pcName);
+            set_sd_busy(false);
+            return false;
+        }
+    }
+
+    fr = f_close(&fil);
+    if (fr != FR_OK) {
+        printf("E f_close error: %s (%d)\n", FRESULT_str(fr), fr);
+    }
+
+    // ---- APPLY RESTORE (do NOT touch callbacks / direct.priv / etc.) ----
+    memcpy(gb->wram,    s.wram,    WRAM_SIZE);
+    memcpy(gb->vram,    s.vram,    VRAM_SIZE);
+    memcpy(gb->oam,     s.oam,     OAM_SIZE);
+    memcpy(gb->hram_io, s.hram_io, HRAM_IO_SIZE);
+
+    gb->cpu_reg = s.cpu_reg;
+    gb->counter = s.counter;
+
+    gb->selected_rom_bank = s.selected_rom_bank;
+    gb->cart_ram_bank     = s.cart_ram_bank;
+    gb->enable_cart_ram   = s.enable_cart_ram;
+    gb->cart_mode_select  = s.cart_mode_select;
+
+    gb->rtc_latched = s.rtc_latched;
+    gb->rtc_real    = s.rtc_real;
+
+#if PEANUT_FULL_GBC_SUPPORT
+    gb->cgb.cgbMode         = s.cgb.cgbMode;
+    gb->cgb.doubleSpeed     = s.cgb.doubleSpeed;
+    gb->cgb.doubleSpeedPrep = s.cgb.doubleSpeedPrep;
+    gb->cgb.wramBank        = s.cgb.wramBank;
+    gb->cgb.wramBankOffset  = s.cgb.wramBankOffset;
+    gb->cgb.vramBank        = s.cgb.vramBank;
+    gb->cgb.vramBankOffset  = s.cgb.vramBankOffset;
+
+    memcpy(gb->cgb.fixPalette, s.cgb.fixPalette, sizeof(s.cgb.fixPalette));
+    memcpy(gb->cgb.OAMPalette, s.cgb.OAMPalette, sizeof(s.cgb.OAMPalette));
+    memcpy(gb->cgb.BGPalette,  s.cgb.BGPalette,  sizeof(s.cgb.BGPalette));
+
+    gb->cgb.OAMPaletteID    = s.cgb.OAMPaletteID;
+    gb->cgb.BGPaletteID     = s.cgb.BGPaletteID;
+    gb->cgb.OAMPaletteInc   = s.cgb.OAMPaletteInc;
+    gb->cgb.BGPaletteInc    = s.cgb.BGPaletteInc;
+
+    gb->cgb.dmaActive       = s.cgb.dmaActive;
+    gb->cgb.dmaMode         = s.cgb.dmaMode;
+    gb->cgb.dmaSize         = s.cgb.dmaSize;
+    gb->cgb.dmaSource       = s.cgb.dmaSource;
+    gb->cgb.dmaDest         = s.cgb.dmaDest;
+#endif
+
+    f_unmount(pSD->pcName);
+    set_sd_busy(false);
+
+    printf("I read_cart_save_state(%s) COMPLETE (%u bytes payload)\n",
+           save_path, (unsigned)sizeof(s));
+
+    return true;
+}
+
 /**
  * Load a .gb rom file in flash from the SD card 
  */ 

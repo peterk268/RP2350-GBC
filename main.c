@@ -543,6 +543,15 @@ while(true)
 					wash_out_level = decrease_clamp(wash_out_level, 16);
 				}
 				
+				// Save State
+				if (!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
+					write_cart_save_state(&gb, false);
+				}
+				// Load State 
+				if (!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
+					read_cart_save_state(&gb);
+				}
+
 				// But currently getting like 125mW down from 195mW so it's a good start.
 				if (!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
 					/* start + B: Battery Saving Mode*/

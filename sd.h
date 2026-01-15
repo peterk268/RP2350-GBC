@@ -581,6 +581,324 @@ bool read_cart_save_state(struct gb_s *gb) {
     return true;
 }
 
+// ------------------------------------------------------------
+// Small helpers: big-endian write, CRC32, Adler32
+// ------------------------------------------------------------
+static void be32(uint8_t out[4], uint32_t v) {
+    out[0] = (uint8_t)((v >> 24) & 0xFF);
+    out[1] = (uint8_t)((v >> 16) & 0xFF);
+    out[2] = (uint8_t)((v >>  8) & 0xFF);
+    out[3] = (uint8_t)((v >>  0) & 0xFF);
+}
+
+static uint32_t crc32_update(uint32_t crc, const void *data, size_t len) {
+    const uint8_t *p = (const uint8_t*)data;
+    crc = ~crc;
+    while (len--) {
+        crc ^= *p++;
+        for (int k = 0; k < 8; k++) {
+            uint32_t mask = -(crc & 1u);
+            crc = (crc >> 1) ^ (0xEDB88320u & mask);
+        }
+    }
+    return ~crc;
+}
+
+// Adler32 for zlib stream trailer
+static void adler32_update(uint32_t *a, uint32_t *b, const uint8_t *data, size_t len) {
+    // Adler32 mod prime 65521
+    const uint32_t MOD = 65521u;
+    uint32_t aa = *a;
+    uint32_t bb = *b;
+    while (len--) {
+        aa += *data++;
+        if (aa >= MOD) aa -= MOD;
+        bb += aa;
+        bb %= MOD;
+    }
+    *a = aa;
+    *b = bb;
+}
+
+// ------------------------------------------------------------
+// Convert RGB565 -> RGB888 (nice expansion)
+// ------------------------------------------------------------
+static inline void rgb565_to_rgb888(uint16_t p, uint8_t *r, uint8_t *g, uint8_t *b) {
+    uint8_t r5 = (p >> 11) & 0x1F;
+    uint8_t g6 = (p >>  5) & 0x3F;
+    uint8_t b5 = (p >>  0) & 0x1F;
+
+    // Expand to 8-bit: replicate MSBs
+    *r = (r5 << 3) | (r5 >> 2);
+    *g = (g6 << 2) | (g6 >> 4);
+    *b = (b5 << 3) | (b5 >> 2);
+}
+
+// ------------------------------------------------------------
+// Build screenshot path using ROM filename stored in flash
+// (uses your existing read_rom_settings + build_save_path)
+// ------------------------------------------------------------
+static int build_screenshot_path_from_flash(int screenshot_num, char *out_path, size_t out_path_size) {
+    char rom_filename[FILENAME_MAX_LEN];
+    uint8_t battery_slot, save_state_slot;
+
+    if (!read_rom_settings(rom_filename, sizeof(rom_filename), &battery_slot, &save_state_slot, false)) {
+        printf("E: No valid flash settings found\n");
+        return -1;
+    }
+
+    // screenshot_num is the slot for screenshotN.png
+    return build_save_path(rom_filename, SAVE_SCREENSHOT, screenshot_num, out_path, out_path_size);
+}
+
+// ------------------------------------------------------------
+// Chunk writer that streams and maintains CRC
+// ------------------------------------------------------------
+static FRESULT write_bytes(FIL *fil, const void *buf, UINT len) {
+    UINT bw = 0;
+    FRESULT fr = f_write(fil, buf, len, &bw);
+    if (fr != FR_OK) return fr;
+    if (bw != len)   return FR_DISK_ERR;
+    return FR_OK;
+}
+
+static FRESULT write_png_chunk_begin(FIL *fil, const char type[4], uint32_t data_len, uint32_t *crc_io) {
+    uint8_t len_be[4];
+    be32(len_be, data_len);
+
+    FRESULT fr = write_bytes(fil, len_be, 4);
+    if (fr != FR_OK) return fr;
+
+    fr = write_bytes(fil, type, 4);
+    if (fr != FR_OK) return fr;
+
+    // CRC starts over type+data
+    uint32_t crc = 0;
+    crc = crc32_update(crc, type, 4);
+    *crc_io = crc;
+    return FR_OK;
+}
+
+static FRESULT write_png_chunk_data(FIL *fil, const void *data, uint32_t len, uint32_t *crc_io) {
+    FRESULT fr = write_bytes(fil, data, (UINT)len);
+    if (fr != FR_OK) return fr;
+
+    *crc_io = crc32_update(*crc_io, data, len);
+    return FR_OK;
+}
+
+static FRESULT write_png_chunk_end(FIL *fil, uint32_t crc) {
+    uint8_t crc_be[4];
+    be32(crc_be, crc);
+    return write_bytes(fil, crc_be, 4);
+}
+
+// ------------------------------------------------------------
+// Main: Write screenshot PNG from framebuffer (RGB565)
+// ------------------------------------------------------------
+bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
+                                  int screenshot_num,
+                                  bool hold_sd_busy)
+{
+    if (!front_fb) return false;
+
+    // Your existing busy indicator
+    set_sd_busy(true);
+
+    sd_card_t *pSD = sd_get_by_num(0);
+    FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+    if (fr != FR_OK) {
+        printf("E f_mount error: %s (%d)\n", FRESULT_str(fr), fr);
+        if (!hold_sd_busy) set_sd_busy(false);
+        return false;
+    }
+
+    char path[512];
+    if (build_screenshot_path_from_flash(screenshot_num, path, sizeof(path)) != 0) {
+        printf("E build_screenshot_path_from_flash failed\n");
+        f_unmount(pSD->pcName);
+        if (!hold_sd_busy) set_sd_busy(false);
+        return false;
+    }
+
+    FIL fil;
+    fr = f_open(&fil, path, FA_CREATE_ALWAYS | FA_WRITE);
+    if (fr != FR_OK) {
+        printf("E f_open(%s) error: %s (%d)\n", path, FRESULT_str(fr), fr);
+        f_unmount(pSD->pcName);
+        if (!hold_sd_busy) set_sd_busy(false);
+        return false;
+    }
+
+    // ----------------------------
+    // PNG signature
+    // ----------------------------
+    static const uint8_t png_sig[8] = { 137,80,78,71,13,10,26,10 };
+    fr = write_bytes(&fil, png_sig, 8);
+    if (fr != FR_OK) goto fail;
+
+    // ----------------------------
+    // IHDR chunk (13 bytes)
+    // ----------------------------
+    {
+        uint8_t ihdr[13];
+        // width, height
+        be32(&ihdr[0],  LCD_WIDTH);
+        be32(&ihdr[4],  LCD_HEIGHT);
+        ihdr[8]  = 8;  // bit depth
+        ihdr[9]  = 2;  // color type: truecolor RGB
+        ihdr[10] = 0;  // compression
+        ihdr[11] = 0;  // filter
+        ihdr[12] = 0;  // interlace
+
+        uint32_t crc = 0;
+        fr = write_png_chunk_begin(&fil, "IHDR", 13, &crc);
+        if (fr != FR_OK) goto fail;
+        fr = write_png_chunk_data(&fil, ihdr, 13, &crc);
+        if (fr != FR_OK) goto fail;
+        fr = write_png_chunk_end(&fil, crc);
+        if (fr != FR_OK) goto fail;
+    }
+
+    // ----------------------------
+    // IDAT chunk:
+    // We write a zlib stream containing uncompressed scanlines:
+    // Each scanline = [filter=0][RGBRGB...]
+    // zlib format: 2-byte header + stored blocks + Adler32
+    // ----------------------------
+    const uint32_t row_bytes = 1 + (3 * LCD_WIDTH);       // filter + RGB
+    const uint32_t raw_bytes = row_bytes * LCD_HEIGHT;    // total uncompressed data
+    const uint32_t max_block = 65535u;
+
+    // number of stored blocks needed
+    uint32_t blocks = (raw_bytes + max_block - 1) / max_block;
+
+    // zlib stream size: header(2) + blocks*(5) + raw_bytes + adler(4)
+    uint32_t idat_data_len = 2 + blocks * 5 + raw_bytes + 4;
+
+    uint32_t idat_crc = 0;
+    fr = write_png_chunk_begin(&fil, "IDAT", idat_data_len, &idat_crc);
+    if (fr != FR_OK) goto fail;
+
+    // zlib header: CMF/FLG
+    // 0x78 0x01 = deflate, 32K window, fast/none (valid for stored blocks)
+    {
+        uint8_t zhdr[2] = { 0x78, 0x01 };
+        fr = write_png_chunk_data(&fil, zhdr, 2, &idat_crc);
+        if (fr != FR_OK) goto fail;
+    }
+
+    // Adler32 over the *raw* (uncompressed) scanline bytes
+    uint32_t adler_a = 1;
+    uint32_t adler_b = 0;
+
+    // We generate scanlines on the fly into a small row buffer
+    uint8_t rowbuf[1 + 3 * LCD_WIDTH];
+
+    // Stream raw bytes with stored blocks
+    uint32_t remaining = raw_bytes;
+    uint32_t raw_pos = 0; // counts how many raw bytes we've emitted (for block boundaries)
+
+    for (uint32_t bi = 0; bi < blocks; bi++) {
+        uint32_t block_len = (remaining > max_block) ? max_block : remaining;
+        remaining -= block_len;
+
+        // Stored block header:
+        // 1 byte: BFINAL(1) + BTYPE(2) -> for stored: BTYPE=00
+        // then LEN (2 LE), NLEN (2 LE)
+        uint8_t bhdr[5];
+        uint8_t bfinal = (bi == (blocks - 1)) ? 1 : 0;
+        bhdr[0] = (uint8_t)(bfinal); // BTYPE=00, so just BFINAL in bit0
+
+        uint16_t LEN  = (uint16_t)block_len;
+        uint16_t NLEN = (uint16_t)~LEN;
+
+        bhdr[1] = (uint8_t)(LEN & 0xFF);
+        bhdr[2] = (uint8_t)((LEN >> 8) & 0xFF);
+        bhdr[3] = (uint8_t)(NLEN & 0xFF);
+        bhdr[4] = (uint8_t)((NLEN >> 8) & 0xFF);
+
+        fr = write_png_chunk_data(&fil, bhdr, 5, &idat_crc);
+        if (fr != FR_OK) goto fail;
+
+        // Now emit block_len raw bytes.
+        // Our raw data is scanlines, so we generate by rows and slice as needed.
+        uint32_t block_left = block_len;
+
+        while (block_left > 0) {
+            // Determine which row we're in and offset within that row
+            uint32_t row_index = raw_pos / row_bytes;
+            uint32_t row_off   = raw_pos % row_bytes;
+
+            // Build row buffer if we are at row start
+            if (row_off == 0) {
+                rowbuf[0] = 0; // filter type 0
+                for (uint32_t x = 0; x < LCD_WIDTH; x++) {
+                    uint8_t r, g, b;
+                    rgb565_to_rgb888(front_fb->data[row_index][x], &r, &g, &b);
+                    rowbuf[1 + 3*x + 0] = r;
+                    rowbuf[1 + 3*x + 1] = g;
+                    rowbuf[1 + 3*x + 2] = b;
+                }
+            }
+
+            // Emit as much as we can from current row
+            uint32_t can = row_bytes - row_off;
+            if (can > block_left) can = block_left;
+
+            // Update Adler32 with the raw bytes we are emitting
+            adler32_update(&adler_a, &adler_b, &rowbuf[row_off], can);
+
+            fr = write_png_chunk_data(&fil, &rowbuf[row_off], can, &idat_crc);
+            if (fr != FR_OK) goto fail;
+
+            raw_pos   += can;
+            block_left -= can;
+        }
+    }
+
+    // Write Adler32 (big-endian) at end of zlib stream
+    {
+        uint32_t adler = (adler_b << 16) | adler_a;
+        uint8_t adler_be[4];
+        be32(adler_be, adler);
+        fr = write_png_chunk_data(&fil, adler_be, 4, &idat_crc);
+        if (fr != FR_OK) goto fail;
+    }
+
+    fr = write_png_chunk_end(&fil, idat_crc);
+    if (fr != FR_OK) goto fail;
+
+    // ----------------------------
+    // IEND chunk
+    // ----------------------------
+    {
+        uint32_t crc = 0;
+        fr = write_png_chunk_begin(&fil, "IEND", 0, &crc);
+        if (fr != FR_OK) goto fail;
+        fr = write_png_chunk_end(&fil, crc);
+        if (fr != FR_OK) goto fail;
+    }
+
+    fr = f_close(&fil);
+    if (fr != FR_OK) {
+        printf("E f_close error: %s (%d)\n", FRESULT_str(fr), fr);
+    }
+
+    f_unmount(pSD->pcName);
+    if (!hold_sd_busy) set_sd_busy(false);
+
+    printf("I screenshot saved: %s (%dx%d)\n", path, LCD_WIDTH, LCD_HEIGHT);
+    return true;
+
+fail:
+    printf("E screenshot write failed: %s (%d)\n", FRESULT_str(fr), fr);
+    f_close(&fil);
+    f_unmount(pSD->pcName);
+    if (!hold_sd_busy) set_sd_busy(false);
+    return false;
+}
+
 /**
  * Load a .gb rom file in flash from the SD card 
  */ 

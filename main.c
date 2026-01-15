@@ -569,6 +569,11 @@ while(true)
 						gb.direct.frame_skip = false;
 					}
 				}
+
+				// Screenshot
+				if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
+					write_screenshot_png_from_fb(front_fb, 0, false);
+				}
 			}
 		} else {
 			printf("ioxhi\n");

@@ -357,29 +357,34 @@ void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy) {
     memcpy(s.hram_io, gb->hram_io, HRAM_IO_SIZE);
 
 #if PEANUT_FULL_GBC_SUPPORT
-    s.cgb.cgbMode          = gb->cgb.cgbMode;
-    s.cgb.doubleSpeed      = gb->cgb.doubleSpeed;
-    s.cgb.doubleSpeedPrep  = gb->cgb.doubleSpeedPrep;
-    s.cgb.wramBank         = gb->cgb.wramBank;
-    s.cgb.wramBankOffset   = gb->cgb.wramBankOffset;
-    s.cgb.vramBank         = gb->cgb.vramBank;
-    s.cgb.vramBankOffset   = gb->cgb.vramBankOffset;
+    if (gb->cgb.cgbMode) {
+        s.cgb.cgbMode          = gb->cgb.cgbMode;
+        s.cgb.doubleSpeed      = gb->cgb.doubleSpeed;
+        s.cgb.doubleSpeedPrep  = gb->cgb.doubleSpeedPrep;
+        s.cgb.wramBank         = gb->cgb.wramBank;
+        s.cgb.wramBankOffset   = gb->cgb.wramBankOffset;
+        s.cgb.vramBank         = gb->cgb.vramBank;
+        s.cgb.vramBankOffset   = gb->cgb.vramBankOffset;
 
-    memcpy(s.cgb.fixPalette, gb->cgb.fixPalette, sizeof(s.cgb.fixPalette));
-    memcpy(s.cgb.OAMPalette, gb->cgb.OAMPalette, sizeof(s.cgb.OAMPalette));
-    memcpy(s.cgb.BGPalette,  gb->cgb.BGPalette,  sizeof(s.cgb.BGPalette));
+        memcpy(s.cgb.fixPalette, gb->cgb.fixPalette, sizeof(s.cgb.fixPalette));
+        memcpy(s.cgb.OAMPalette, gb->cgb.OAMPalette, sizeof(s.cgb.OAMPalette));
+        memcpy(s.cgb.BGPalette,  gb->cgb.BGPalette,  sizeof(s.cgb.BGPalette));
 
-    s.cgb.OAMPaletteID     = gb->cgb.OAMPaletteID;
-    s.cgb.BGPaletteID      = gb->cgb.BGPaletteID;
-    s.cgb.OAMPaletteInc    = gb->cgb.OAMPaletteInc;
-    s.cgb.BGPaletteInc     = gb->cgb.BGPaletteInc;
+        s.cgb.OAMPaletteID     = gb->cgb.OAMPaletteID;
+        s.cgb.BGPaletteID      = gb->cgb.BGPaletteID;
+        s.cgb.OAMPaletteInc    = gb->cgb.OAMPaletteInc;
+        s.cgb.BGPaletteInc     = gb->cgb.BGPaletteInc;
 
-    s.cgb.dmaActive        = gb->cgb.dmaActive;
-    s.cgb.dmaMode          = gb->cgb.dmaMode;
-    s.cgb.dmaSize          = gb->cgb.dmaSize;
-    s.cgb.dmaSource        = gb->cgb.dmaSource;
-    s.cgb.dmaDest          = gb->cgb.dmaDest;
+        s.cgb.dmaActive        = gb->cgb.dmaActive;
+        s.cgb.dmaMode          = gb->cgb.dmaMode;
+        s.cgb.dmaSize          = gb->cgb.dmaSize;
+        s.cgb.dmaSource        = gb->cgb.dmaSource;
+        s.cgb.dmaDest          = gb->cgb.dmaDest;
+    } else {
+        memset(&s.cgb, 0, sizeof(s.cgb));
+    }
 #endif
+    // End build payload
 
     save_state_header_t hdr;
     hdr.magic        = SAVE_STATE_MAGIC;
@@ -548,29 +553,32 @@ bool read_cart_save_state(struct gb_s *gb) {
     gb->rtc_real    = s.rtc_real;
 
 #if PEANUT_FULL_GBC_SUPPORT
-    gb->cgb.cgbMode         = s.cgb.cgbMode;
-    gb->cgb.doubleSpeed     = s.cgb.doubleSpeed;
-    gb->cgb.doubleSpeedPrep = s.cgb.doubleSpeedPrep;
-    gb->cgb.wramBank        = s.cgb.wramBank;
-    gb->cgb.wramBankOffset  = s.cgb.wramBankOffset;
-    gb->cgb.vramBank        = s.cgb.vramBank;
-    gb->cgb.vramBankOffset  = s.cgb.vramBankOffset;
+    gb->cgb.cgbMode = s.cgb.cgbMode;
+    if (gb->cgb.cgbMode) { 
+        gb->cgb.doubleSpeed     = s.cgb.doubleSpeed;
+        gb->cgb.doubleSpeedPrep = s.cgb.doubleSpeedPrep;
+        gb->cgb.wramBank        = s.cgb.wramBank;
+        gb->cgb.wramBankOffset  = s.cgb.wramBankOffset;
+        gb->cgb.vramBank        = s.cgb.vramBank;
+        gb->cgb.vramBankOffset  = s.cgb.vramBankOffset;
 
-    memcpy(gb->cgb.fixPalette, s.cgb.fixPalette, sizeof(s.cgb.fixPalette));
-    memcpy(gb->cgb.OAMPalette, s.cgb.OAMPalette, sizeof(s.cgb.OAMPalette));
-    memcpy(gb->cgb.BGPalette,  s.cgb.BGPalette,  sizeof(s.cgb.BGPalette));
+        memcpy(gb->cgb.fixPalette, s.cgb.fixPalette, sizeof(s.cgb.fixPalette));
+        memcpy(gb->cgb.OAMPalette, s.cgb.OAMPalette, sizeof(s.cgb.OAMPalette));
+        memcpy(gb->cgb.BGPalette,  s.cgb.BGPalette,  sizeof(s.cgb.BGPalette));
 
-    gb->cgb.OAMPaletteID    = s.cgb.OAMPaletteID;
-    gb->cgb.BGPaletteID     = s.cgb.BGPaletteID;
-    gb->cgb.OAMPaletteInc   = s.cgb.OAMPaletteInc;
-    gb->cgb.BGPaletteInc    = s.cgb.BGPaletteInc;
+        gb->cgb.OAMPaletteID    = s.cgb.OAMPaletteID;
+        gb->cgb.BGPaletteID     = s.cgb.BGPaletteID;
+        gb->cgb.OAMPaletteInc   = s.cgb.OAMPaletteInc;
+        gb->cgb.BGPaletteInc    = s.cgb.BGPaletteInc;
 
-    gb->cgb.dmaActive       = s.cgb.dmaActive;
-    gb->cgb.dmaMode         = s.cgb.dmaMode;
-    gb->cgb.dmaSize         = s.cgb.dmaSize;
-    gb->cgb.dmaSource       = s.cgb.dmaSource;
-    gb->cgb.dmaDest         = s.cgb.dmaDest;
+        gb->cgb.dmaActive       = s.cgb.dmaActive;
+        gb->cgb.dmaMode         = s.cgb.dmaMode;
+        gb->cgb.dmaSize         = s.cgb.dmaSize;
+        gb->cgb.dmaSource       = s.cgb.dmaSource;
+        gb->cgb.dmaDest         = s.cgb.dmaDest;
+    }
 #endif
+    // ---- END APPLY RESTORE ----
 
     f_unmount(pSD->pcName);
     set_sd_busy(false);

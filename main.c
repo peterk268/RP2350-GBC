@@ -202,7 +202,7 @@ int main(void)
 	// Initialize I2S sound driver
 	i2s_config = i2s_get_default_config();
 	i2s_config.sample_freq=AUDIO_SAMPLE_RATE;
-	i2s_config.dma_trans_count = gpio_read(IOX_B_B) ? PCM_FRAME_COUNT : AUDIO_SAMPLES;
+	i2s_config.dma_trans_count = gpio_read(IOX_B_B) ^ GBC_MAIN_APP ? PCM_FRAME_COUNT : AUDIO_SAMPLES;
 	i2s_config.mclk_mult = 512;          // 512× is cleaner
 
 	i2s_volume(&i2s_config,0);
@@ -243,7 +243,7 @@ while(true)
 		run_gmeter_dashboard();
 		while (1) { tight_loop_contents(); }
 	}
-	if (gpio_read(IOX_B_B)) {
+	if (gpio_read(IOX_B_B) ^ GBC_MAIN_APP) {
 		// hyper_underclock_cpu(true); // ~52mA consumed, 62mA with regular underclock, 75mA with overclock
 		play_mp3_stream(NULL);
 		while (1) { tight_loop_contents(); }

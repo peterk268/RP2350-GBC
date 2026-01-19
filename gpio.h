@@ -260,6 +260,8 @@ const uint8_t IOX_INPUT_0_REG = 0x00;
 const uint8_t IOX_INPUT_1_REG = 0x01;
 const uint8_t IOX_OUTPUT_0_REG = 0x02;
 const uint8_t IOX_OUTPUT_1_REG = 0x03;
+const uint8_t IOX_POLARITY_0_REG = 0x04;
+const uint8_t IOX_POLARITY_1_REG = 0x05;
 const uint8_t IOX_CONFIG_0_REG = 0x06;
 const uint8_t IOX_CONFIG_1_REG = 0x07;
 
@@ -267,6 +269,7 @@ const uint8_t IOX_CONFIG_1_REG = 0x07;
 void config_iox_port(bool port, uint8_t config_data);
 void config_iox_ports();
 void read_io_expander_states(int8_t port);
+void write_io_polarity(bool port, uint8_t polarity_data);
 void write_io_expander_states(bool port, uint8_t data);
 void write_iox_port1(int8_t new_sd_cs_state, int8_t new_lcd_ncs_state, int8_t new_esp_ncs_state, int8_t new_lcd_rst_state, int8_t new_esp_en_state, int8_t new_audio_en_state, int8_t new_sd_nen_state, int8_t new_sd_cd_state);
 bool gpio_read(uint8_t gpio_num);
@@ -282,13 +285,21 @@ void config_iox_port(bool port, uint8_t config_data) {
 
 // Configures pins as I/O and sets default values.
 void config_iox_ports() {
+    gpio_init(GPIO_IOX_nINT);
+    gpio_set_dir(GPIO_IOX_nINT, GPIO_IN);
+
     // Port 0: all inputs (buttons and DVI detect)
     config_iox_port(0, 0b11111111);
     // Port 1: outputs (SD, LCD, ESP, Audio control signals) & SD Card Detect Input
-    config_iox_port(1, 0b10000000);
+    config_iox_port(1, 0b00000000);
 
+    #warning "Remove SD Card Detect which is the first bit of port 1 and replace it with Camera CS or some other output like vibration motor"
     // Initialize IOX outputs to defaults
-    write_iox_port1(0, 1, 1, 0, 0, 0, 1, 0);
+    write_iox_port1(1, 1, 1, 0, 0, 0, 1, 0);
+
+    sleep_ms(1);
+    // clear any interrupt states
+    read_io_expander_states(2);
 }
 
 // port: 0 or 1, or 2 for both
@@ -325,6 +336,12 @@ void read_io_expander_states(int8_t port) {
         sd_nen_state   = read_buffer & (1 << (IOX_SD_nEN - 48));
         sd_cd_state    = read_buffer & (1 << (IOX_SD_CD - 48));
     }
+}
+
+void write_io_polarity(bool port, uint8_t polarity_data) {
+    uint8_t reg = (port == 0) ? IOX_POLARITY_0_REG : IOX_POLARITY_1_REG;
+    uint8_t write_buffer[2] = {reg, polarity_data};
+    i2c_write_blocking(IOX_I2C_PORT, IOX_I2C_ADDR, write_buffer, 2, false);
 }
 
 void write_io_expander_states(bool port, uint8_t data) {

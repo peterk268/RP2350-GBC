@@ -202,7 +202,7 @@ int main(void)
 	// Initialize I2S sound driver
 	i2s_config = i2s_get_default_config();
 	i2s_config.sample_freq=AUDIO_SAMPLE_RATE;
-	i2s_config.dma_trans_count = gpio_read(IOX_B_UP) ? PCM_FRAME_COUNT : AUDIO_SAMPLES;
+	i2s_config.dma_trans_count = gpio_read(IOX_B_B) ? PCM_FRAME_COUNT : AUDIO_SAMPLES;
 	i2s_config.mclk_mult = 512;          // 512× is cleaner
 
 	i2s_volume(&i2s_config,0);
@@ -238,12 +238,12 @@ while(true)
 	fade_in_leds_startup();
 
 	// read_io_expander_states(0);
-	if (!gpio_read(IOX_B_B)) {
+	if (!gpio_read(IOX_B_A)) {
 		underclock_cpu(true); // 10mA saved
 		run_gmeter_dashboard();
 		while (1) { tight_loop_contents(); }
 	}
-	if (gpio_read(IOX_B_UP)) {
+	if (gpio_read(IOX_B_B)) {
 		// hyper_underclock_cpu(true); // ~52mA consumed, 62mA with regular underclock, 75mA with overclock
 		play_mp3_stream(NULL);
 		while (1) { tight_loop_contents(); }
@@ -426,8 +426,6 @@ while(true)
 
 		bool iox_nint = gpio_read(GPIO_IOX_nINT);
 		if (!iox_nint) {
-			// iox interrupt not working :/ or its always interrupted huh
-			// printf("ioxlo\n");
 			// Read IOX port 0
 			read_io_expander_states(0);
 			// Store previous joypad states
@@ -575,8 +573,6 @@ while(true)
 					write_screenshot_png_from_fb(front_fb, 0, false);
 				}
 			}
-		} else {
-			printf("ioxhi\n");
 		}
 #if ENABLE_FRAME_DEBUGGING
 		static uint32_t last_ts = 0;

@@ -1523,7 +1523,7 @@ void rom_file_selector() {
 
 
 	// input loop
-    bool up, down, left, right, a, b, select, start;
+    bool up = true, down = true, left = true, right = true, a = true, b = true, select = true, start = true;
 	// Keep previous states (initialize all to "released" = true, since buttons are active-low)
 	static bool prev_up = true, prev_down = true, prev_left = true, prev_right = true;
 	static bool prev_a = true, prev_b = true, prev_start = true, prev_select = true;

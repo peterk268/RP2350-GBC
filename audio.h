@@ -16,6 +16,9 @@ void dac_i2c_read(uint8_t page, uint8_t reg, uint8_t *data, size_t length);
 #define USE_LINEAR_VOLUME_SCALING 0
 #define RAMPED_AUDIO_EXPONENT 0.4f // if this is changed you need to change the unmute threshold.
 
+#define VOL_POLL_US        10000   // 10ms = 100Hz
+#define HP_POLL_US         50000   // 50ms = 20Hz
+
 void detect_headphones() {
     uint8_t data;
     dac_i2c_read(0, 0x43, &data, 1);
@@ -59,29 +62,43 @@ void power_off_drivers() {
 }
 
 void read_volume() {
-    adc_select_input(GPIO_AUD_POT_ADC - 40); 
-    uint16_t adc_val = read_adc(); // 0–4095
+    static uint64_t next_vol_us = 0;
+    static uint64_t next_hp_us  = 0;
+    uint64_t now = time_us_64();
 
-    // Clip edges
-    if (adc_val < ADC_MIN_CLIP) adc_val = 0;
-    else if (adc_val > ADC_MAX_CLIP) adc_val = ADC_MAX_CLIP;
+    // Volume reading every 10ms
+    if ((int64_t)(now - next_vol_us) >= 0) {
+        next_vol_us = now + VOL_POLL_US;
+
+        adc_select_input(GPIO_AUD_POT_ADC - 40); 
+        uint16_t adc_val = read_adc(); // 0–4095
+
+        // Clip edges
+        if (adc_val < ADC_MIN_CLIP) adc_val = 0;
+        else if (adc_val > ADC_MAX_CLIP) adc_val = ADC_MAX_CLIP;
 
 #if USE_LINEAR_VOLUME_SCALING
-    // Scale to 0–DAC_MAX_VOL
-    uint8_t dac_vol = (uint8_t)((adc_val * DAC_MAX_VOL) / ADC_MAX_CLIP);
+        // Scale to 0–DAC_MAX_VOL
+        uint8_t dac_vol = (uint8_t)((adc_val * DAC_MAX_VOL) / ADC_MAX_CLIP);
 #else
-    float pot_norm = (float)adc_val / ADC_MAX_CLIP;  // 0.0–1.0
-    float dac_f = powf(pot_norm, RAMPED_AUDIO_EXPONENT) * DAC_MAX_VOL;  // exponent < 1 stretches low end
-    uint8_t dac_vol = (uint8_t)dac_f;
+        float pot_norm = (float)adc_val / ADC_MAX_CLIP;  // 0.0–1.0
+        float dac_f = powf(pot_norm, RAMPED_AUDIO_EXPONENT) * DAC_MAX_VOL;  // exponent < 1 stretches low end
+        uint8_t dac_vol = (uint8_t)dac_f;
 #endif
 
-    if (abs((int)dac_vol - (int)current_volume_level) > 1) {
-        current_volume_level = dac_vol;
-        set_volume(current_volume_level, current_volume_level);
+        if (abs((int)dac_vol - (int)current_volume_level) > 1) {
+            current_volume_level = dac_vol;
+            set_volume(current_volume_level, current_volume_level);
+        }
     }
 
-    detect_headphones();
-
+    // Headphone detection every 50ms
+    if ((int64_t)(now - next_hp_us) >= 0) {
+        next_hp_us = now + HP_POLL_US;
+        
+        detect_headphones();
+    }
+    
     // --- Mute logic with one-time calls and hysteresis ---
     // don't turn off the drivers when headphones in because pop is audible and class ab headphone amp
     // doesn't consume any idle power due to 100uF dc blocking caps in hp path..

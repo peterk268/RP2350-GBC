@@ -15,14 +15,9 @@
 // MARK: - GPIO Pin Definitions
 
 // Misc.
-#if ENABLE_PSRAM
 #define GPIO_QSPI_CS1        0  // PSRAM CS1
 // PWR HOLD gets moved to gpio 1 and imu int to iox and sd card detect removed
 #define GPIO_PWR_HOLD        1
-#else
-#define GPIO_PWR_HOLD        0
-#define GPIO_IMU_INT1        1
-#endif
 
 // SD, LCD, ESP SPI (SPI0 Shared)
 #define GPIO_SPI0_SCK        2
@@ -104,12 +99,7 @@
 #define IOX_ESP_EN           (14 + 48)
 #define IOX_AUDIO_EN         (15 + 48)
 #define IOX_SD_nEN           (16 + 48)
-#if ENABLE_PSRAM
-#warning "Add back IMU INT1 and remove SD Card Detect"
-#define IOX_SD_CD            (17 + 48)
-#else
-#define IOX_SD_CD            (17 + 48)
-#endif
+#define IOX_CAMERA_nCS       (17 + 48)
 
 
 void set_up_select() {
@@ -252,7 +242,7 @@ bool lcd_rst_state = 0;
 bool esp_en_state = 0;
 bool audio_en_state = 0;
 bool sd_nen_state = 1;
-bool sd_cd_state = 0;
+bool camera_ncs_state = 0;
 
 // MARK: - IOX REGS
 #define IOX_I2C_ADDR 0x20
@@ -271,7 +261,7 @@ void config_iox_ports();
 void read_io_expander_states(int8_t port);
 void write_io_polarity(bool port, uint8_t polarity_data);
 void write_io_expander_states(bool port, uint8_t data);
-void write_iox_port1(int8_t new_sd_cs_state, int8_t new_lcd_ncs_state, int8_t new_esp_ncs_state, int8_t new_lcd_rst_state, int8_t new_esp_en_state, int8_t new_audio_en_state, int8_t new_sd_nen_state, int8_t new_sd_cd_state);
+void write_iox_port1(int8_t new_sd_cs_state, int8_t new_lcd_ncs_state, int8_t new_esp_ncs_state, int8_t new_lcd_rst_state, int8_t new_esp_en_state, int8_t new_audio_en_state, int8_t new_sd_nen_state, int8_t new_camera_ncs_state);
 bool gpio_read(uint8_t gpio_num);
 bool iox_state_lookup(uint8_t gpio_num);
 void iox_state_set(uint8_t gpio_num, bool value);
@@ -290,12 +280,11 @@ void config_iox_ports() {
 
     // Port 0: all inputs (buttons and DVI detect)
     config_iox_port(0, 0b11111111);
-    // Port 1: outputs (SD, LCD, ESP, Audio control signals) & SD Card Detect Input
+    // Port 1: outputs (SD, LCD, ESP, Audio control signals) & Camera nCS Input
     config_iox_port(1, 0b00000000);
 
-    #warning "Remove SD Card Detect which is the first bit of port 1 and replace it with Camera CS or some other output like vibration motor"
     // Initialize IOX outputs to defaults
-    write_iox_port1(1, 1, 1, 0, 0, 0, 1, 0);
+    write_iox_port1(0, 1, 1, 0, 0, 0, 1, 1);
 
     sleep_ms(1);
     // clear any interrupt states
@@ -334,7 +323,7 @@ void read_io_expander_states(int8_t port) {
         esp_en_state   = read_buffer & (1 << (IOX_ESP_EN - 48));
         audio_en_state = read_buffer & (1 << (IOX_AUDIO_EN - 48));
         sd_nen_state   = read_buffer & (1 << (IOX_SD_nEN - 48));
-        sd_cd_state    = read_buffer & (1 << (IOX_SD_CD - 48));
+        camera_ncs_state = read_buffer & (1 << (IOX_CAMERA_nCS - 48));
     }
 }
 
@@ -365,7 +354,7 @@ void write_iox_port0(int8_t new_dvi_detect_state, int8_t new_b_start_state, int8
     write_io_expander_states(0, states);
 }
 
-void write_iox_port1(int8_t new_sd_cs_state, int8_t new_lcd_ncs_state, int8_t new_esp_ncs_state, int8_t new_lcd_rst_state, int8_t new_esp_en_state, int8_t new_audio_en_state, int8_t new_sd_nen_state, int8_t new_sd_cd_state) {
+void write_iox_port1(int8_t new_sd_cs_state, int8_t new_lcd_ncs_state, int8_t new_esp_ncs_state, int8_t new_lcd_rst_state, int8_t new_esp_en_state, int8_t new_audio_en_state, int8_t new_sd_nen_state, int8_t new_camera_ncs_state) {
     if (new_sd_cs_state != NO_UPDATE) sd_cs_state = new_sd_cs_state;
     if (new_lcd_ncs_state != NO_UPDATE) lcd_ncs_state = new_lcd_ncs_state;
     if (new_esp_ncs_state != NO_UPDATE) esp_ncs_state = new_esp_ncs_state;
@@ -373,7 +362,7 @@ void write_iox_port1(int8_t new_sd_cs_state, int8_t new_lcd_ncs_state, int8_t ne
     if (new_esp_en_state != NO_UPDATE) esp_en_state = new_esp_en_state;
     if (new_audio_en_state != NO_UPDATE) audio_en_state = new_audio_en_state;
     if (new_sd_nen_state != NO_UPDATE) sd_nen_state = new_sd_nen_state;
-    if (new_sd_cd_state != NO_UPDATE) sd_cd_state = new_sd_cd_state;
+    if (new_camera_ncs_state != NO_UPDATE) camera_ncs_state = new_camera_ncs_state;
 
     uint8_t states = get_iox_port_states(1);
     write_io_expander_states(1, states);
@@ -417,7 +406,7 @@ bool iox_state_lookup(uint8_t gpio_num) {
         case IOX_ESP_EN:     return esp_en_state;
         case IOX_AUDIO_EN:   return audio_en_state;
         case IOX_SD_nEN:     return sd_nen_state;
-        case IOX_SD_CD:      return sd_cd_state;
+        case IOX_CAMERA_nCS: return camera_ncs_state;
 
         default:
             printf("Invalid GPIO pin\n");
@@ -443,7 +432,7 @@ void iox_state_set(uint8_t gpio_num, bool value) {
         case IOX_ESP_EN:     esp_en_state = value; break;
         case IOX_AUDIO_EN:   audio_en_state = value; break;
         case IOX_SD_nEN:     sd_nen_state = value; break;
-        case IOX_SD_CD:      sd_cd_state = value; break;
+        case IOX_CAMERA_nCS: camera_ncs_state = value; break;
 
         default:
             printf("Invalid GPIO pin\n");
@@ -462,7 +451,7 @@ uint8_t get_iox_port_states(bool port) {
                (b_b_state << 1) |
                (b_a_state << 0);
     } else {
-        return (sd_cd_state << 7) |
+        return (camera_ncs_state << 7) |
                (sd_nen_state << 6) |
                (audio_en_state << 5) |
                (esp_en_state << 4) |

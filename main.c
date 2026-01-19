@@ -208,6 +208,8 @@ int main(void)
 	i2s_volume(&i2s_config,0);
 	i2s_init(&i2s_config);
 
+	volume_lut_init();	
+
 	#warning "I should really have diagnostics for all my peripherals on start up"
 	// sleep_ms(10);
 	// check_dac();

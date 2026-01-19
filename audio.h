@@ -4,6 +4,7 @@ uint16_t current_volume_level = 0;
 bool is_muted = false;
 bool headphones_present = false;
 bool prev_headphones_present = false;
+static uint8_t *vol_lut = NULL;
 void set_volume(uint8_t l_volume, uint8_t r_volume);
 void dac_i2c_write(uint8_t page, uint8_t reg, uint8_t data);
 void dac_i2c_read(uint8_t page, uint8_t reg, uint8_t *data, size_t length);
@@ -16,8 +17,14 @@ void dac_i2c_read(uint8_t page, uint8_t reg, uint8_t *data, size_t length);
 #define USE_LINEAR_VOLUME_SCALING 0
 #define RAMPED_AUDIO_EXPONENT 0.4f // if this is changed you need to change the unmute threshold.
 
-#define VOL_POLL_US        10000   // 10ms = 100Hz
-#define HP_POLL_US         50000   // 50ms = 20Hz
+// Human audible reaction time is ~160ms, so we'll stay under this value for headphone detection polling.
+// We'll stay well under for volume polling too for smoother volume changes.
+// Who knows what kind of drugs people will be on to reduce that reaction time.
+#define VOL_POLL_US        20000   // 20ms = 50Hz
+#define HP_POLL_US         100000  // 100ms = 10Hz
+
+#define VOL_LUT_SIZE 256
+
 
 void detect_headphones() {
     uint8_t data;
@@ -81,9 +88,9 @@ void read_volume() {
         // Scale to 0–DAC_MAX_VOL
         uint8_t dac_vol = (uint8_t)((adc_val * DAC_MAX_VOL) / ADC_MAX_CLIP);
 #else
-        float pot_norm = (float)adc_val / ADC_MAX_CLIP;  // 0.0–1.0
-        float dac_f = powf(pot_norm, RAMPED_AUDIO_EXPONENT) * DAC_MAX_VOL;  // exponent < 1 stretches low end
-        uint8_t dac_vol = (uint8_t)dac_f;
+        // uint8_t idx = (uint8_t)(adc_val >> 4); // 12-bit -> 8-bit
+        uint8_t idx = (uint8_t)((adc_val * (VOL_LUT_SIZE - 1)) / ADC_MAX_CLIP);
+        uint8_t dac_vol = vol_lut[idx];
 #endif
 
         if (abs((int)dac_vol - (int)current_volume_level) > 1) {
@@ -113,6 +120,8 @@ void read_volume() {
         is_muted = false;
     }
 
+    // if it ain't broke don't fix it... that's why I'm not tryna touch my mute and headphone logic
+    // gains would also be very minimal.
     if (headphones_present && !prev_headphones_present) {
         dac_i2c_write(1, 0x20, 0x00); // Class-D Amplifier powered off
     } else if (!headphones_present && prev_headphones_present && !is_muted) {
@@ -121,6 +130,30 @@ void read_volume() {
     }
     // Update the previous state for next check
     prev_headphones_present = headphones_present;
+}
+
+bool volume_lut_init(void) {
+    if (vol_lut) {
+        return true; // already initialized
+    }
+
+    vol_lut = (uint8_t *)malloc(VOL_LUT_SIZE * sizeof(uint8_t));
+    if (!vol_lut) {
+        return false; // allocation failed
+    }
+
+    for (int i = 0; i < VOL_LUT_SIZE; i++) {
+        float x = (float)i / (float)(VOL_LUT_SIZE - 1);
+        float y = powf(x, RAMPED_AUDIO_EXPONENT) * (float)DAC_MAX_VOL;
+
+        int v = (int)(y + 0.5f); // round
+        if (v < 0) v = 0;
+        if (v > DAC_MAX_VOL) v = DAC_MAX_VOL;
+
+        vol_lut[i] = (uint8_t)v;
+    }
+
+    return true;
 }
 
 

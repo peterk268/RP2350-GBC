@@ -421,21 +421,22 @@ while(true)
 #endif
 
 		// MARK: - Update buttons state
+		// Store previous joypad states
+		prev_joypad_bits.up      = gb.direct.joypad_bits.up;
+		prev_joypad_bits.down    = gb.direct.joypad_bits.down;
+		prev_joypad_bits.left    = gb.direct.joypad_bits.left;
+		prev_joypad_bits.right   = gb.direct.joypad_bits.right;
+		prev_joypad_bits.a       = gb.direct.joypad_bits.a;
+		prev_joypad_bits.b       = gb.direct.joypad_bits.b;
+		prev_joypad_bits.start   = gb.direct.joypad_bits.start;
 		prev_joypad_bits.select  = gb.direct.joypad_bits.select;
+		// Read current joypad states
 		gb.direct.joypad_bits.select  = gpio_read(GPIO_B_SELECT);
 
 		bool iox_nint = gpio_read(GPIO_IOX_nINT);
 		if (!iox_nint) {
 			// Read IOX port 0
 			read_io_expander_states(0);
-			// Store previous joypad states
-			prev_joypad_bits.up      = gb.direct.joypad_bits.up;
-			prev_joypad_bits.down    = gb.direct.joypad_bits.down;
-			prev_joypad_bits.left    = gb.direct.joypad_bits.left;
-			prev_joypad_bits.right   = gb.direct.joypad_bits.right;
-			prev_joypad_bits.a       = gb.direct.joypad_bits.a;
-			prev_joypad_bits.b       = gb.direct.joypad_bits.b;
-			prev_joypad_bits.start   = gb.direct.joypad_bits.start;
 
 			// Update joypad states with values from IOX
 			gb.direct.joypad_bits.up      = gpio_read(IOX_B_UP);
@@ -445,135 +446,135 @@ while(true)
 			gb.direct.joypad_bits.a       = gpio_read(IOX_B_A);
 			gb.direct.joypad_bits.b       = gpio_read(IOX_B_B);
 			gb.direct.joypad_bits.start   = gpio_read(IOX_B_START);
-
-			// MARK: - Hotkeys
-			// (select + * combo)
-			if(!gb.direct.joypad_bits.select) {
+		}
+		// MARK: - Hotkeys
+		// (select + * combo)
+		if(!gb.direct.joypad_bits.select) {
 #if ENABLE_SOUND
-				if(!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
-					/* select + up: increase sound volume */
-					// i2s_increase_volume(&i2s_config);
-					if (!low_power) {
+			if(!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
+				/* select + up: increase sound volume */
+				// i2s_increase_volume(&i2s_config);
+				if (!low_power) {
 #if TIE_PWR_LED_TO_LCD
-						pwr_led_duty_cycle = lcd_led_duty_cycle;
+					pwr_led_duty_cycle = lcd_led_duty_cycle;
 #endif
-						step_pwr_brightness(true);
-					}
+					step_pwr_brightness(true);
+				}
+				step_lcd_brightness(true);
+			}
+			if(!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
+				/* select + down: decrease sound volume */
+				// i2s_decrease_volume(&i2s_config);
+				if (!low_power) {
+#if TIE_PWR_LED_TO_LCD
+					pwr_led_duty_cycle = lcd_led_duty_cycle;
+#endif
+					step_pwr_brightness(false);
+				}
+				step_lcd_brightness(false);
+			}
+#endif
+			if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
+				/* select + right: increase button led brightness */
+				step_button_brightness(true);
+			}
+			if(!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
+				/* select + left: decrease button led brightness */
+				step_button_brightness(false);
+			}
+			if(!gb.direct.joypad_bits.start && prev_joypad_bits.start) {
+				/* cycle the next manual color palette: -1 → 0 → 1 … 12 → -1 */
+				if (manual_palette_selected < 12) {
+					manual_palette_selected++;
+				} else {
+					manual_palette_selected = -1; // wrap around
+				}
+
+				if (manual_palette_selected != -1) {
+					manual_assign_palette(palette, manual_palette_selected);
+				}
+			}
+			if(!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
+				/* select + A: enable/disable frame-skip => fast-forward */
+				// Peanut GB frame skip toggle puts it at 60 fps.. skipping 1 frame every other frame
+				// My implementation runs at 120 fps.
+				if (run_mode == MODE_POWERSAVE) {
+					// if run mode was power save, step back up the lcd brightness
 					step_lcd_brightness(true);
 				}
-				if(!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
-					/* select + down: decrease sound volume */
-					// i2s_decrease_volume(&i2s_config);
-					if (!low_power) {
-#if TIE_PWR_LED_TO_LCD
-						pwr_led_duty_cycle = lcd_led_duty_cycle;
-#endif
-						step_pwr_brightness(false);
-					}
-					step_lcd_brightness(false);
+				run_mode = (run_mode == MODE_TURBO) ? MODE_NORMAL : MODE_TURBO;
+				if (run_mode == MODE_TURBO) {
+					gb.direct.frame_skip = true;   // 2× speed
+					underclock_cpu(false);         // ensure full speed
+				} else {
+					gb.direct.frame_skip = false;
 				}
-#endif
-				if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
-					/* select + right: increase button led brightness */
-					step_button_brightness(true);
-				}
-				if(!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
-					/* select + left: decrease button led brightness */
-					step_button_brightness(false);
-				}
-				if(!gb.direct.joypad_bits.start && prev_joypad_bits.start) {
-					/* cycle the next manual color palette: -1 → 0 → 1 … 12 → -1 */
-					if (manual_palette_selected < 12) {
-						manual_palette_selected++;
-					} else {
-						manual_palette_selected = -1; // wrap around
-					}
-
-					if (manual_palette_selected != -1) {
-						manual_assign_palette(palette, manual_palette_selected);
-					}
-				}
-				if(!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
-					/* select + A: enable/disable frame-skip => fast-forward */
-					// Peanut GB frame skip toggle puts it at 60 fps.. skipping 1 frame every other frame
-					// My implementation runs at 120 fps.
-					if (run_mode == MODE_POWERSAVE) {
-						// if run mode was power save, step back up the lcd brightness
-						step_lcd_brightness(true);
-					}
-					run_mode = (run_mode == MODE_TURBO) ? MODE_NORMAL : MODE_TURBO;
-					if (run_mode == MODE_TURBO) {
-						gb.direct.frame_skip = true;   // 2× speed
-						underclock_cpu(false);         // ensure full speed
-					} else {
-						gb.direct.frame_skip = false;
-					}
 /* No Real need for this
 #if UNDERCLOCK_CPU_IN_NORMAL_EMULATION
-					overclock_cpu((run_mode == MODE_TURBO));
+				overclock_cpu((run_mode == MODE_TURBO));
 #endif
 #if !ENABLE_120FPS_FASTFORWARD
-					gb.direct.frame_skip = (run_mode == MODE_TURBO);
+				gb.direct.frame_skip = (run_mode == MODE_TURBO);
 #endif
 #if ENABLE_SOUND
 # if !SKIP_AUDIO_FRAMES_IN_FRAME_SKIP
-					i2s_set_sample_freq(&i2s_config, 44100, (run_mode == MODE_TURBO));
+				i2s_set_sample_freq(&i2s_config, 44100, (run_mode == MODE_TURBO));
 # endif
 #endif
 */
-					printf("Frame Skip = %d\n", (run_mode == MODE_TURBO));
-				}
-				if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
-					/* select + B: Save game ram*/
-#if ENABLE_SDCARD				
-					write_cart_ram_file(&gb, false);
-#endif				
-				}
+				printf("Frame Skip = %d\n", (run_mode == MODE_TURBO));
 			}
-			// Start + combo
-			if(!gb.direct.joypad_bits.start) {
-				// Step up wash out
-				if (!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
-					wash_out_level = increase_clamp(wash_out_level, 16);
-				}
-				// Step down wash out 
-				if (!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
-					wash_out_level = decrease_clamp(wash_out_level, 16);
-				}
-				
-				// Save State
-				if (!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
-					write_cart_save_state(&gb, false);
-				}
-				// Load State 
-				if (!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
-					read_cart_save_state(&gb);
-				}
-
-				// But currently getting like 125mW down from 195mW so it's a good start.
-				if (!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
-					/* start + B: Battery Saving Mode*/
-					if (run_mode != MODE_POWERSAVE) {
-						// enable power save
-						run_mode = MODE_POWERSAVE;
-						underclock_cpu(true);           // 180 MHz
-						step_lcd_brightness(false);     // lower brightness since lcd looks brighter with less refresh
-						gb.direct.frame_skip = true;    // skip each other frame
-					} else {
-						// disable power save → back to normal
-						run_mode = MODE_NORMAL;
-						underclock_cpu(false);
-						step_lcd_brightness(true);
-						gb.direct.frame_skip = false;
-					}
-				}
-
-				// Screenshot
-				if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
-					write_screenshot_png_from_fb(front_fb, 0, false);
-				}
+			if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
+				/* select + B: Save game ram*/
+#if ENABLE_SDCARD				
+				write_cart_ram_file(&gb, false);
+#endif				
 			}
 		}
+		// Start + combo
+		if(!gb.direct.joypad_bits.start) {
+			// Step up wash out
+			if (!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
+				wash_out_level = increase_clamp(wash_out_level, 16);
+			}
+			// Step down wash out 
+			if (!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
+				wash_out_level = decrease_clamp(wash_out_level, 16);
+			}
+			
+			// Save State
+			if (!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
+				write_cart_save_state(&gb, false);
+			}
+			// Load State 
+			if (!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
+				read_cart_save_state(&gb);
+			}
+
+			// But currently getting like 125mW down from 195mW so it's a good start.
+			if (!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
+				/* start + B: Battery Saving Mode*/
+				if (run_mode != MODE_POWERSAVE) {
+					// enable power save
+					run_mode = MODE_POWERSAVE;
+					underclock_cpu(true);           // 180 MHz
+					step_lcd_brightness(false);     // lower brightness since lcd looks brighter with less refresh
+					gb.direct.frame_skip = true;    // skip each other frame
+				} else {
+					// disable power save → back to normal
+					run_mode = MODE_NORMAL;
+					underclock_cpu(false);
+					step_lcd_brightness(true);
+					gb.direct.frame_skip = false;
+				}
+			}
+
+			// Screenshot
+			if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
+				write_screenshot_png_from_fb(front_fb, 0, false);
+			}
+		}
+
 #if ENABLE_FRAME_DEBUGGING
 		static uint32_t last_ts = 0;
 		uint32_t now = time_us_32();

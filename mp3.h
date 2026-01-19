@@ -1023,13 +1023,13 @@ static play_result_t mp3_play_single_track(const char *filepath,
             bool iox_nint    = gpio_read(GPIO_IOX_nINT);
             bool select_btn  = !gpio_read(GPIO_B_SELECT);
 
-            bool btn_a     = false;
-            bool btn_b     = false;
-            bool btn_up    = false;
-            bool btn_down  = false;
-            bool btn_left  = false;
-            bool btn_right = false;
-            bool btn_start = false;
+            static bool btn_a     = false;
+            static bool btn_b     = false;
+            static bool btn_up    = false;
+            static bool btn_down  = false;
+            static bool btn_left  = false;
+            static bool btn_right = false;
+            static bool btn_start = false;
 
 
             #define ANY_BUTTON_PRESSED \

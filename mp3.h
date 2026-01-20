@@ -51,8 +51,8 @@
 #define SEEK_HOLD_TIME_MS        350
 
 // How long you need to hold before paging instead of 1-by-1
-#define NAV_PAGE_HOLD_TIME_MS       350   // tweak to taste
-#define NAV_PAGE_REPEAT_INTERVAL_MS 600   // how often to page while held
+#define NAV_PAGE_HOLD_TIME_MS       200   // tweak to taste
+#define NAV_PAGE_REPEAT_INTERVAL_MS 3000   // how often to page while held
 
 // Maximum playlist size and path length
 #define MP3_MAX_TRACKS            4096
@@ -934,11 +934,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
     // MAIN PLAYBACK LOOP
     // ================================================================
     while (1) {
-
-        // While DMA is still sending previous buffer, do useful work
-        while (!i2s_dma_write_non_blocking(&i2s_config,
-                                           (const uint16_t *)(paused ? silence_buf : buf_ready))) {
-
             watchdog_update();
 
             if (!gpio_read(GPIO_SW_OUT)) {
@@ -966,6 +961,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             for (int i = 0;
                  i < 2 && stream->count < (MP3_STREAM_BUF_SIZE * 3 / 4) && !stream->eof;
                  i++) {
+                printf("refill\n");
                 mp3_refill(stream);
             }
 
@@ -1017,6 +1013,30 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 }
             }
 
+            static uint64_t last_i2s = 0;
+            if (i2s_dma_write_non_blocking(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_ready))) {
+                // Only rotate audio buffers when we’re actually queuing AUDIO, not silence.
+                if (!paused) {
+                    // DMA accepted buf_ready and started playing it.
+                    int16_t *old = buf_play;
+                    buf_play  = buf_ready;   // now playing
+                    buf_ready = buf_fill;    // next ready
+                    buf_fill  = old;         // to be filled
+
+                    decoded_next_chunk = false;  // decode again on next loop
+                }
+                last_i2s = time_us_64();
+            }
+            // i2s_dma_write(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_ready));
+
+            // do buttons and controls only if last i2s write was <50ms ago, if not it means we got a new write coming up (128ms)
+            // so we need to prime the buffer first before messing with controls
+            // or if less than 10ms since last controls, to avoid reading buttons too fast
+            static uint64_t last_controls_us = 0;
+            if (time_us_64() - last_i2s > 50*1000 || time_us_64() - last_controls_us < 10*1000) {
+                continue;
+            }
+            last_controls_us = time_us_64();
             // ================== BUTTONS + CONTROLS ====================
             read_volume(&i2s_config);
 
@@ -1304,16 +1324,16 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                 // we already moved -1 on press, so move -(VISIBLE_ITEMS-1)
                                 // to get a total of -VISIBLE_ITEMS from the original.
                                 up_held_paging = true;
-                                mp3_select_relative(-(VISIBLE_ITEMS - 1),
-                                                    mp3_list_obj, g_playlist, g_track_count);
+                                mp3_select_relative(-1, mp3_list_obj, g_playlist, g_track_count);
                                 up_last_page_us = now_us;
                             } else {
                                 // Optional auto-repeat paging while held
                                 uint64_t since_last_ms = (now_us - up_last_page_us) / 1000;
                                 if (since_last_ms >= NAV_PAGE_REPEAT_INTERVAL_MS) {
-                                    mp3_select_relative(-VISIBLE_ITEMS,
-                                                        mp3_list_obj, g_playlist, g_track_count);
-                                    up_last_page_us = now_us;
+                                    mp3_select_relative(-4, mp3_list_obj, g_playlist, g_track_count);
+                                    // up_last_page_us = now_us;
+                                } else {
+                                    mp3_select_relative(-1, mp3_list_obj, g_playlist, g_track_count);
                                 }
                             }
                         }
@@ -1350,16 +1370,20 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                 // already moved +1, so add +(VISIBLE_ITEMS-1)
                                 // -> net +VISIBLE_ITEMS from original.
                                 down_held_paging = true;
-                                mp3_select_relative(+(VISIBLE_ITEMS - 1),
-                                                    mp3_list_obj, g_playlist, g_track_count);
+                                // mp3_select_relative(+(VISIBLE_ITEMS - 1),
+                                //                     mp3_list_obj, g_playlist, g_track_count);
+                                mp3_select_relative(+1, mp3_list_obj, g_playlist, g_track_count);
                                 down_last_page_us = now_us;
                             } else {
                                 // Auto-repeat pages while held
                                 uint64_t since_last_ms = (now_us - down_last_page_us) / 1000;
                                 if (since_last_ms >= NAV_PAGE_REPEAT_INTERVAL_MS) {
-                                    mp3_select_relative(+VISIBLE_ITEMS,
-                                                        mp3_list_obj, g_playlist, g_track_count);
-                                    down_last_page_us = now_us;
+                                    // mp3_select_relative(+VISIBLE_ITEMS,
+                                                        // mp3_list_obj, g_playlist, g_track_count);
+                                    mp3_select_relative(+4, mp3_list_obj, g_playlist, g_track_count);
+                                    // down_last_page_us = now_us;
+                                } else {
+                                    mp3_select_relative(+1, mp3_list_obj, g_playlist, g_track_count);
                                 }
                             }
                         }
@@ -1396,9 +1420,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
             prev_btn_start  = btn_start;
             prev_btn_select = select_btn;
 
-            sleep_us(10); // small delay for timers
-            tight_loop_contents();
-        }
 
         // Now Playing shift
         static bool prev_now_playing = false;
@@ -1427,8 +1448,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
         static uint64_t last_lvgl_update = 0;
         uint64_t now = time_us_64();
         uint64_t time_since_last_update = now - last_lvgl_update;
-        if (time_since_last_update >= 10000 && !g_mp3_inactive) {   // 10 ms (100 Hz UI updates)
-            lv_tick_inc(time_since_last_update);
+        if (/*time_since_last_update >= 10000 && */!g_mp3_inactive) {   // 10 ms (100 Hz UI updates)
+            printf("%llu us\n", (unsigned long long)time_since_last_update);
+            lv_tick_inc(time_since_last_update/1000);
             lv_timer_handler();
             last_lvgl_update = now;
         }
@@ -1485,17 +1507,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
             increase_button_brightness(saved_button_brightness);
 
             prev_inactive = false;
-        }
-
-        // Only rotate audio buffers when we’re actually queuing AUDIO, not silence.
-        if (!paused) {
-            // DMA accepted buf_ready and started playing it.
-            int16_t *old = buf_play;
-            buf_play  = buf_ready;   // now playing
-            buf_ready = buf_fill;    // next ready
-            buf_fill  = old;         // to be filled
-
-            decoded_next_chunk = false;  // decode again on next loop
         }
 
         sleep_us(10); // small delay for timers

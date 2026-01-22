@@ -1037,7 +1037,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // occasional battery monitor and rtc + sd refill and mp3 decoding can add up to ~20ms
             // i2s_timeout in us, typically 139ms for 44.1kHz and 128ms for 48kHz.
             static uint64_t last_controls_us = 0;
-            if (i2s_now - last_i2s > (PCM_FRAME_COUNT*1000000ULL / mp3.sampleRate) - 70*1000 || i2s_now - last_controls_us < 10*1000) {
+            if (i2s_now - last_i2s > (PCM_FRAME_COUNT*1000000ULL / mp3.sampleRate) - 80*1000 || i2s_now - last_controls_us < 10*1000) {
                 continue;
             }
             last_controls_us = i2s_now;

@@ -262,6 +262,11 @@ typedef struct {
     uint8_t oam[OAM_SIZE];
     uint8_t hram_io[HRAM_IO_SIZE];
 
+    uint8_t gb_ime;
+    uint8_t gb_halt;
+
+    uint8_t ram[32768];
+
 #if PEANUT_FULL_GBC_SUPPORT
     struct {
         uint8_t  cgbMode;
@@ -350,6 +355,11 @@ void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy) {
 
     s.rtc_latched = gb->rtc_latched;
     s.rtc_real    = gb->rtc_real;
+    
+    s.gb_ime     = gb->gb_ime;
+    s.gb_halt    = gb->gb_halt;
+
+    memcpy(s.ram, ram, sizeof(s.ram));
 
     memcpy(s.wram,    gb->wram,    WRAM_SIZE);
     memcpy(s.vram,    gb->vram,    VRAM_SIZE);
@@ -357,32 +367,28 @@ void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy) {
     memcpy(s.hram_io, gb->hram_io, HRAM_IO_SIZE);
 
 #if PEANUT_FULL_GBC_SUPPORT
-    if (gb->cgb.cgbMode) {
-        s.cgb.cgbMode          = gb->cgb.cgbMode;
-        s.cgb.doubleSpeed      = gb->cgb.doubleSpeed;
-        s.cgb.doubleSpeedPrep  = gb->cgb.doubleSpeedPrep;
-        s.cgb.wramBank         = gb->cgb.wramBank;
-        s.cgb.wramBankOffset   = gb->cgb.wramBankOffset;
-        s.cgb.vramBank         = gb->cgb.vramBank;
-        s.cgb.vramBankOffset   = gb->cgb.vramBankOffset;
+    s.cgb.cgbMode          = gb->cgb.cgbMode;
+    s.cgb.doubleSpeed      = gb->cgb.doubleSpeed;
+    s.cgb.doubleSpeedPrep  = gb->cgb.doubleSpeedPrep;
+    s.cgb.wramBank         = gb->cgb.wramBank;
+    s.cgb.wramBankOffset   = gb->cgb.wramBankOffset;
+    s.cgb.vramBank         = gb->cgb.vramBank;
+    s.cgb.vramBankOffset   = gb->cgb.vramBankOffset;
 
-        memcpy(s.cgb.fixPalette, gb->cgb.fixPalette, sizeof(s.cgb.fixPalette));
-        memcpy(s.cgb.OAMPalette, gb->cgb.OAMPalette, sizeof(s.cgb.OAMPalette));
-        memcpy(s.cgb.BGPalette,  gb->cgb.BGPalette,  sizeof(s.cgb.BGPalette));
+    memcpy(s.cgb.fixPalette, gb->cgb.fixPalette, sizeof(s.cgb.fixPalette));
+    memcpy(s.cgb.OAMPalette, gb->cgb.OAMPalette, sizeof(s.cgb.OAMPalette));
+    memcpy(s.cgb.BGPalette,  gb->cgb.BGPalette,  sizeof(s.cgb.BGPalette));
 
-        s.cgb.OAMPaletteID     = gb->cgb.OAMPaletteID;
-        s.cgb.BGPaletteID      = gb->cgb.BGPaletteID;
-        s.cgb.OAMPaletteInc    = gb->cgb.OAMPaletteInc;
-        s.cgb.BGPaletteInc     = gb->cgb.BGPaletteInc;
+    s.cgb.OAMPaletteID     = gb->cgb.OAMPaletteID;
+    s.cgb.BGPaletteID      = gb->cgb.BGPaletteID;
+    s.cgb.OAMPaletteInc    = gb->cgb.OAMPaletteInc;
+    s.cgb.BGPaletteInc     = gb->cgb.BGPaletteInc;
 
-        s.cgb.dmaActive        = gb->cgb.dmaActive;
-        s.cgb.dmaMode          = gb->cgb.dmaMode;
-        s.cgb.dmaSize          = gb->cgb.dmaSize;
-        s.cgb.dmaSource        = gb->cgb.dmaSource;
-        s.cgb.dmaDest          = gb->cgb.dmaDest;
-    } else {
-        memset(&s.cgb, 0, sizeof(s.cgb));
-    }
+    s.cgb.dmaActive        = gb->cgb.dmaActive;
+    s.cgb.dmaMode          = gb->cgb.dmaMode;
+    s.cgb.dmaSize          = gb->cgb.dmaSize;
+    s.cgb.dmaSource        = gb->cgb.dmaSource;
+    s.cgb.dmaDest          = gb->cgb.dmaDest;
 #endif
     // End build payload
 
@@ -541,6 +547,8 @@ bool read_cart_save_state(struct gb_s *gb) {
     memcpy(gb->oam,     s.oam,     OAM_SIZE);
     memcpy(gb->hram_io, s.hram_io, HRAM_IO_SIZE);
 
+    memcpy(ram, s.ram, sizeof(s.ram));
+
     gb->cpu_reg = s.cpu_reg;
     gb->counter = s.counter;
 
@@ -552,31 +560,32 @@ bool read_cart_save_state(struct gb_s *gb) {
     gb->rtc_latched = s.rtc_latched;
     gb->rtc_real    = s.rtc_real;
 
+    gb->gb_ime     = s.gb_ime;
+    gb->gb_halt    = s.gb_halt;
+
 #if PEANUT_FULL_GBC_SUPPORT
     gb->cgb.cgbMode = s.cgb.cgbMode;
-    if (gb->cgb.cgbMode) { 
-        gb->cgb.doubleSpeed     = s.cgb.doubleSpeed;
-        gb->cgb.doubleSpeedPrep = s.cgb.doubleSpeedPrep;
-        gb->cgb.wramBank        = s.cgb.wramBank;
-        gb->cgb.wramBankOffset  = s.cgb.wramBankOffset;
-        gb->cgb.vramBank        = s.cgb.vramBank;
-        gb->cgb.vramBankOffset  = s.cgb.vramBankOffset;
+    gb->cgb.doubleSpeed     = s.cgb.doubleSpeed;
+    gb->cgb.doubleSpeedPrep = s.cgb.doubleSpeedPrep;
+    gb->cgb.wramBank        = s.cgb.wramBank;
+    gb->cgb.wramBankOffset  = s.cgb.wramBankOffset;
+    gb->cgb.vramBank        = s.cgb.vramBank;
+    gb->cgb.vramBankOffset  = s.cgb.vramBankOffset;
 
-        memcpy(gb->cgb.fixPalette, s.cgb.fixPalette, sizeof(s.cgb.fixPalette));
-        memcpy(gb->cgb.OAMPalette, s.cgb.OAMPalette, sizeof(s.cgb.OAMPalette));
-        memcpy(gb->cgb.BGPalette,  s.cgb.BGPalette,  sizeof(s.cgb.BGPalette));
+    memcpy(gb->cgb.fixPalette, s.cgb.fixPalette, sizeof(s.cgb.fixPalette));
+    memcpy(gb->cgb.OAMPalette, s.cgb.OAMPalette, sizeof(s.cgb.OAMPalette));
+    memcpy(gb->cgb.BGPalette,  s.cgb.BGPalette,  sizeof(s.cgb.BGPalette));
 
-        gb->cgb.OAMPaletteID    = s.cgb.OAMPaletteID;
-        gb->cgb.BGPaletteID     = s.cgb.BGPaletteID;
-        gb->cgb.OAMPaletteInc   = s.cgb.OAMPaletteInc;
-        gb->cgb.BGPaletteInc    = s.cgb.BGPaletteInc;
+    gb->cgb.OAMPaletteID    = s.cgb.OAMPaletteID;
+    gb->cgb.BGPaletteID     = s.cgb.BGPaletteID;
+    gb->cgb.OAMPaletteInc   = s.cgb.OAMPaletteInc;
+    gb->cgb.BGPaletteInc    = s.cgb.BGPaletteInc;
 
-        gb->cgb.dmaActive       = s.cgb.dmaActive;
-        gb->cgb.dmaMode         = s.cgb.dmaMode;
-        gb->cgb.dmaSize         = s.cgb.dmaSize;
-        gb->cgb.dmaSource       = s.cgb.dmaSource;
-        gb->cgb.dmaDest         = s.cgb.dmaDest;
-    }
+    gb->cgb.dmaActive       = s.cgb.dmaActive;
+    gb->cgb.dmaMode         = s.cgb.dmaMode;
+    gb->cgb.dmaSize         = s.cgb.dmaSize;
+    gb->cgb.dmaSource       = s.cgb.dmaSource;
+    gb->cgb.dmaDest         = s.cgb.dmaDest;
 #endif
     // ---- END APPLY RESTORE ----
 

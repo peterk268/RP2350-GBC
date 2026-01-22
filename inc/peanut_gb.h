@@ -1745,9 +1745,14 @@ void __gb_draw_line(struct gb_s *gb)
             tile += 2 * py;
         }
 
-        // fetch first tile row
-        t1 = gb->vram[tile] >> px;
-        t2 = gb->vram[tile + 1] >> px;
+		// fetch first tile row (must match HFLIP expectations)
+		if (gb->cgb.cgbMode && (idxAtt & 0x20)) {  // HFlip
+			t1 = gb->vram[tile] << px;
+			t2 = gb->vram[tile + 1] << px;
+		} else {
+			t1 = gb->vram[tile] >> px;
+			t2 = gb->vram[tile + 1] >> px;
+		}
 
         for (; disp_x != 0xFF; disp_x--)
         {

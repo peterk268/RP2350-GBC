@@ -52,7 +52,7 @@
 
 // How long you need to hold before paging instead of 1-by-1
 #define NAV_PAGE_HOLD_TIME_MS       200   // tweak to taste
-#define NAV_PAGE_REPEAT_INTERVAL_MS 3000   // how often to page while held
+#define NAV_PAGE_REPEAT_INTERVAL_MS 2000   // how often to page while held
 
 // Maximum playlist size and path length
 #define MP3_MAX_TRACKS            4096
@@ -1014,6 +1014,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             }
 
             static uint64_t last_i2s = 0;
+            uint64_t i2s_now = time_us_64();
             if (i2s_dma_write_non_blocking(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_ready))) {
                 // Only rotate audio buffers when we’re actually queuing AUDIO, not silence.
                 if (!paused) {
@@ -1025,18 +1026,19 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
                     decoded_next_chunk = false;  // decode again on next loop
                 }
-                last_i2s = time_us_64();
+                last_i2s = i2s_now;
             }
             // i2s_dma_write(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_ready));
 
             // do buttons and controls only if last i2s write was <50ms ago, if not it means we got a new write coming up (128ms)
             // so we need to prime the buffer first before messing with controls
             // or if less than 10ms since last controls, to avoid reading buttons too fast
+            // lvgl updates usually add ~40ms to the loop time
             static uint64_t last_controls_us = 0;
-            if (time_us_64() - last_i2s > 50*1000 || time_us_64() - last_controls_us < 10*1000) {
+            if (i2s_now - last_i2s > 50*1000 || i2s_now - last_controls_us < 10*1000) {
                 continue;
             }
-            last_controls_us = time_us_64();
+            last_controls_us = i2s_now;
             // ================== BUTTONS + CONTROLS ====================
             read_volume(&i2s_config);
 

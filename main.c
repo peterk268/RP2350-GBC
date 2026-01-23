@@ -60,6 +60,7 @@
 #include "mp3.h"
 #include "imu.h"
 #include "imu_dash.h"
+#include "in_game_menu.h"
 
 int main(void)
 {	
@@ -456,124 +457,74 @@ while(true)
 			if(!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
 				/* select + up: increase sound volume */
 				// i2s_increase_volume(&i2s_config);
-				if (!low_power) {
-#if TIE_PWR_LED_TO_LCD
-					pwr_led_duty_cycle = lcd_led_duty_cycle;
-#endif
-					step_pwr_brightness(true);
-				}
-				step_lcd_brightness(true);
+				in_game_increase_lcd_brightness();
 			}
 			if(!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
 				/* select + down: decrease sound volume */
 				// i2s_decrease_volume(&i2s_config);
-				if (!low_power) {
-#if TIE_PWR_LED_TO_LCD
-					pwr_led_duty_cycle = lcd_led_duty_cycle;
-#endif
-					step_pwr_brightness(false);
-				}
-				step_lcd_brightness(false);
+				in_game_decrease_lcd_brightness();
 			}
 #endif
 			if(!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
 				/* select + right: increase button led brightness */
-				step_button_brightness(true);
+				in_game_increase_button_brightness();
 			}
 			if(!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
 				/* select + left: decrease button led brightness */
-				step_button_brightness(false);
+				in_game_decrease_button_brightness();
 			}
-			if(!gb.direct.joypad_bits.start && prev_joypad_bits.start) {
-				/* cycle the next manual color palette: -1 → 0 → 1 … 12 → -1 */
-				if (manual_palette_selected < 12) {
-					manual_palette_selected++;
-				} else {
-					manual_palette_selected = -1; // wrap around
-				}
 
-				if (manual_palette_selected != -1) {
-					manual_assign_palette(palette, manual_palette_selected);
-				}
+			// in game menu
+			if(!gb.direct.joypad_bits.start && prev_joypad_bits.start) {
+				in_game_menu();
+				// we need to invalidate the previous button press of start + select and now b
+				gb.direct.joypad_bits.start = true;
+				gb.direct.joypad_bits.select = true;
+				prev_joypad_bits.start = true;
+				prev_joypad_bits.select = true;
+
+				gb.direct.joypad_bits.b = true;
+				prev_joypad_bits.b = true;
 			}
+
 			if(!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
 				/* select + A: enable/disable frame-skip => fast-forward */
-				// Peanut GB frame skip toggle puts it at 60 fps.. skipping 1 frame every other frame
-				// My implementation runs at 120 fps.
-				if (run_mode == MODE_POWERSAVE) {
-					// if run mode was power save, step back up the lcd brightness
-					step_lcd_brightness(true);
-				}
-				run_mode = (run_mode == MODE_TURBO) ? MODE_NORMAL : MODE_TURBO;
-				if (run_mode == MODE_TURBO) {
-					gb.direct.frame_skip = true;   // 2× speed
-					underclock_cpu(false);         // ensure full speed
-				} else {
-					gb.direct.frame_skip = false;
-				}
-/* No Real need for this
-#if UNDERCLOCK_CPU_IN_NORMAL_EMULATION
-				overclock_cpu((run_mode == MODE_TURBO));
-#endif
-#if !ENABLE_120FPS_FASTFORWARD
-				gb.direct.frame_skip = (run_mode == MODE_TURBO);
-#endif
-#if ENABLE_SOUND
-# if !SKIP_AUDIO_FRAMES_IN_FRAME_SKIP
-				i2s_set_sample_freq(&i2s_config, 44100, (run_mode == MODE_TURBO));
-# endif
-#endif
-*/
-				printf("Frame Skip = %d\n", (run_mode == MODE_TURBO));
+				in_game_toggle_fast_forward();
 			}
 			if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
 				/* select + B: Save game ram*/
-#if ENABLE_SDCARD				
-				write_cart_ram_file(&gb, false);
-#endif				
+				in_game_save_game();
 			}
 		}
 		// Start + combo
 		if(!gb.direct.joypad_bits.start) {
 			// Step up wash out
 			if (!gb.direct.joypad_bits.up && prev_joypad_bits.up) {
-				wash_out_level = increase_clamp(wash_out_level, 16);
+				in_game_increase_washout();
 			}
 			// Step down wash out 
 			if (!gb.direct.joypad_bits.down && prev_joypad_bits.down) {
-				wash_out_level = decrease_clamp(wash_out_level, 16);
+				in_game_decrease_washout();
 			}
 			
 			// Save State
 			if (!gb.direct.joypad_bits.left && prev_joypad_bits.left) {
-				write_cart_save_state(&gb, false);
+				in_game_save_state();
 			}
 			// Load State 
 			if (!gb.direct.joypad_bits.right && prev_joypad_bits.right) {
-				read_cart_save_state(&gb);
+				in_game_load_state();
 			}
 
 			// But currently getting like 125mW down from 195mW so it's a good start.
 			if (!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
 				/* start + B: Battery Saving Mode*/
-				if (run_mode != MODE_POWERSAVE) {
-					// enable power save
-					run_mode = MODE_POWERSAVE;
-					underclock_cpu(true);           // 180 MHz
-					step_lcd_brightness(false);     // lower brightness since lcd looks brighter with less refresh
-					gb.direct.frame_skip = true;    // skip each other frame
-				} else {
-					// disable power save → back to normal
-					run_mode = MODE_NORMAL;
-					underclock_cpu(false);
-					step_lcd_brightness(true);
-					gb.direct.frame_skip = false;
-				}
+				in_game_toggle_battery_save_mode();
 			}
 
 			// Screenshot
 			if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
-				write_screenshot_png_from_fb(front_fb, 0, false);
+				in_game_screenshot();
 			}
 		}
 

@@ -97,6 +97,8 @@ static uint32_t fps_counter = 0;
 static uint32_t fps_last_time = 0;
 #endif
 
+static volatile bool g_in_game_menu = false;
+
 bool should_skip_audio_frame = false;
 
 static enum {
@@ -129,7 +131,7 @@ void overclock_cpu(bool enable) {
     }
 }
 
-// Clocking CPU to 260MHz similar to an earlier version of the Pico Pal with the RP2040
+// Clocking CPU to 180MHz with frame skip on for 30fps gameplay with reduced sound quality.
 // More advanced GBC games will not reach 60fps with this and need 300MHz.
 // This does save good power, up to 100mW which equates to ~1.75h more battery life at mid level consumption,
 //  so it's useful in a low power mode for non-demanding games like Pokemon.

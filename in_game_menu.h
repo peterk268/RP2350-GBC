@@ -1,0 +1,570 @@
+#define UNDERCLOCK_IN_GAME_MENU 0
+
+void in_game_increase_lcd_brightness() {
+    if (!low_power) {
+#if TIE_PWR_LED_TO_LCD
+        pwr_led_duty_cycle = lcd_led_duty_cycle;
+#endif
+        step_pwr_brightness(true);
+    }
+    step_lcd_brightness(true);
+}
+
+void in_game_decrease_lcd_brightness() {
+    if (!low_power) {
+#if TIE_PWR_LED_TO_LCD
+        pwr_led_duty_cycle = lcd_led_duty_cycle;
+#endif
+        step_pwr_brightness(false);
+    }
+    step_lcd_brightness(false);
+}
+
+void in_game_increase_button_brightness() {
+    step_button_brightness(true);
+}
+void in_game_decrease_button_brightness() {
+    step_button_brightness(false);
+}
+
+void in_game_cycle_color_palette() {
+    /* cycle the next manual color palette: -1 → 0 → 1 … 12 → -1 */
+    if (manual_palette_selected < 12) {
+    	manual_palette_selected++;
+    } else {
+    	manual_palette_selected = -1; // wrap around
+    }
+
+    if (manual_palette_selected != -1) {
+    	manual_assign_palette(palette, manual_palette_selected);
+    }
+}
+
+void in_game_toggle_fast_forward() {
+    // Peanut GB frame skip toggle puts it at 60 fps.. skipping 1 frame every other frame
+    // My implementation runs at 120 fps.
+    if (run_mode == MODE_POWERSAVE) {
+        // if run mode was power save, step back up the lcd brightness
+        step_lcd_brightness(true);
+    }
+    run_mode = (run_mode == MODE_TURBO) ? MODE_NORMAL : MODE_TURBO;
+    if (run_mode == MODE_TURBO) {
+        gb.direct.frame_skip = true;   // 2× speed
+        underclock_cpu(false);         // ensure full speed
+    } else {
+        gb.direct.frame_skip = false;
+    }
+/* No Real need for this
+#if UNDERCLOCK_CPU_IN_NORMAL_EMULATION
+    overclock_cpu((run_mode == MODE_TURBO));
+#endif
+#if !ENABLE_120FPS_FASTFORWARD
+    gb.direct.frame_skip = (run_mode == MODE_TURBO);
+#endif
+#if ENABLE_SOUND
+# if !SKIP_AUDIO_FRAMES_IN_FRAME_SKIP
+    i2s_set_sample_freq(&i2s_config, 44100, (run_mode == MODE_TURBO));
+# endif
+#endif
+*/
+    printf("Frame Skip = %d\n", (run_mode == MODE_TURBO));
+}
+
+void in_game_save_game() {
+#if ENABLE_SDCARD				
+    write_cart_ram_file(&gb, false);
+#endif				
+}
+
+void in_game_increase_washout() {
+    wash_out_level = increase_clamp(wash_out_level, 16);
+}
+void in_game_decrease_washout() {
+    wash_out_level = decrease_clamp(wash_out_level, 16);
+}
+
+void in_game_save_state() {
+    write_cart_save_state(&gb, false);
+}
+void in_game_load_state() {
+    read_cart_save_state(&gb);
+}
+
+void in_game_toggle_battery_save_mode() {
+    if (run_mode != MODE_POWERSAVE) {
+        // enable power save
+        run_mode = MODE_POWERSAVE;
+        underclock_cpu(true);           // 180 MHz
+        step_lcd_brightness(false);     // lower brightness since lcd looks brighter with less refresh
+        gb.direct.frame_skip = true;    // skip each other frame
+    } else {
+        // disable power save → back to normal
+        run_mode = MODE_NORMAL;
+        underclock_cpu(false);
+        step_lcd_brightness(true);
+        gb.direct.frame_skip = false;
+    }
+}
+
+void in_game_screenshot() {
+    write_screenshot_png_from_fb(front_fb, 0, false);
+}
+
+
+// ================================================================
+// In-game menu item model
+// ================================================================
+#define IG_VISIBLE_ITEMS 9
+
+typedef enum {
+    IG_ITEM_SLIDER,
+    IG_ITEM_TOGGLE,
+    IG_ITEM_VALUE,
+    IG_ITEM_ACTION
+} ig_item_type_t;
+
+typedef enum {
+    IG_ACT_NONE = 0,
+    IG_ACT_EXIT_SAVE,
+    IG_ACT_EXIT_NOSAVE,
+    IG_ACT_SLEEP
+} ig_menu_action_t;
+
+typedef struct {
+    const char        *label;
+    ig_item_type_t     type;
+
+    // for rendering current state/value (optional)
+    void (*get_value_text)(char *out, size_t out_sz);
+
+    // controls
+    void (*inc)(void);
+    void (*dec)(void);
+    void (*press_a)(void);
+
+    // for actions that should exit menu/game
+    ig_menu_action_t   action;
+} ig_menu_item_t;
+
+// ================================================================
+// Button edge helpers (your buttons are active-low)
+// curr==false means pressed
+// ================================================================
+static inline bool pressed_edge(bool prev_level, bool curr_level) {
+    return (prev_level == true) && (curr_level == false);
+}
+
+// ================================================================
+// Small UI helpers
+// ================================================================
+static void make_slider_bar(char *out, size_t out_sz, int value, int max, int bars) {
+    if (max <= 0) max = 1;
+    if (value < 0) value = 0;
+    if (value > max) value = max;
+
+    int filled = (value * bars) / max;
+    if (filled < 0) filled = 0;
+    if (filled > bars) filled = bars;
+
+    // example: [|||||....]
+    size_t idx = 0;
+    if (out_sz < 4) { if (out_sz) out[0] = 0; return; }
+    out[idx++] = '[';
+    for (int i = 0; i < bars && idx + 2 < out_sz; i++) out[idx++] = (i < filled) ? '|' : '.';
+    out[idx++] = ']';
+    out[idx] = 0;
+}
+
+// ================================================================
+// Value text getters (render on the right side of the row)
+// ================================================================
+static void ig_get_lcd_brightness_text(char *out, size_t out_sz) {
+    // If you have a better "current brightness level" variable, use it here.
+    // Using lcd_led_duty_cycle as a proxy.
+    char bar[32];
+    make_slider_bar(bar, sizeof(bar), (int)lcd_led_duty_cycle, (int)MAX_BRIGHTNESS, 10);
+    snprintf(out, out_sz, "%s %u", bar, (unsigned)lcd_led_duty_cycle);
+}
+
+static void ig_get_btn_brightness_text(char *out, size_t out_sz) {
+    char bar[32];
+    make_slider_bar(bar, sizeof(bar), (int)button_led_duty_cycle, (int)MAX_BRIGHTNESS, 10);
+    snprintf(out, out_sz, "%s %u", bar, (unsigned)button_led_duty_cycle);
+}
+
+static void ig_get_fast_forward_text(char *out, size_t out_sz) {
+    bool on = (run_mode == MODE_TURBO);
+    snprintf(out, out_sz, "%s", on ? "ON" : "OFF");
+}
+
+static void ig_get_battery_save_text(char *out, size_t out_sz) {
+    bool on = (run_mode == MODE_POWERSAVE);
+    snprintf(out, out_sz, "%s", on ? "ON" : "OFF");
+}
+
+static void ig_get_palette_text(char *out, size_t out_sz) {
+    if (manual_palette_selected < 0) snprintf(out, out_sz, "Auto");
+    else snprintf(out, out_sz, "%d", manual_palette_selected);
+}
+
+static void ig_get_washout_text(char *out, size_t out_sz) {
+    char bar[32];
+    make_slider_bar(bar, sizeof(bar), (int)wash_out_level, 16, 10);
+    snprintf(out, out_sz, "%s %u/16", bar, (unsigned)wash_out_level);
+}
+
+// ================================================================
+// Missing decrement for palette (since you wanted left/right)
+// ================================================================
+static void in_game_prev_color_palette(void) {
+    // cycle previous: -1 <- 0 <- 1 ... 12 <- -1
+    if (manual_palette_selected > -1) manual_palette_selected--;
+    else manual_palette_selected = 12;
+
+    if (manual_palette_selected != -1) {
+        manual_assign_palette(palette, manual_palette_selected);
+    }
+}
+static void in_game_next_color_palette(void) {
+    in_game_cycle_color_palette();
+}
+
+// ================================================================
+// Washout wrap behavior for A (cycle upward, wrap to 0)
+// Left/right keep clamp behavior via your helpers.
+// ================================================================
+static void in_game_cycle_washout(void) {
+    if (wash_out_level < 16) wash_out_level++;
+    else wash_out_level = 0;
+}
+
+// ================================================================
+// Run mode setters: guarantee mutual exclusivity and consistent side effects
+// ================================================================
+static void ig_set_mode_normal(void) {
+    if (run_mode == MODE_POWERSAVE) {
+        // restoring from powersave
+        underclock_cpu(false);
+        step_lcd_brightness(true);
+    }
+    run_mode = MODE_NORMAL;
+    gb.direct.frame_skip = false;
+}
+
+static void ig_set_mode_turbo(void) {
+    if (run_mode == MODE_POWERSAVE) {
+        // leaving powersave -> restore brightness/cpu first
+        underclock_cpu(false);
+        step_lcd_brightness(true);
+    }
+    run_mode = MODE_TURBO;
+    gb.direct.frame_skip = true;
+    underclock_cpu(false);
+}
+
+static void ig_set_mode_powersave(void) {
+    // If we were turbo, we’re switching modes anyway. Just force powersave behavior.
+    run_mode = MODE_POWERSAVE;
+    underclock_cpu(true);
+    step_lcd_brightness(false);
+    gb.direct.frame_skip = true;
+}
+
+// Replace your toggles with these (or call these inside them)
+static void ig_toggle_fast_forward(void) {
+    if (run_mode == MODE_TURBO) ig_set_mode_normal();
+    else ig_set_mode_turbo(); // this implicitly disables powersave
+}
+
+static void ig_toggle_battery_save(void) {
+    if (run_mode == MODE_POWERSAVE) ig_set_mode_normal();
+    else ig_set_mode_powersave(); // this implicitly disables turbo
+}
+
+// ================================================================
+// In-game list draw (9 visible items, paging)
+// ================================================================
+static void draw_in_game_options_list(lv_obj_t *list,
+                                     const ig_menu_item_t *items,
+                                     int item_count,
+                                     int selected,
+                                     int page_start)
+{
+    lv_obj_clean(list);
+
+    for (int i = 0; i < IG_VISIBLE_ITEMS && (i + page_start) < item_count; i++) {
+        int idx = i + page_start;
+
+        // Build row text: "Label    <value>"
+        char value[64] = {0};
+        if (items[idx].get_value_text) items[idx].get_value_text(value, sizeof(value));
+
+        char row[128];
+        if (value[0]) snprintf(row, sizeof(row), "%s  %s", items[idx].label, value);
+        else          snprintf(row, sizeof(row), "%s", items[idx].label);
+
+        lv_obj_t *row_obj = lv_list_add_text(list, row);
+        lv_obj_set_style_text_font(row_obj, LV_FONT_DEFAULT, 0);
+        lv_obj_set_style_text_color(row_obj, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(row_obj, lv_color_hex(0xFFFFFF), 0);
+
+        if (idx == selected) {
+            lv_obj_set_style_bg_color(row_obj, lv_color_hex(0x33CC66), LV_PART_MAIN);
+            lv_obj_set_style_text_color(row_obj, lv_color_black(), 0);
+            lv_label_set_long_mode(row_obj, LV_LABEL_LONG_SCROLL_CIRCULAR);
+            lv_obj_set_style_anim_speed(row_obj, 20, 0);
+        } else {
+            lv_obj_set_width(row_obj, DISP_HOR_RES - 30);
+            lv_label_set_long_mode(row_obj, LV_LABEL_LONG_CLIP);
+        }
+    }
+}
+
+static void ig_update_hints(const ig_menu_item_t *it, lv_obj_t *hint_left, lv_obj_t *hint_right) {
+    // Left hint = what A does
+    // Right hint = what B does (you already want B = Exit Menu)
+    lv_label_set_text(hint_right, "B: Exit Menu");
+
+    switch (it->type) {
+        case IG_ITEM_ACTION: lv_label_set_text(hint_left,  "A: Select"); break;
+        case IG_ITEM_TOGGLE: lv_label_set_text(hint_left,  "A: Toggle"); break;
+        case IG_ITEM_SLIDER: lv_label_set_text(hint_left,  "L/R: -/+"); break;
+        case IG_ITEM_VALUE:  lv_label_set_text(hint_left,  "L/R: -/+");  break;
+        default:             lv_label_set_text(hint_left,  ""); break;
+    }
+}
+
+void in_game_menu() {
+#if UNDERCLOCK_IN_GAME_MENU
+    hyper_underclock_cpu(true); // reduce CPU speed for menu
+#endif
+
+    // Essential
+    lv_deinit();
+    sleep_ms(50);
+
+    lv_color_t *buf = (lv_color_t *)front_fb->data;
+
+    // Create list
+    lv_init();
+
+    static lv_disp_draw_buf_t draw_buf;
+    lv_disp_draw_buf_init(&draw_buf, buf, NULL, DISP_HOR_RES * LV_BUF_LINES);
+
+    lv_disp_drv_init(&disp_drv);
+    disp_drv.hor_res = DISP_HOR_RES;
+    disp_drv.ver_res = DISP_VER_RES;
+    disp_drv.flush_cb = lvgl_flush_cb;
+    disp_drv.draw_buf = &draw_buf;
+
+    lv_disp_t *disp = lv_disp_drv_register(&disp_drv);
+    (void)disp;
+
+    // Create a container to hold UI
+    lv_obj_t *cont = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(cont, DISP_HOR_RES, DISP_VER_RES);
+    lv_obj_center(cont);
+    lv_obj_set_style_bg_color(cont, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_scrollbar_mode(cont, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0xFFFFFF), 0);
+
+    // === Options List ===
+    lv_obj_t *list = lv_list_create(cont);
+    lv_obj_set_size(list, DISP_HOR_RES, DISP_VER_RES - 20);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 7);
+    lv_obj_set_style_bg_color(list, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(list, lv_color_black(), 0);
+    lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+
+    lv_obj_t *status_label;
+    lv_obj_t *top_bar = create_top_bar(cont, &status_label);
+    (void)top_bar;
+
+    update_status_label(status_label);
+
+    // === Bottom hint bar ===
+    lv_obj_t *hint_left;
+    lv_obj_t *hint_right;
+    lv_obj_t *hint_bar = create_bottom_bar(cont, &hint_left, &hint_right);
+    (void)hint_bar;
+
+    // ================================================================
+    // Define menu items
+    // ================================================================
+    static ig_menu_item_t menu_items[] = {
+        { "Display Brightness", IG_ITEM_SLIDER, ig_get_lcd_brightness_text,
+            in_game_increase_lcd_brightness, in_game_decrease_lcd_brightness, in_game_increase_lcd_brightness, IG_ACT_NONE },
+
+        { "Button Brightness",  IG_ITEM_SLIDER, ig_get_btn_brightness_text,
+            in_game_increase_button_brightness, in_game_decrease_button_brightness, in_game_increase_button_brightness, IG_ACT_NONE },
+
+        { "Save Game",      IG_ITEM_ACTION, NULL, NULL, NULL, in_game_save_game, IG_ACT_NONE },
+        { "Save State",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_save_state, IG_ACT_NONE },
+        { "Load State",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_load_state, IG_ACT_NONE },
+        { "Screenshot",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_screenshot, IG_ACT_NONE },
+
+        { "Fast Forward",   IG_ITEM_TOGGLE, ig_get_fast_forward_text,
+            ig_toggle_fast_forward, ig_toggle_fast_forward, ig_toggle_fast_forward, IG_ACT_NONE },
+
+        { "Battery Saving", IG_ITEM_TOGGLE, ig_get_battery_save_text,
+            ig_toggle_battery_save, ig_toggle_battery_save, ig_toggle_battery_save, IG_ACT_NONE },
+
+        { "Color Palette",  IG_ITEM_VALUE,  ig_get_palette_text,
+            in_game_next_color_palette, in_game_prev_color_palette, in_game_next_color_palette, IG_ACT_NONE },
+
+        { "Wash Out",       IG_ITEM_SLIDER, ig_get_washout_text,
+            in_game_increase_washout, in_game_decrease_washout, in_game_cycle_washout, IG_ACT_NONE },
+
+        { "Exit Game & Save", IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_SAVE },
+        { "Exit Game w/o Save",    IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_NOSAVE },
+        { "Go to Sleep",      IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_SLEEP },
+    };
+    const int menu_count = (int)(sizeof(menu_items) / sizeof(menu_items[0]));
+
+    int selected = 0;
+    int page_start = 0;
+
+    draw_in_game_options_list(list, menu_items, menu_count, selected, page_start);
+    ig_update_hints(&menu_items[selected], hint_left, hint_right);
+
+    ig_menu_action_t requested_action = IG_ACT_NONE;
+
+    // Buttons (active-low levels)
+    bool up = true, down = true, left = true, right = true, a = true, b = true, select_btn = true, start = true;
+    bool prev_up = true, prev_down = true, prev_left = true, prev_right = true;
+    bool prev_a = true, prev_b = true, prev_start = true, prev_select = true;
+
+    // LVGL tick baseline (prevents huge first dt)
+    static uint64_t last_lvgl_tick = 0;
+    last_lvgl_tick = time_us_64();
+
+    while (1) {
+
+#if ENABLE_BAT_MONITORING
+        if (battery_task_flag) {
+            battery_task_flag = false;
+            process_bat_percent();
+            update_status_label(status_label);
+        }
+#endif
+
+        bool iox_nint = gpio_read(GPIO_IOX_nINT);
+        select_btn = gpio_read(GPIO_B_SELECT);
+
+        if (!iox_nint) {
+            read_io_expander_states(0);
+
+            a     = gpio_read(IOX_B_A);
+            b     = gpio_read(IOX_B_B);
+            up    = gpio_read(IOX_B_UP);
+            down  = gpio_read(IOX_B_DOWN);
+            left  = gpio_read(IOX_B_LEFT);
+            right = gpio_read(IOX_B_RIGHT);
+            start = gpio_read(IOX_B_START);
+        }
+
+        // Exit menu on B or power switch out or low power shutdown
+        if (!b || !gpio_read(GPIO_SW_OUT) || low_power_shutdown) {
+#if UNDERCLOCK_IN_GAME_MENU
+            underclock_cpu(false); // restore CPU speed
+#endif
+            while(!b && gpio_read(GPIO_SW_OUT) && !low_power_shutdown) {
+                if (!iox_nint) {
+                    read_io_expander_states(0);
+                    b = gpio_read(IOX_B_B);
+                }
+                watchdog_update();
+                tight_loop_contents();
+            }
+            sleep_ms(10);
+            break;
+        }
+
+        // ============================================================
+        // Input edges (active-low)
+        // ============================================================
+        bool up_edge    = pressed_edge(prev_up, up);
+        bool down_edge  = pressed_edge(prev_down, down);
+        bool left_edge  = pressed_edge(prev_left, left);
+        bool right_edge = pressed_edge(prev_right, right);
+        bool a_edge     = pressed_edge(prev_a, a);
+
+        // Move selection
+        if (up_edge) {
+            if (selected > 0) selected--;
+            if (selected < page_start) page_start = selected;
+        }
+        if (down_edge) {
+            if (selected < (menu_count - 1)) selected++;
+            if (selected >= (page_start + IG_VISIBLE_ITEMS)) page_start = selected - (IG_VISIBLE_ITEMS - 1);
+        }
+
+        ig_menu_item_t *it = &menu_items[selected];
+
+        // Adjust current item
+        if (left_edge && it->dec)  it->dec();
+        if (right_edge && it->inc) it->inc();
+
+        // A action
+        if (a_edge) {
+            if (it->type == IG_ITEM_ACTION) {
+                if (it->action != IG_ACT_NONE) {
+                    requested_action = it->action;
+                    break;
+                } else if (it->press_a) {
+                    it->press_a();
+                }
+            } else {
+                if (it->press_a) it->press_a();
+            }
+        }
+
+        // Redraw only if something changed
+        if (up_edge || down_edge || left_edge || right_edge || a_edge) {
+            draw_in_game_options_list(list, menu_items, menu_count, selected, page_start);
+            ig_update_hints(it, hint_left, hint_right);
+        }
+
+        // Save states for edge detection
+        prev_up = up; prev_down = down; prev_left = left; prev_right = right;
+        prev_a = a; prev_b = b; prev_start = start; prev_select = select_btn;
+
+        // LVGL tick
+        uint64_t now = time_us_64();
+        uint64_t dt_ms = (now - last_lvgl_tick) / 1000;
+        last_lvgl_tick = now;
+
+        lv_tick_inc((uint32_t)dt_ms);
+        lv_timer_handler();
+
+        watchdog_update();
+        sleep_ms(5);
+        tight_loop_contents();
+    }
+
+    lv_deinit();
+    sleep_ms(20);
+
+#if UNDERCLOCK_IN_GAME_MENU
+    underclock_cpu(false);
+#endif
+
+    // Handle requested_action however you prefer:
+    // - IG_ACT_EXIT_SAVE: save battery + exit to ROM selector
+    // - IG_ACT_EXIT_NOSAVE: exit without saving
+    // - IG_ACT_SLEEP: enter sleep mode
+    //
+    // For now, just example stubs:
+    if (requested_action == IG_ACT_EXIT_SAVE) {
+        in_game_save_game();
+        // goto out;
+        // set a global flag your main loop checks, or call your exit routine
+        // g_request_exit_to_menu = true;
+    } else if (requested_action == IG_ACT_EXIT_NOSAVE) {
+        // g_request_exit_to_menu = true;
+        // goto out;
+    } else if (requested_action == IG_ACT_SLEEP) {
+        // g_request_sleep = true;
+    }
+}

@@ -107,7 +107,7 @@ void in_game_toggle_battery_save_mode() {
 }
 
 void in_game_screenshot() {
-    write_screenshot_png_from_fb(front_fb, 0, false);
+    write_screenshot_png_from_fb(g_in_game_menu ? free_fb : front_fb, 0, false);
 }
 
 
@@ -335,6 +335,8 @@ static void ig_update_hints(const ig_menu_item_t *it, lv_obj_t *hint_left, lv_ob
 }
 
 void in_game_menu() {
+    g_in_game_menu = true;
+
 #if UNDERCLOCK_IN_GAME_MENU
     hyper_underclock_cpu(true); // reduce CPU speed for menu
 #endif
@@ -343,13 +345,17 @@ void in_game_menu() {
     lv_deinit();
     sleep_ms(50);
 
-    lv_color_t *buf = (lv_color_t *)front_fb->data;
+    // To hold the gameplay frame for the screenshot
+    memcpy(&free_fb->data[0][0], &front_fb->data[0][0], sizeof(front_fb->data));
+
+    lvgl_fb = front_fb->data;
+    lv_buf1 = (lv_color_t *)write_fb->data;
 
     // Create list
     lv_init();
 
     static lv_disp_draw_buf_t draw_buf;
-    lv_disp_draw_buf_init(&draw_buf, buf, NULL, DISP_HOR_RES * LV_BUF_LINES);
+    lv_disp_draw_buf_init(&draw_buf, lv_buf1, NULL, DISP_HOR_RES * LV_BUF_LINES);
 
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res = DISP_HOR_RES;
@@ -567,4 +573,6 @@ void in_game_menu() {
     } else if (requested_action == IG_ACT_SLEEP) {
         // g_request_sleep = true;
     }
+
+    g_in_game_menu = false;
 }

@@ -305,12 +305,12 @@ static void draw_in_game_options_list(lv_obj_t *list,
 
         lv_obj_t *row_obj = lv_list_add_text(list, row);
         lv_obj_set_style_text_font(row_obj, LV_FONT_DEFAULT, 0);
-        lv_obj_set_style_text_color(row_obj, lv_color_black(), 0);
+        lv_obj_set_style_text_color(row_obj, items[idx].action == IG_ACT_SLEEP ? lv_color_hex(0xFF0000) : lv_color_black(), 0);
         lv_obj_set_style_bg_color(row_obj, lv_color_hex(0xFFFFFF), 0);
 
         if (idx == selected) {
             lv_obj_set_style_bg_color(row_obj, lv_color_hex(0x33CC66), LV_PART_MAIN);
-            lv_obj_set_style_text_color(row_obj, lv_color_black(), 0);
+            lv_obj_set_style_text_color(row_obj, items[idx].action == IG_ACT_SLEEP ? lv_color_hex(0xFF0000) : lv_color_black(), 0);
             lv_label_set_long_mode(row_obj, LV_LABEL_LONG_SCROLL_CIRCULAR);
             lv_obj_set_style_anim_speed(row_obj, 20, 0);
         } else {
@@ -496,15 +496,34 @@ void in_game_menu() {
         bool right_edge = pressed_edge(prev_right, right);
         bool a_edge     = pressed_edge(prev_a, a);
 
-        // Move selection
-        if (up_edge) {
-            if (selected > 0) selected--;
-            if (selected < page_start) page_start = selected;
+        // Move selection (with wrap)
+        if (up_edge && menu_count > 0) {
+            if (selected == 0) selected = menu_count - 1;
+            else selected--;
+
+            // ensure selected is visible
+            if (selected < page_start) {
+                page_start = selected;
+            } else if (selected >= page_start + IG_VISIBLE_ITEMS) {
+                page_start = selected - (IG_VISIBLE_ITEMS - 1);
+            }
         }
-        if (down_edge) {
-            if (selected < (menu_count - 1)) selected++;
-            if (selected >= (page_start + IG_VISIBLE_ITEMS)) page_start = selected - (IG_VISIBLE_ITEMS - 1);
+
+        if (down_edge && menu_count > 0) {
+            if (selected >= (menu_count - 1)) selected = 0;
+            else selected++;
+
+            // ensure selected is visible
+            if (selected < page_start) {
+                page_start = selected;
+            } else if (selected >= page_start + IG_VISIBLE_ITEMS) {
+                page_start = selected - (IG_VISIBLE_ITEMS - 1);
+            }
         }
+        int max_page_start = (menu_count > IG_VISIBLE_ITEMS) ? (menu_count - IG_VISIBLE_ITEMS) : 0;
+        if (page_start > max_page_start) page_start = max_page_start;
+        if (page_start < 0) page_start = 0;
+
 
         ig_menu_item_t *it = &menu_items[selected];
 

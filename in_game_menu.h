@@ -37,6 +37,9 @@ void in_game_cycle_color_palette() {
 
     if (manual_palette_selected != -1) {
     	manual_assign_palette(palette, manual_palette_selected);
+    } else {
+        char rom_title[16];
+        auto_assign_palette(palette, gb_colour_hash(&gb),gb_get_rom_name(&gb,rom_title));
     }
 }
 
@@ -290,9 +293,64 @@ static void ig_get_battery_save_text(char *out, size_t out_sz) {
     snprintf(out, out_sz, "%s", on ? "ON" : "OFF");
 }
 
+#define MAX_PALETTE_SWATCH 6
+
+static int collect_unique_rgb565(const palette_t pal, uint16_t *out, int out_max) {
+    int n = 0;
+    for (int row = 0; row < 3; row++) {
+        for (int col = 0; col < 4; col++) {
+            uint16_t v = pal[row][col];
+
+            bool dup = false;
+            for (int i = 0; i < n; i++) {
+                if (out[i] == v) { dup = true; break; }
+            }
+            if (!dup) {
+                if (n < out_max) out[n++] = v;
+                else return n;
+            }
+        }
+    }
+    return n;
+}
+
 static void ig_get_palette_text(char *out, size_t out_sz) {
-    if (manual_palette_selected < 0) snprintf(out, out_sz, "Auto");
-    else snprintf(out, out_sz, "%d", manual_palette_selected);
+    if (!out_sz) return;
+
+    // keep Auto thin
+    if (manual_palette_selected < 0) {
+        snprintf(out, out_sz, "Auto");
+        return;
+    }
+    uint palette_num = manual_palette_selected + 1;
+    // Build colored swatches using LVGL recolor tags: #RRGGBB text#
+    uint16_t cols[MAX_PALETTE_SWATCH];
+    int n = collect_unique_rgb565(palette, cols, MAX_PALETTE_SWATCH);
+
+    // Example output: "3 #ffcc00 |##00aaff |##000000 |#"
+    size_t w = 0;
+    int wrote = snprintf(out + w, (w < out_sz) ? (out_sz - w) : 0, "%d ", palette_num);
+    if (wrote < 0) { out[0] = 0; return; }
+    w += (size_t)wrote;
+
+    for (int i = 0; i < n; i++) {
+        uint8_t r, g, b;
+        rgb565_to_rgb888(cols[i], &r, &g, &b);
+
+        // each bar is colored "|"
+        wrote = snprintf(out + w, (w < out_sz) ? (out_sz - w) : 0,
+                         "#%02x%02x%02x |#", r, g, b);
+        if (wrote < 0) break;
+        w += (size_t)wrote;
+
+        // optional spacing (keeps it readable)
+        if (i != (n - 1)) {
+            if (w + 2 < out_sz) { out[w++] = ' '; out[w] = 0; }
+        }
+    }
+
+    // Make sure we don't end on a half tag if it clipped
+    out[out_sz - 1] = 0;
 }
 
 // ================================================================
@@ -305,6 +363,9 @@ static void in_game_prev_color_palette(void) {
 
     if (manual_palette_selected != -1) {
         manual_assign_palette(palette, manual_palette_selected);
+    } else {
+        char rom_title[16];
+        auto_assign_palette(palette, gb_colour_hash(&gb),gb_get_rom_name(&gb,rom_title));
     }
 }
 static void in_game_next_color_palette(void) {
@@ -360,13 +421,13 @@ static void ig_toggle_battery_save(void) {
 static void draw_in_game_options_list(lv_obj_t *list,
                                      const ig_menu_item_t *items,
                                      int item_count,
-                                     int selected,
-                                     int page_start)
+                                     int ig_selected,
+                                     int ig_page_start)
 {
     lv_obj_clean(list);
 
-    for (int i = 0; i < IG_VISIBLE_ITEMS && (i + page_start) < item_count; i++) {
-        int idx = i + page_start;
+    for (int i = 0; i < IG_VISIBLE_ITEMS && (i + ig_page_start) < item_count; i++) {
+        int idx = i + ig_page_start;
 
         // Build row text: "Label    <value>"
         char value[64] = {0};
@@ -381,7 +442,7 @@ static void draw_in_game_options_list(lv_obj_t *list,
         lv_obj_set_style_text_color(row_obj, items[idx].action == IG_ACT_SLEEP ? lv_color_hex(0xFF0000) : lv_color_black(), 0);
         lv_obj_set_style_bg_color(row_obj, lv_color_hex(0xFFFFFF), 0);
 
-        if (idx == selected) {
+        if (idx == ig_selected) {
             lv_obj_set_style_bg_color(row_obj, lv_color_hex(0x33CC66), LV_PART_MAIN);
             lv_obj_set_style_text_color(row_obj, items[idx].action == IG_ACT_SLEEP ? lv_color_hex(0xFF0000) : lv_color_black(), 0);
             lv_label_set_long_mode(row_obj, LV_LABEL_LONG_SCROLL_CIRCULAR);
@@ -390,6 +451,7 @@ static void draw_in_game_options_list(lv_obj_t *list,
             lv_obj_set_width(row_obj, DISP_HOR_RES - 30);
             lv_label_set_long_mode(row_obj, LV_LABEL_LONG_CLIP);
         }
+        lv_label_set_recolor(row_obj, true);
     }
 }
 
@@ -406,6 +468,8 @@ static void ig_update_hints(const ig_menu_item_t *it, lv_obj_t *hint_left, lv_ob
         default:             lv_label_set_text(hint_left,  ""); break;
     }
 }
+int ig_selected = 0;
+int ig_page_start = 0;
 
 void in_game_menu() {
     g_in_game_menu = true;
@@ -502,11 +566,8 @@ void in_game_menu() {
     };
     const int menu_count = (int)(sizeof(menu_items) / sizeof(menu_items[0]));
 
-    int selected = 0;
-    int page_start = 0;
-
-    draw_in_game_options_list(list, menu_items, menu_count, selected, page_start);
-    ig_update_hints(&menu_items[selected], hint_left, hint_right);
+    draw_in_game_options_list(list, menu_items, menu_count, ig_selected, ig_page_start);
+    ig_update_hints(&menu_items[ig_selected], hint_left, hint_right);
 
     ig_menu_action_t requested_action = IG_ACT_NONE;
 
@@ -572,34 +633,34 @@ void in_game_menu() {
 
         // Move selection (with wrap)
         if (up_edge && menu_count > 0) {
-            if (selected == 0) selected = menu_count - 1;
-            else selected--;
+            if (ig_selected == 0) ig_selected = menu_count - 1;
+            else ig_selected--;
 
-            // ensure selected is visible
-            if (selected < page_start) {
-                page_start = selected;
-            } else if (selected >= page_start + IG_VISIBLE_ITEMS) {
-                page_start = selected - (IG_VISIBLE_ITEMS - 1);
+            // ensure ig_selected is visible
+            if (ig_selected < ig_page_start) {
+                ig_page_start = ig_selected;
+            } else if (ig_selected >= ig_page_start + IG_VISIBLE_ITEMS) {
+                ig_page_start = ig_selected - (IG_VISIBLE_ITEMS - 1);
             }
         }
 
         if (down_edge && menu_count > 0) {
-            if (selected >= (menu_count - 1)) selected = 0;
-            else selected++;
+            if (ig_selected >= (menu_count - 1)) ig_selected = 0;
+            else ig_selected++;
 
-            // ensure selected is visible
-            if (selected < page_start) {
-                page_start = selected;
-            } else if (selected >= page_start + IG_VISIBLE_ITEMS) {
-                page_start = selected - (IG_VISIBLE_ITEMS - 1);
+            // ensure ig_selected is visible
+            if (ig_selected < ig_page_start) {
+                ig_page_start = ig_selected;
+            } else if (ig_selected >= ig_page_start + IG_VISIBLE_ITEMS) {
+                ig_page_start = ig_selected - (IG_VISIBLE_ITEMS - 1);
             }
         }
         int max_page_start = (menu_count > IG_VISIBLE_ITEMS) ? (menu_count - IG_VISIBLE_ITEMS) : 0;
-        if (page_start > max_page_start) page_start = max_page_start;
-        if (page_start < 0) page_start = 0;
+        if (ig_page_start > max_page_start) ig_page_start = max_page_start;
+        if (ig_page_start < 0) ig_page_start = 0;
 
 
-        ig_menu_item_t *it = &menu_items[selected];
+        ig_menu_item_t *it = &menu_items[ig_selected];
 
         // Adjust current item
         if (left_edge && it->dec)  it->dec();
@@ -621,7 +682,7 @@ void in_game_menu() {
 
         // Redraw only if something changed
         if (up_edge || down_edge || left_edge || right_edge || a_edge) {
-            draw_in_game_options_list(list, menu_items, menu_count, selected, page_start);
+            draw_in_game_options_list(list, menu_items, menu_count, ig_selected, ig_page_start);
             ig_update_hints(it, hint_left, hint_right);
         }
 

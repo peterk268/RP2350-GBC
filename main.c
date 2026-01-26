@@ -327,6 +327,9 @@ while(true)
 				step_lcd_brightness(true);
 			}
 			uint8_t temp_lcd_led = lcd_led_duty_cycle;
+			uint8_t temp_button_led = button_led_duty_cycle;
+			decrease_button_brightness(MAX_BRIGHTNESS);
+			// sd busy handles lcd led turn off
 #if LED_PHASE_OUT_PWR_DOWN
 			uint8_t temp_button_led = button_led_duty_cycle;
 			uint8_t temp_pwr_led = pwr_led_duty_cycle;
@@ -344,7 +347,7 @@ while(true)
 # if TIE_PWR_LED_TO_LCD
 			pwr_led_duty_cycle = temp_lcd_led;
 # endif
-			save_system_settings_if_changed(temp_lcd_led, button_led_duty_cycle, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, true);
+			save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, true);
 #endif
 			printf("Done");
 
@@ -375,13 +378,16 @@ while(true)
 			}
 
 			uint8_t temp_lcd_led = lcd_led_duty_cycle;
+			uint8_t temp_button_led = button_led_duty_cycle;
+			decrease_button_brightness(MAX_BRIGHTNESS);
+			// sd busy handles lcd led turn off
 #if ENABLE_SDCARD
 			write_cart_ram_file(&gb, true);
 			in_game_save_auto_state(true);
 # if TIE_PWR_LED_TO_LCD
 			pwr_led_duty_cycle = temp_lcd_led;
 # endif
-			save_system_settings_if_changed(temp_lcd_led, button_led_duty_cycle, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, true);
+			save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, true);
 #endif
 			release_power(); // Cut power hold
 			sleep_ms(1);

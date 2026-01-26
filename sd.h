@@ -710,6 +710,38 @@ static FRESULT write_png_chunk_end(FIL *fil, uint32_t crc) {
     return write_bytes(fil, crc_be, 4);
 }
 
+// Returns true and sets *out_num to the first available screenshot index.
+// Returns false if it couldn't find one (or an unexpected FS error happened).
+static bool screenshot_find_free_num(sd_card_t *pSD, int *out_num) {
+    if (!out_num) return false;
+
+    FILINFO fno;
+    char path[512];
+
+    // Start at 0; you can start at 1 if you prefer.
+    for (int n = 0; n < 100000; n++) { // cap so we don't loop forever
+        if (build_screenshot_path_from_flash(n, path, sizeof(path)) != 0) {
+            return false;
+        }
+
+        FRESULT fr = f_stat(path, &fno);
+        if (fr == FR_NO_FILE) {
+            *out_num = n;
+            return true; // free slot found
+        }
+        if (fr != FR_OK) {
+            // Some other filesystem error
+            printf("E f_stat(%s) error: %s (%d)\n", path, FRESULT_str(fr), fr);
+            return false;
+        }
+
+        // FR_OK => file exists, keep going
+    }
+
+    printf("E screenshot_find_free_num: ran out of indices\n");
+    return false;
+}
+
 // ------------------------------------------------------------
 // Main: Write screenshot PNG from framebuffer (RGB565)
 // ------------------------------------------------------------
@@ -730,8 +762,20 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
         return false;
     }
 
+    int use_num = screenshot_num;
+
+    if (use_num < 0) {
+        if (!screenshot_find_free_num(pSD, &use_num)) {
+            printf("E could not find free screenshot number\n");
+            f_unmount(pSD->pcName);
+            if (!hold_sd_busy) set_sd_busy(false);
+            return false;
+        }
+    }
+
+
     char path[512];
-    if (build_screenshot_path_from_flash(screenshot_num, path, sizeof(path)) != 0) {
+    if (build_screenshot_path_from_flash(use_num, path, sizeof(path)) != 0) {
         printf("E build_screenshot_path_from_flash failed\n");
         f_unmount(pSD->pcName);
         if (!hold_sd_busy) set_sd_busy(false);

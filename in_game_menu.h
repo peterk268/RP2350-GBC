@@ -110,7 +110,7 @@ void in_game_toggle_battery_save_mode() {
 }
 
 void in_game_screenshot() {
-    write_screenshot_png_from_fb(g_in_game_menu ? free_fb : front_fb, 0, false);
+    write_screenshot_png_from_fb(g_in_game_menu ? free_fb : front_fb, -1, false);
     if (g_in_game_menu) {
         g_request_exit_menu = true;
     }

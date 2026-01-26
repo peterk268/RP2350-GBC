@@ -352,6 +352,10 @@ while(true)
 			printf("Done");
 
 			release_power(); // turn power off
+
+			// if we reach here, something went wrong
+			sleep_ms(100);
+			watchdog_reboot(0, 0, 0); // Force reboot
 		}
 #endif
 

@@ -955,6 +955,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, true);
 
                 release_power();
+
+                // if we reach here, something went wrong
+                sleep_ms(100);
+                watchdog_reboot(0, 0, 0); // Force reboot
             }
 
             // SD mini-refills

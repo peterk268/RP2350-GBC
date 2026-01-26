@@ -88,6 +88,9 @@ void in_game_save_state() {
 }
 void in_game_load_state() {
     read_cart_save_state(&gb);
+    if (g_in_game_menu) {
+        g_request_exit_menu = true;
+    }
 }
 
 void in_game_toggle_battery_save_mode() {
@@ -108,6 +111,9 @@ void in_game_toggle_battery_save_mode() {
 
 void in_game_screenshot() {
     write_screenshot_png_from_fb(g_in_game_menu ? free_fb : front_fb, 0, false);
+    if (g_in_game_menu) {
+        g_request_exit_menu = true;
+    }
 }
 
 
@@ -471,18 +477,18 @@ void in_game_menu() {
         }
 
         // Exit menu on B or power switch out or low power shutdown
-        if (!b || !gpio_read(GPIO_SW_OUT) || low_power_shutdown) {
+        if (!b || !gpio_read(GPIO_SW_OUT) || low_power_shutdown || g_request_exit_menu) {
 #if UNDERCLOCK_IN_GAME_MENU
             underclock_cpu(false); // restore CPU speed
 #endif
-            while(!b && gpio_read(GPIO_SW_OUT) && !low_power_shutdown) {
-                if (!iox_nint) {
-                    read_io_expander_states(0);
-                    b = gpio_read(IOX_B_B);
-                }
-                watchdog_update();
-                tight_loop_contents();
-            }
+            // while(!b && gpio_read(GPIO_SW_OUT) && !low_power_shutdown) {
+            //     if (!iox_nint) {
+            //         read_io_expander_states(0);
+            //         b = gpio_read(IOX_B_B);
+            //     }
+            //     watchdog_update();
+            //     tight_loop_contents();
+            // }
             sleep_ms(10);
             break;
         }
@@ -583,12 +589,13 @@ void in_game_menu() {
     // For now, just example stubs:
     if (requested_action == IG_ACT_EXIT_SAVE) {
         in_game_save_game();
-        g_request_exit_to_menu = true;
+        g_request_exit_to_rom_selector = true;
     } else if (requested_action == IG_ACT_EXIT_NOSAVE) {
-        g_request_exit_to_menu = true;
+        g_request_exit_to_rom_selector = true;
     } else if (requested_action == IG_ACT_SLEEP) {
         // g_request_sleep = true;
     }
 
+    g_request_exit_menu = false; 
     g_in_game_menu = false;
 }

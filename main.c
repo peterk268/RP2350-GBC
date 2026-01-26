@@ -466,7 +466,7 @@ while(true)
 			// in game menu
 			if(!gb.direct.joypad_bits.start && prev_joypad_bits.start) {
 				in_game_menu();
-				// we need to invalidate the previous button press of start + select and now b
+				// we need to invalidate the previous button press of start + select and now b and now a with load state
 				gb.direct.joypad_bits.start = true;
 				gb.direct.joypad_bits.select = true;
 				prev_joypad_bits.start = true;
@@ -474,9 +474,12 @@ while(true)
 
 				gb.direct.joypad_bits.b = true;
 				prev_joypad_bits.b = true;
+				gb.direct.joypad_bits.a = true;
+				prev_joypad_bits.a = true;
 
-				if (g_request_exit_to_menu) {
-					g_request_exit_to_menu = false;
+				// Check if we need to exit to ROM selector
+				if (g_request_exit_to_rom_selector) {
+					g_request_exit_to_rom_selector = false;
 					goto out;
 				}
 			}

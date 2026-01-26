@@ -162,7 +162,7 @@ void read_cart_ram_file(struct gb_s *gb) {
 			return;
 		}
 
-		char save_path[512];
+		char save_path[PATH_MAX_LEN];
 		build_save_path_from_flash(SAVE_BATTERY, save_path, sizeof(save_path));
 
 		FIL fil;
@@ -202,7 +202,7 @@ void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
 			return;
 		}
 
-		char save_path[512];
+		char save_path[PATH_MAX_LEN];
 		build_save_path_from_flash(SAVE_BATTERY, save_path, sizeof(save_path));
 
 		FIL fil;
@@ -333,7 +333,7 @@ void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy) {
         return;
     }
 
-    char save_path[512];
+    char save_path[PATH_MAX_LEN];
     if (build_save_path_from_flash(SAVE_STATE, save_path, sizeof(save_path)) != 0) {
         printf("E build_save_path_from_flash(SAVE_STATE) failed\n");
         f_unmount(pSD->pcName);
@@ -459,7 +459,7 @@ bool read_cart_save_state(struct gb_s *gb) {
         return false;
     }
 
-    char save_path[512];
+    char save_path[PATH_MAX_LEN];
     if (build_save_path_from_flash(SAVE_STATE, save_path, sizeof(save_path)) != 0) {
         printf("E build_save_path_from_flash(SAVE_STATE) failed\n");
         f_unmount(pSD->pcName);
@@ -716,7 +716,7 @@ static bool screenshot_find_free_num(sd_card_t *pSD, int *out_num) {
     if (!out_num) return false;
 
     FILINFO fno;
-    char path[512];
+    char path[PATH_MAX_LEN];
 
     // Start at 0; you can start at 1 if you prefer.
     for (int n = 0; n < 100000; n++) { // cap so we don't loop forever
@@ -774,7 +774,7 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
     }
 
 
-    char path[512];
+    char path[PATH_MAX_LEN];
     if (build_screenshot_path_from_flash(use_num, path, sizeof(path)) != 0) {
         printf("E build_screenshot_path_from_flash failed\n");
         f_unmount(pSD->pcName);
@@ -1403,6 +1403,9 @@ void draw_rom_list(lv_obj_t *list, char filenames[][256], uint16_t num_file, uin
         lv_obj_set_style_text_color(list_title, lv_color_black(), 0);
         lv_obj_set_style_bg_color(list_title, lv_color_hex(0xFFFFFF), 0);
 
+#if SHOW_PICS_IN_MENU
+        lv_obj_set_style_bg_opa(list_title, LV_OPA_80, LV_PART_MAIN);
+#endif
         // lv_obj_set_width(list_title, DISP_HOR_RES - 30); // important for clipping/ellipsis
         // lv_label_set_long_mode(list_title, LV_LABEL_LONG_CLIP); // clip/ellipsis for others
 
@@ -1430,6 +1433,9 @@ lv_obj_t *create_top_bar(lv_obj_t *parent, lv_obj_t **status_label_out) {
     lv_obj_set_size(top_bar, DISP_HOR_RES, 20);
     lv_obj_align(top_bar, LV_ALIGN_TOP_MID, 0, -15);
     lv_obj_set_style_bg_color(top_bar, lv_color_hex(0xE0E0E0), 0);
+#if SHOW_PICS_IN_MENU
+    lv_obj_set_style_bg_opa(top_bar, LV_OPA_80, 0);
+#endif
     lv_obj_set_style_border_width(top_bar, 0, 0);
     lv_obj_set_scrollbar_mode(top_bar, LV_SCROLLBAR_MODE_OFF);
 
@@ -1480,6 +1486,10 @@ lv_obj_t *create_bottom_bar(lv_obj_t *parent, lv_obj_t **left_out, lv_obj_t **ri
     lv_obj_set_style_border_width(bottom_bar, 0, 0);
     lv_obj_set_scrollbar_mode(bottom_bar, LV_SCROLLBAR_MODE_OFF);
 
+#if SHOW_PICS_IN_MENU
+    lv_obj_set_style_bg_opa(bottom_bar, LV_OPA_80, 0);
+#endif
+
     // Top border line
     lv_obj_set_style_border_width(bottom_bar, 1, 0);
     lv_obj_set_style_border_side(bottom_bar, LV_BORDER_SIDE_TOP, 0);
@@ -1514,6 +1524,408 @@ void update_bottom_bar(lv_obj_t *left, lv_obj_t *right, bool show_settings) {
     }
 }
 
+// -------------------------
+// Small helpers
+// -------------------------
+static lv_img_dsc_t *g_bg_dsc   = NULL;
+static void         *g_bg_pix   = NULL;  // malloc'd pixel buffer (RGB565)
+static lv_obj_t     *g_bg_img   = NULL;
+static lv_obj_t     *g_bg_fade  = NULL;
+
+static void lvgl_bg_free_current(void) {
+    if (g_bg_img) {
+        // Detach source so LVGL isn't referencing freed memory
+        lv_img_set_src(g_bg_img, NULL);
+    }
+    if (g_bg_dsc) { free(g_bg_dsc); g_bg_dsc = NULL; }
+    if (g_bg_pix) { free(g_bg_pix); g_bg_pix = NULL; }
+}
+
+static bool read_exact(FIL *f, void *dst, UINT len) {
+    UINT br = 0;
+    return (f_read(f, dst, len, &br) == FR_OK) && (br == len);
+}
+
+static uint32_t be32_u(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+static uint16_t pack_rgb565(uint8_t r, uint8_t g, uint8_t b) {
+    uint16_t v = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+#if defined(LV_COLOR_16_SWAP) && LV_COLOR_16_SWAP
+    v = (uint16_t)((v << 8) | (v >> 8));
+#endif
+    return v;
+}
+
+// Decodes ONLY the PNGs you generate:
+// - IHDR: bit_depth=8, color_type=2 (RGB), interlace=0, filter per-row = 0
+// - IDAT: zlib header + DEFLATE stored blocks (no compression), then Adler32
+static bool png_load_rgb565_from_fatfs(const char *path,
+                                      uint16_t **out_pixels,
+                                      int *out_w, int *out_h)
+{
+    if (!out_pixels || !out_w || !out_h) return false;
+    *out_pixels = NULL;
+    *out_w = *out_h = 0;
+
+    FIL f;
+    FRESULT fr = f_open(&f, path, FA_READ);
+    if (fr != FR_OK) {
+        printf("E png open %s: %s (%d)\n", path, FRESULT_str(fr), fr);
+        return false;
+    }
+
+    // PNG signature
+    uint8_t sig[8];
+    if (!read_exact(&f, sig, 8)) { f_close(&f); return false; }
+    static const uint8_t png_sig[8] = {137,80,78,71,13,10,26,10};
+    if (memcmp(sig, png_sig, 8) != 0) { f_close(&f); return false; }
+
+    // PASS 1: read IHDR and sum IDAT sizes
+    uint32_t w=0, h=0;
+    uint8_t  bit_depth=0, color_type=0, comp=0, filt=0, interlace=0;
+    uint32_t idat_total = 0;
+    bool got_ihdr = false;
+
+    for (;;) {
+        uint8_t len_be[4], type[4];
+        if (!read_exact(&f, len_be, 4)) break;
+        if (!read_exact(&f, type, 4)) break;
+
+        uint32_t len = be32_u(len_be);
+
+        if (memcmp(type, "IHDR", 4) == 0) {
+            uint8_t ihdr[13];
+            if (len != 13 || !read_exact(&f, ihdr, 13)) { f_close(&f); return false; }
+            w = be32_u(&ihdr[0]);
+            h = be32_u(&ihdr[4]);
+            bit_depth = ihdr[8];
+            color_type = ihdr[9];
+            comp = ihdr[10];
+            filt = ihdr[11];
+            interlace = ihdr[12];
+            got_ihdr = true;
+
+            // skip CRC
+            uint8_t crc[4];
+            if (!read_exact(&f, crc, 4)) { f_close(&f); return false; }
+        } else if (memcmp(type, "IDAT", 4) == 0) {
+            idat_total += len;
+            // skip data + CRC
+            if (f_lseek(&f, f_tell(&f) + len + 4) != FR_OK) { f_close(&f); return false; }
+        } else if (memcmp(type, "IEND", 4) == 0) {
+            // skip CRC (len should be 0)
+            if (f_lseek(&f, f_tell(&f) + len + 4) != FR_OK) { f_close(&f); return false; }
+            break;
+        } else {
+            // skip chunk + CRC
+            if (f_lseek(&f, f_tell(&f) + len + 4) != FR_OK) { f_close(&f); return false; }
+        }
+    }
+
+    if (!got_ihdr) { f_close(&f); return false; }
+
+    // Validate it matches YOUR writer
+    if (bit_depth != 8 || color_type != 2 || comp != 0 || filt != 0 || interlace != 0) {
+        printf("E png format unsupported: bd=%u ct=%u c=%u f=%u i=%u\n",
+               bit_depth, color_type, comp, filt, interlace);
+        f_close(&f);
+        return false;
+    }
+
+    // PASS 2: re-scan and collect IDAT bytes into one buffer
+    fr = f_lseek(&f, 8);
+    if (fr != FR_OK) { f_close(&f); return false; }
+
+    uint8_t *idat = (uint8_t*)malloc(idat_total);
+    if (!idat) { f_close(&f); return false; }
+    uint32_t idat_off = 0;
+
+    for (;;) {
+        uint8_t len_be[4], type[4];
+        if (!read_exact(&f, len_be, 4)) break;
+        if (!read_exact(&f, type, 4)) break;
+
+        uint32_t len = be32_u(len_be);
+
+        if (memcmp(type, "IDAT", 4) == 0) {
+            if (idat_off + len > idat_total) { free(idat); f_close(&f); return false; }
+            if (!read_exact(&f, &idat[idat_off], len)) { free(idat); f_close(&f); return false; }
+            idat_off += len;
+
+            // skip CRC
+            uint8_t crc[4];
+            if (!read_exact(&f, crc, 4)) { free(idat); f_close(&f); return false; }
+        } else {
+            // skip chunk data + CRC
+            if (f_lseek(&f, f_tell(&f) + len + 4) != FR_OK) { free(idat); f_close(&f); return false; }
+            if (memcmp(type, "IEND", 4) == 0) break;
+        }
+    }
+
+    f_close(&f);
+
+    if (idat_off != idat_total) {
+        free(idat);
+        return false;
+    }
+
+    // Decode zlib(stored) -> raw scanlines
+    // raw per row: [filter=0][RGB...]
+    const uint32_t row_bytes = 1 + 3 * w;
+    const uint32_t raw_need  = row_bytes * h;
+
+    if (idat_total < 2 + 4) { free(idat); return false; }
+    uint32_t p = 0;
+
+    // zlib header
+    uint8_t cmf = idat[p++], flg = idat[p++];
+    (void)cmf; (void)flg;
+
+    uint8_t *raw = (uint8_t*)malloc(raw_need);
+    if (!raw) { free(idat); return false; }
+    uint32_t raw_off = 0;
+
+    // stored blocks
+    for (;;) {
+        if (p + 5 > idat_total) { free(raw); free(idat); return false; }
+
+        uint8_t bh = idat[p++];              // your writer uses full byte, bit0 = BFINAL
+        uint8_t bfinal = (uint8_t)(bh & 1);
+        uint8_t btype_bits = (uint8_t)(bh & 0x06);
+        if (btype_bits != 0) { free(raw); free(idat); return false; } // must be stored (00)
+
+        uint16_t LEN  = (uint16_t)(idat[p] | (idat[p+1] << 8)); p += 2;
+        uint16_t NLEN = (uint16_t)(idat[p] | (idat[p+1] << 8)); p += 2;
+        if ((uint16_t)~LEN != NLEN) { free(raw); free(idat); return false; }
+
+        if (p + LEN > idat_total) { free(raw); free(idat); return false; }
+        if (raw_off + LEN > raw_need) { free(raw); free(idat); return false; }
+
+        memcpy(&raw[raw_off], &idat[p], LEN);
+        raw_off += LEN;
+        p += LEN;
+
+        if (bfinal) break;
+    }
+
+    // There is an Adler32 at end of zlib stream (4 bytes). We can ignore/skip validation.
+    // Ensure we got exactly the raw bytes we need.
+    if (raw_off != raw_need) { free(raw); free(idat); return false; }
+
+    // Convert raw scanlines -> RGB565 pixels
+    uint32_t pixel_count = w * h;
+    uint16_t *pix = (uint16_t*)malloc(pixel_count * sizeof(uint16_t));
+    if (!pix) { free(raw); free(idat); return false; }
+
+    for (uint32_t y = 0; y < h; y++) {
+        const uint8_t *row = &raw[y * row_bytes];
+        if (row[0] != 0) { // only filter 0 supported
+            free(pix); free(raw); free(idat);
+            return false;
+        }
+        const uint8_t *rgb = &row[1];
+        for (uint32_t x = 0; x < w; x++) {
+            uint8_t r = rgb[3*x + 0];
+            uint8_t g = rgb[3*x + 1];
+            uint8_t b = rgb[3*x + 2];
+            pix[y*w + x] = pack_rgb565(r, g, b);
+        }
+    }
+
+    free(raw);
+    free(idat);
+
+    *out_pixels = pix;
+    *out_w = (int)w;
+    *out_h = (int)h;
+    return true;
+}
+
+static int str_endswith_ci(const char *s, const char *suffix) {
+    size_t ls = strlen(s), lf = strlen(suffix);
+    if (lf > ls) return 0;
+    s += (ls - lf);
+    for (size_t i = 0; i < lf; i++) {
+        if (tolower((unsigned char)s[i]) != tolower((unsigned char)suffix[i])) return 0;
+    }
+    return 1;
+}
+
+static int str_startswith_ci(const char *s, const char *prefix) {
+    while (*prefix && *s) {
+        if (tolower((unsigned char)*s) != tolower((unsigned char)*prefix)) return 0;
+        s++; prefix++;
+    }
+    return *prefix == '\0';
+}
+
+// Match: screenshot*.png  (case-insensitive)
+static bool is_screenshot_png_name(const char *name) {
+    if (!name || !name[0]) return false;
+    if (!str_endswith_ci(name, ".png")) return false;
+    if (!str_startswith_ci(name, "screenshot")) return false;
+    return true;
+}
+
+// Reservoir sampling: when we see the Nth candidate, replace selection with prob 1/N
+static void reservoir_maybe_take(char *selected, size_t selected_sz,
+                                 const char *candidate,
+                                 uint32_t *count) {
+    (*count)++;
+    // rand() must be seeded somewhere in your app for "different each boot"
+    // (e.g. seed from RTC/time_us_64/ADC noise, etc.)
+    uint32_t r = (uint32_t)(rand() % (int)(*count));
+    if (r == 0) {
+        strncpy(selected, candidate, selected_sz);
+        selected[selected_sz - 1] = '\0';
+    }
+}
+
+static FRESULT find_random_screenshot_recursive(const char *fatfs_dir,
+                                               char *out_path, size_t out_path_sz,
+                                               uint32_t *seen_count)
+{
+    FRESULT fr;
+    DIR dir;
+    FILINFO fno;
+
+    fr = f_opendir(&dir, fatfs_dir);
+    if (fr != FR_OK) return fr;
+
+    for (;;) {
+        fr = f_readdir(&dir, &fno);
+        if (fr != FR_OK) break;
+        if (fno.fname[0] == 0) break; // end
+
+        const char *name = (const char *)fno.fname; // LFN-capable in your build
+
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+
+        char child[PATH_MAX_LEN];
+        int n = snprintf(child, sizeof(child), "%s/%s", fatfs_dir, name);
+        if (n <= 0 || n >= (int)sizeof(child)) continue;
+
+        if (fno.fattrib & AM_DIR) {
+            FRESULT fr2 = find_random_screenshot_recursive(child, out_path, out_path_sz, seen_count);
+            if (fr2 != FR_OK && fr2 != FR_NO_PATH && fr2 != FR_NO_FILE) { fr = fr2; break; }
+        } else {
+            if (is_screenshot_png_name(name)) {
+                reservoir_maybe_take(out_path, out_path_sz, child, seen_count);
+            }
+        }
+    }
+
+    f_closedir(&dir);
+    return fr;
+}
+
+// -------------------------
+// PUBLIC API
+// -------------------------
+// Sets a random screenshot PNG from root_dir as LVGL background.
+// root_dir example: "GBC/Saves" (FatFs path) OR "0:/GBC/Saves" depending on your setup.
+// Returns true if it found one and applied it.
+bool lvgl_set_random_gbc_screenshot_background_from_sd(lv_obj_t *parent,
+                                                       int sd_num,
+                                                       const char *subdir,   // "GBC/Saves"
+                                                       lv_opa_t fade_opa,
+                                                       bool hold_sd_busy)
+{
+    set_sd_busy(true);
+
+    sd_card_t *pSD = sd_get_by_num(sd_num);
+    FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+    if (fr != FR_OK) {
+        printf("E f_mount error: %s (%d)\n", FRESULT_str(fr), fr);
+        if (!hold_sd_busy) set_sd_busy(false);
+        return false;
+    }
+
+    // Build volume-prefixed root for FatFs recursion
+    char root[PATH_MAX_LEN];
+    snprintf(root, sizeof(root), "%s/%s", pSD->pcName, subdir);   // e.g. "0:/GBC/Saves"
+
+    // Find random screenshot
+    char chosen[PATH_MAX_LEN] = {0};
+    uint32_t seen = 0;
+    fr = find_random_screenshot_recursive(root, chosen, sizeof(chosen), &seen);
+
+    if (fr != FR_OK && fr != FR_NO_FILE && fr != FR_NO_PATH) {
+        printf("E random screenshot scan failed: %s (%d)\n", FRESULT_str(fr), fr);
+        f_unmount(pSD->pcName);
+        if (!hold_sd_busy) set_sd_busy(false);
+        return false;
+    }
+    if (seen == 0) {
+        printf("W no screenshots found under %s\n", root);
+        f_unmount(pSD->pcName);
+        if (!hold_sd_busy) set_sd_busy(false);
+        return false;
+    }
+
+    // Decode PNG now (while mounted)
+    uint16_t *pix = NULL;
+    int w = 0, h = 0;
+    if (!png_load_rgb565_from_fatfs(chosen, &pix, &w, &h)) {
+        printf("E png decode failed: %s\n", chosen);
+        f_unmount(pSD->pcName);
+        if (!hold_sd_busy) set_sd_busy(false);
+        return false;
+    }
+
+    // Done with SD now
+    f_unmount(pSD->pcName);
+    if (!hold_sd_busy) set_sd_busy(false);
+
+    // Replace any previous bg
+    lvgl_bg_free_current();
+
+    // Create LVGL objects if needed
+    if (!g_bg_img) {
+        g_bg_img = lv_img_create(parent);
+        lv_obj_clear_flag(g_bg_img, LV_OBJ_FLAG_SCROLLABLE);
+    }
+    if (!g_bg_fade) {
+        g_bg_fade = lv_obj_create(parent);
+        lv_obj_remove_style_all(g_bg_fade);
+        lv_obj_set_size(g_bg_fade, LV_PCT(100), LV_PCT(100));
+        lv_obj_align(g_bg_fade, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_set_style_bg_color(g_bg_fade, lv_color_black(), 0);
+        lv_obj_clear_flag(g_bg_fade, LV_OBJ_FLAG_SCROLLABLE);
+    }
+    lv_obj_set_style_bg_opa(g_bg_fade, fade_opa, 0);
+
+    // Build an in-RAM image descriptor (malloc)
+    lv_img_dsc_t *dsc = (lv_img_dsc_t*)malloc(sizeof(lv_img_dsc_t));
+    if (!dsc) {
+        free(pix);
+        return false;
+    }
+    memset(dsc, 0, sizeof(*dsc));
+    dsc->header.cf = LV_IMG_CF_TRUE_COLOR;
+    dsc->header.w  = (uint32_t)w;
+    dsc->header.h  = (uint32_t)h;
+    dsc->data_size = (uint32_t)(w * h * sizeof(lv_color_t));
+    dsc->data      = (const uint8_t*)pix;
+
+    // Keep pointers so we can free later
+    g_bg_dsc = dsc;
+    g_bg_pix = pix;
+
+    // Apply
+    lv_img_set_src(g_bg_img, dsc);
+    lv_obj_center(g_bg_img);
+
+    // Make sure ordering is: bg image -> fade -> your UI items (created after)
+    lv_obj_move_background(g_bg_img);
+    lv_obj_move_to_index(g_bg_fade, 1);
+
+    printf("I random screenshot bg loaded to RAM: %dx%d from %s\n", w, h, chosen);
+    return true;
+}
+
 void rom_file_selector() {	
     if (!sd_filename_init()) return;
     char (*names)[256] = filename;
@@ -1538,10 +1950,19 @@ void rom_file_selector() {
 	lv_obj_t *cont = lv_obj_create(lv_scr_act());
 	lv_obj_set_size(cont, DISP_HOR_RES, DISP_VER_RES);
 	lv_obj_center(cont);
+#if !SHOW_PICS_IN_MENU
     lv_obj_set_style_bg_color(cont, lv_color_hex(0xFFFFFF), 0);  // dark gray background
+#else
+    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);   // IMPORTANT: make container transparent so bg shows through
+#endif
     lv_obj_set_scrollbar_mode(cont, LV_SCROLLBAR_MODE_OFF);
 
+#if SHOW_PICS_IN_MENU
+    lvgl_set_random_gbc_screenshot_background_from_sd(cont, 0, "GBC/Saves", LV_OPA_TRANSP, false);
+#endif
+#if !SHOW_PICS_IN_MENU
     lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0xFFFFFF), 0);  // match your container
+#endif
 
 	// // Title label
 	// lv_obj_t *title = lv_label_create(cont);
@@ -1559,6 +1980,9 @@ void rom_file_selector() {
     lv_obj_set_style_text_color(list, lv_color_black(), 0);
     lv_obj_set_style_border_width(list, 0, 0);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+#if SHOW_PICS_IN_MENU
+    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, LV_PART_MAIN);
+#endif
 
     draw_rom_list(list, names, num_file, selected, page_start);
         

@@ -58,6 +58,8 @@
 // I2C Troubles with 5.1K pull up fixed by using 1k
 #define I2C_HAS_TROUBLES 0
 
+#define SHOW_PICS_IN_MENU 0
+
 #include <malloc.h>
 
 
@@ -125,6 +127,7 @@ void hardfault_handler_c(uint32_t *sp) {
 #define SYSTEM_FILE_PATH   SETTINGS_DIR "/system.bin"
 #define ROM_FILE_PATH      SETTINGS_DIR "/rom.bin"
 #define FILENAME_MAX_LEN   256
+#define PATH_MAX_LEN 512
 
 bool read_system_settings(uint8_t *lcd_brightness,
                           uint8_t *button_brightness,

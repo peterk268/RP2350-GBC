@@ -614,6 +614,7 @@ void shutdown_peripherals(bool keep_i2c) {
 void sleep_device() {
     // #if ENABLE_SDCARD				
     // write_cart_ram_file(gbc);
+    // in_game_save_auto_state();
     // #endif	
 
     // sleep_ms(1);

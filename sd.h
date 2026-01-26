@@ -129,7 +129,7 @@ int build_save_path(const char *rom_filename, save_type_t type, int slot, char *
 /**
  * Build save path using ROM filename and battery slot stored in flash
  */
-int build_save_path_from_flash(save_type_t type, char *out_path, size_t out_path_size) {
+int build_save_path_from_flash(save_type_t type, char *out_path, size_t out_path_size, int override_slot) {
     char rom_filename[FILENAME_MAX_LEN];
     uint8_t battery_slot, save_state_slot;
 
@@ -139,7 +139,8 @@ int build_save_path_from_flash(save_type_t type, char *out_path, size_t out_path
     }
 
     // For SAVE_BATTERY, use the flash battery_slot as the "slot" parameter
-    int effective_slot = (type == SAVE_BATTERY) ? battery_slot : save_state_slot;
+    // we can override it if needed by passing override_slot >= 0
+    int effective_slot = override_slot < 0 ? ((type == SAVE_BATTERY) ? battery_slot : save_state_slot) : override_slot;
 
     return build_save_path(rom_filename, type, effective_slot, out_path, out_path_size);
 }
@@ -163,7 +164,7 @@ void read_cart_ram_file(struct gb_s *gb) {
 		}
 
 		char save_path[PATH_MAX_LEN];
-		build_save_path_from_flash(SAVE_BATTERY, save_path, sizeof(save_path));
+		build_save_path_from_flash(SAVE_BATTERY, save_path, sizeof(save_path), -1);
 
 		FIL fil;
 		fr=f_open(&fil,save_path,FA_READ);
@@ -203,7 +204,7 @@ void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
 		}
 
 		char save_path[PATH_MAX_LEN];
-		build_save_path_from_flash(SAVE_BATTERY, save_path, sizeof(save_path));
+		build_save_path_from_flash(SAVE_BATTERY, save_path, sizeof(save_path), -1);
 
 		FIL fil;
 		fr=f_open(&fil,save_path,FA_CREATE_ALWAYS | FA_WRITE);
@@ -318,7 +319,7 @@ static uint32_t crc32_ieee(const void *data, size_t len) {
 // ============================================================
 // WRITE SAVE STATE
 // ============================================================
-void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy) {
+void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy, int override_slot) {
     UINT bw = 0;
 
     if (!gb) return;
@@ -334,7 +335,7 @@ void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy) {
     }
 
     char save_path[PATH_MAX_LEN];
-    if (build_save_path_from_flash(SAVE_STATE, save_path, sizeof(save_path)) != 0) {
+    if (build_save_path_from_flash(SAVE_STATE, save_path, sizeof(save_path), override_slot) != 0) {
         printf("E build_save_path_from_flash(SAVE_STATE) failed\n");
         f_unmount(pSD->pcName);
         if (!hold_sd_busy) set_sd_busy(false);
@@ -444,7 +445,7 @@ void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy) {
 // READ SAVE STATE
 // Returns true if state loaded, false if missing/invalid.
 // ============================================================
-bool read_cart_save_state(struct gb_s *gb) {
+bool read_cart_save_state(struct gb_s *gb, int override_slot) {
     UINT br = 0;
 
     if (!gb) return false;
@@ -460,7 +461,7 @@ bool read_cart_save_state(struct gb_s *gb) {
     }
 
     char save_path[PATH_MAX_LEN];
-    if (build_save_path_from_flash(SAVE_STATE, save_path, sizeof(save_path)) != 0) {
+    if (build_save_path_from_flash(SAVE_STATE, save_path, sizeof(save_path), override_slot) != 0) {
         printf("E build_save_path_from_flash(SAVE_STATE) failed\n");
         f_unmount(pSD->pcName);
         set_sd_busy(false);
@@ -1123,7 +1124,9 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
     f_close(&fil);
     f_unmount(pSD->pcName);
 
-	save_rom_settings(filename, 0, 0);
+    // we start save state with 1 so that we can use 0 as the auto save
+    // we use 0 for the battery save slot because it will just save as save.sav to be known as the primary save file
+	save_rom_settings(filename, 0, 1);
     strncpy(last_filename_raw, filename, FILENAME_MAX_LEN - 1);
 
     // Crashes occur without setting sd busy false here but I want sd busy to be on until the first gb frame is rendered

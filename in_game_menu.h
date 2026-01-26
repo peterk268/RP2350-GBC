@@ -84,10 +84,21 @@ void in_game_decrease_washout() {
 }
 
 void in_game_save_state() {
-    write_cart_save_state(&gb, false);
+    write_cart_save_state(&gb, false, -1);
 }
 void in_game_load_state() {
-    read_cart_save_state(&gb);
+    read_cart_save_state(&gb, -1);
+    if (g_in_game_menu) {
+        g_request_exit_menu = true;
+    }
+}
+
+// since this happens on power down we need to hold sd busy
+void in_game_save_auto_state(bool hold_sd_busy) {
+    write_cart_save_state(&gb, hold_sd_busy, 0);
+}
+void in_game_load_auto_state() {
+    read_cart_save_state(&gb, 0);
     if (g_in_game_menu) {
         g_request_exit_menu = true;
     }
@@ -414,6 +425,7 @@ void in_game_menu() {
         { "Save Game",      IG_ITEM_ACTION, NULL, NULL, NULL, in_game_save_game, IG_ACT_NONE },
         { "Save State",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_save_state, IG_ACT_NONE },
         { "Load State",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_load_state, IG_ACT_NONE },
+        { "Load Auto State",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_load_auto_state, IG_ACT_NONE },
         { "Screenshot",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_screenshot, IG_ACT_NONE },
 
         { "Fast Forward",   IG_ITEM_TOGGLE, ig_get_fast_forward_text,
@@ -588,6 +600,7 @@ void in_game_menu() {
     //
     // For now, just example stubs:
     if (requested_action == IG_ACT_EXIT_SAVE) {
+        in_game_save_auto_state(true);
         in_game_save_game();
         g_request_exit_to_rom_selector = true;
     } else if (requested_action == IG_ACT_EXIT_NOSAVE) {

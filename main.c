@@ -336,6 +336,7 @@ while(true)
 #if ENABLE_SDCARD
 			// save to sd card
 			write_cart_ram_file(&gb, true);
+			in_game_save_auto_state(true);
 #endif			
 #if LED_PHASE_OUT_PWR_DOWN
 			save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level, last_filename_raw, true);
@@ -376,6 +377,7 @@ while(true)
 			uint8_t temp_lcd_led = lcd_led_duty_cycle;
 #if ENABLE_SDCARD
 			write_cart_ram_file(&gb, true);
+			in_game_save_auto_state(true);
 # if TIE_PWR_LED_TO_LCD
 			pwr_led_duty_cycle = temp_lcd_led;
 # endif
@@ -552,6 +554,7 @@ while(true)
 					// save to sd card
 #if ENABLE_SDCARD				
 					write_cart_ram_file(&gb, false);
+					in_game_save_auto_state(false);
 #endif
 				}
 			}

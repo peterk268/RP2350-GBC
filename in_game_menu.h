@@ -564,12 +564,9 @@ void in_game_menu() {
     // For now, just example stubs:
     if (requested_action == IG_ACT_EXIT_SAVE) {
         in_game_save_game();
-        // goto out;
-        // set a global flag your main loop checks, or call your exit routine
-        // g_request_exit_to_menu = true;
+        g_request_exit_to_menu = true;
     } else if (requested_action == IG_ACT_EXIT_NOSAVE) {
-        // g_request_exit_to_menu = true;
-        // goto out;
+        g_request_exit_to_menu = true;
     } else if (requested_action == IG_ACT_SLEEP) {
         // g_request_sleep = true;
     }

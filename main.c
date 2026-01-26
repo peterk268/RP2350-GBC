@@ -222,21 +222,6 @@ int main(void)
 	overclock_cpu(false);
 #endif
 
-// MARK: - Infinite Loop
-while(true)
-{
-	// MARK: - ROM File selector
-
-#if ENABLE_LCD
-#if ENABLE_SDCARD
-#if USE_IPS_LCD
-	#warning "ips: add ips init"
-#else
-	// mk_ili9225_init();
-	// mk_ili9225_fill(0x0000);
-#endif
-#endif
-#endif
     // MARK: - PWM Set up
 	fade_in_leds_startup();
 
@@ -252,6 +237,10 @@ while(true)
 		while (1) { tight_loop_contents(); }
 	}
 
+// MARK: - Infinite Loop
+while(true)
+{
+	// MARK: - ROM File selector
 #if ENABLE_SDCARD && ENABLE_ROM_SELECTOR
 	rom_file_selector();
 #endif
@@ -485,6 +474,11 @@ while(true)
 
 				gb.direct.joypad_bits.b = true;
 				prev_joypad_bits.b = true;
+
+				if (g_request_exit_to_menu) {
+					g_request_exit_to_menu = false;
+					goto out;
+				}
 			}
 
 			if(!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
@@ -609,8 +603,22 @@ while(true)
     out:
         puts("\nEmulation Ended");
 		memory_stats();
-        /* stop lcd task running on core 1 */
-        multicore_reset_core1(); 
+		// Clean up for the ROM selector
+		if (rom) {
+			free(rom);
+			rom = NULL;
+		}
+		if (ram) {
+			free(ram);
+			ram = NULL;
+		}
+		if (filename) {
+			free(filename);
+			filename = NULL;
+		}
+		watchdog_disable();
+		release_power(); // release power hold
+		sleep_ms(100);
     }
 
 }

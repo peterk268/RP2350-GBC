@@ -98,6 +98,7 @@ static uint32_t fps_last_time = 0;
 #endif
 
 static volatile bool g_in_game_menu = false;
+static volatile bool g_request_exit_to_menu = false;
 
 bool should_skip_audio_frame = false;
 

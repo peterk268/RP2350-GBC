@@ -191,22 +191,93 @@ static void make_slider_bar(char *out, size_t out_sz, int value, int max, int ba
     out[idx++] = ']';
     out[idx] = 0;
 }
+// ================================================================
+// Small UI helpers (accurate for *discrete* stepped values)
+// ================================================================
+
+static int find_level_index_le(uint8_t current, const uint8_t *levels, int n) {
+    // Mirrors your stepping logic: first i where current <= levels[i]
+    // If above all, returns last.
+    if (n <= 1) return 0;
+    for (int i = 0; i < n; i++) {
+        if (current <= levels[i]) return i;
+    }
+    return n - 1;
+}
+
+// idx: 0..(steps-1). steps>=2.
+// This maps discrete steps to a fixed bar count with rounding,
+// so the visual progress matches the *step position*, not raw value.
+static void make_slider_bar_steps(char *out, size_t out_sz, int idx, int steps, int bars) {
+    if (out_sz < 4) { if (out_sz) out[0] = 0; return; }
+    if (bars < 1) bars = 1;
+    if (steps < 2) steps = 2;
+
+    if (idx < 0) idx = 0;
+    if (idx > (steps - 1)) idx = (steps - 1);
+
+    int denom = steps - 1;
+
+    // Rounded mapping: 0..denom -> 0..bars
+    int filled = (idx * bars + (denom / 2)) / denom;
+    if (filled < 0) filled = 0;
+    if (filled > bars) filled = bars;
+
+    size_t w = 0;
+    out[w++] = '[';
+    for (int i = 0; i < bars && (w + 2) < out_sz; i++) out[w++] = (i < filled) ? '|' : '.';
+    out[w++] = ']';
+    out[w] = 0;
+}
+
+// If you still want a linear bar for anything else, keep your old make_slider_bar()
+// or rename it to make_slider_bar_linear().
 
 // ================================================================
 // Value text getters (render on the right side of the row)
 // ================================================================
+
 static void ig_get_lcd_brightness_text(char *out, size_t out_sz) {
-    // If you have a better "current brightness level" variable, use it here.
-    // Using lcd_led_duty_cycle as a proxy.
+    // 16 perceptual steps (brightness_levels[16])
+    int idx = find_level_index_le(lcd_led_duty_cycle, brightness_levels, 16);
+
     char bar[32];
-    make_slider_bar(bar, sizeof(bar), (int)lcd_led_duty_cycle, (int)MAX_BRIGHTNESS, 10);
-    snprintf(out, out_sz, "%s %u", bar, (unsigned)lcd_led_duty_cycle);
+    make_slider_bar_steps(bar, sizeof(bar), idx, 16, 10);
+
+    // Show level (1..16) + raw duty for debugging/clarity
+    snprintf(out, out_sz, "%s L%d/16", bar, idx + 1);
 }
 
 static void ig_get_btn_brightness_text(char *out, size_t out_sz) {
+    // 6 discrete steps (button_brightness_levels[6])
+    int idx = find_level_index_le(button_led_duty_cycle, button_brightness_levels, 6);
+
     char bar[32];
-    make_slider_bar(bar, sizeof(bar), (int)button_led_duty_cycle, (int)MAX_BRIGHTNESS, 10);
-    snprintf(out, out_sz, "%s %u", bar, (unsigned)button_led_duty_cycle);
+    make_slider_bar_steps(bar, sizeof(bar), idx, 6, 10);
+
+    snprintf(out, out_sz, "%s L%d/6", bar, idx + 1);
+}
+
+static void ig_get_washout_text(char *out, size_t out_sz) {
+    // wash_out_level is 0..255 stepping by 16 => levels are 0..15
+    int idx = (int)(wash_out_level >> 4);   // /16
+    if (idx < 0) idx = 0;
+    if (idx > 15) idx = 15;
+
+    char bar[32];
+    make_slider_bar_steps(bar, sizeof(bar), idx, 16, 10);
+
+    // Show both step and raw value
+    snprintf(out, out_sz, "%s %d/15", bar, idx);
+}
+
+// ================================================================
+// Washout wrap behavior for A (cycle upward, wrap to 0)
+// (now matches 0..255 step 16)
+// ================================================================
+static void in_game_cycle_washout(void) {
+    if (wash_out_level <= (uint8_t)(255 - 16)) wash_out_level = (uint8_t)(wash_out_level + 16);
+    else wash_out_level = 0;
 }
 
 static void ig_get_fast_forward_text(char *out, size_t out_sz) {
@@ -224,12 +295,6 @@ static void ig_get_palette_text(char *out, size_t out_sz) {
     else snprintf(out, out_sz, "%d", manual_palette_selected);
 }
 
-static void ig_get_washout_text(char *out, size_t out_sz) {
-    char bar[32];
-    make_slider_bar(bar, sizeof(bar), (int)wash_out_level, 16, 10);
-    snprintf(out, out_sz, "%s %u/16", bar, (unsigned)wash_out_level);
-}
-
 // ================================================================
 // Missing decrement for palette (since you wanted left/right)
 // ================================================================
@@ -244,15 +309,6 @@ static void in_game_prev_color_palette(void) {
 }
 static void in_game_next_color_palette(void) {
     in_game_cycle_color_palette();
-}
-
-// ================================================================
-// Washout wrap behavior for A (cycle upward, wrap to 0)
-// Left/right keep clamp behavior via your helpers.
-// ================================================================
-static void in_game_cycle_washout(void) {
-    if (wash_out_level < 16) wash_out_level++;
-    else wash_out_level = 0;
 }
 
 // ================================================================
@@ -416,10 +472,10 @@ void in_game_menu() {
     // Define menu items
     // ================================================================
     static ig_menu_item_t menu_items[] = {
-        { "Display Brightness", IG_ITEM_SLIDER, ig_get_lcd_brightness_text,
+        { "Display      ", IG_ITEM_SLIDER, ig_get_lcd_brightness_text,
             in_game_increase_lcd_brightness, in_game_decrease_lcd_brightness, in_game_increase_lcd_brightness, IG_ACT_NONE },
 
-        { "Button Brightness",  IG_ITEM_SLIDER, ig_get_btn_brightness_text,
+        { "Buttons     ",  IG_ITEM_SLIDER, ig_get_btn_brightness_text,
             in_game_increase_button_brightness, in_game_decrease_button_brightness, in_game_increase_button_brightness, IG_ACT_NONE },
 
         { "Save Game",      IG_ITEM_ACTION, NULL, NULL, NULL, in_game_save_game, IG_ACT_NONE },
@@ -428,16 +484,16 @@ void in_game_menu() {
         { "Load Auto State",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_load_auto_state, IG_ACT_NONE },
         { "Screenshot",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_screenshot, IG_ACT_NONE },
 
-        { "Fast Forward",   IG_ITEM_TOGGLE, ig_get_fast_forward_text,
+        { "Fast Forward     ",   IG_ITEM_TOGGLE, ig_get_fast_forward_text,
             ig_toggle_fast_forward, ig_toggle_fast_forward, ig_toggle_fast_forward, IG_ACT_NONE },
 
-        { "Battery Saving", IG_ITEM_TOGGLE, ig_get_battery_save_text,
+        { "Battery Saving  ", IG_ITEM_TOGGLE, ig_get_battery_save_text,
             ig_toggle_battery_save, ig_toggle_battery_save, ig_toggle_battery_save, IG_ACT_NONE },
 
         { "Color Palette",  IG_ITEM_VALUE,  ig_get_palette_text,
             in_game_next_color_palette, in_game_prev_color_palette, in_game_next_color_palette, IG_ACT_NONE },
 
-        { "Wash Out",       IG_ITEM_SLIDER, ig_get_washout_text,
+        { "Wash Out    ",       IG_ITEM_SLIDER, ig_get_washout_text,
             in_game_increase_washout, in_game_decrease_washout, in_game_cycle_washout, IG_ACT_NONE },
 
         { "Exit Game & Save", IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_SAVE },

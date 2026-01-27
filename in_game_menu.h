@@ -302,10 +302,10 @@ static void ig_get_auto_load_state_text(char *out, size_t out_sz) {
 
 #define MAX_PALETTE_SWATCH 6
 
-static int collect_unique_rgb565(const palette_t pal, uint16_t *out, int out_max) {
-    int n = 0;
-    for (int row = 0; row < 3; row++) {
-        for (int col = 0; col < 4; col++) {
+static uint8_t collect_unique_rgb565(const palette_t pal, uint16_t *out, int out_max) {
+    uint8_t n = 0;
+    for (uint8_t row = 0; row < 3; row++) {
+        for (uint8_t col = 0; col < 4; col++) {
             uint16_t v = pal[row][col];
 
             bool dup = false;
@@ -329,10 +329,10 @@ static void ig_get_palette_text(char *out, size_t out_sz) {
         snprintf(out, out_sz, "Auto");
         return;
     }
-    uint palette_num = manual_palette_selected + 1;
+    uint8_t palette_num = manual_palette_selected + 1;
     // Build colored swatches using LVGL recolor tags: #RRGGBB text#
     uint16_t cols[MAX_PALETTE_SWATCH];
-    int n = collect_unique_rgb565(*palette, cols, MAX_PALETTE_SWATCH);
+    uint8_t n = collect_unique_rgb565(*palette, cols, MAX_PALETTE_SWATCH);
 
     // Example output: "3 #ffcc00 |##00aaff |##000000 |#"
     size_t w = 0;
@@ -478,6 +478,92 @@ static void ig_update_hints(const ig_menu_item_t *it, lv_obj_t *hint_left, lv_ob
 uint8_t ig_selected = 0;
 uint8_t ig_page_start = 0;
 
+static ig_menu_item_t *menu_items = NULL;
+static uint8_t menu_count = 0;
+
+#define MENU_COUNT 15  // keep this in sync with the items below
+
+static bool ig_menu_items_init_heap(void) {
+    menu_items = NULL;
+    menu_count = 0;
+
+    menu_items = (ig_menu_item_t *)malloc(MENU_COUNT * sizeof(*menu_items));
+    if (!menu_items) {
+        return false;
+    }
+
+    size_t i = 0;
+
+    menu_items[i++] = (ig_menu_item_t){
+        "Display      ", IG_ITEM_SLIDER, ig_get_lcd_brightness_text,
+        in_game_increase_lcd_brightness, in_game_decrease_lcd_brightness,
+        in_game_increase_lcd_brightness, IG_ACT_NONE
+    };
+
+    menu_items[i++] = (ig_menu_item_t){
+        "Buttons     ", IG_ITEM_SLIDER, ig_get_btn_brightness_text,
+        in_game_increase_button_brightness, in_game_decrease_button_brightness,
+        in_game_increase_button_brightness, IG_ACT_NONE
+    };
+
+    menu_items[i++] = (ig_menu_item_t){ "Save Game",       IG_ITEM_ACTION, NULL, NULL, NULL, in_game_save_game, IG_ACT_NONE };
+    menu_items[i++] = (ig_menu_item_t){ "Save State",      IG_ITEM_ACTION, NULL, NULL, NULL, in_game_save_state, IG_ACT_NONE };
+    menu_items[i++] = (ig_menu_item_t){ "Load State",      IG_ITEM_ACTION, NULL, NULL, NULL, in_game_load_state, IG_ACT_NONE };
+    menu_items[i++] = (ig_menu_item_t){ "Load Auto State", IG_ITEM_ACTION, NULL, NULL, NULL, in_game_load_auto_state, IG_ACT_NONE };
+    menu_items[i++] = (ig_menu_item_t){ "Screenshot",      IG_ITEM_ACTION, NULL, NULL, NULL, in_game_screenshot, IG_ACT_NONE };
+
+    menu_items[i++] = (ig_menu_item_t){
+        "Fast Forward     ", IG_ITEM_TOGGLE, ig_get_fast_forward_text,
+        ig_toggle_fast_forward, ig_toggle_fast_forward, ig_toggle_fast_forward, IG_ACT_NONE
+    };
+
+    menu_items[i++] = (ig_menu_item_t){
+        "Battery Saving  ", IG_ITEM_TOGGLE, ig_get_battery_save_text,
+        ig_toggle_battery_save, ig_toggle_battery_save, ig_toggle_battery_save, IG_ACT_NONE
+    };
+
+    menu_items[i++] = (ig_menu_item_t){
+        "Auto Load State ", IG_ITEM_TOGGLE, ig_get_auto_load_state_text,
+        ig_toggle_auto_load_state, ig_toggle_auto_load_state, ig_toggle_auto_load_state, IG_ACT_NONE
+    };
+
+    menu_items[i++] = (ig_menu_item_t){
+        "Color Palette", IG_ITEM_VALUE, ig_get_palette_text,
+        in_game_next_color_palette, in_game_prev_color_palette,
+        in_game_next_color_palette, IG_ACT_NONE
+    };
+
+    menu_items[i++] = (ig_menu_item_t){
+        "Wash Out    ", IG_ITEM_SLIDER, ig_get_washout_text,
+        in_game_increase_washout, in_game_decrease_washout,
+        in_game_cycle_washout, IG_ACT_NONE
+    };
+
+    menu_items[i++] = (ig_menu_item_t){ "Exit Game & Save",   IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_SAVE };
+    menu_items[i++] = (ig_menu_item_t){ "Exit Game w/o Save", IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_NOSAVE };
+    menu_items[i++] = (ig_menu_item_t){ "Go to Sleep",        IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_SLEEP };
+
+    // Finalize counts + sanity
+    if (i != MENU_COUNT) {
+        free(menu_items);
+        menu_items = NULL;
+        menu_count = 0;
+        return false;
+    }
+
+    menu_count = (uint8_t)i;
+    return true;
+}
+
+static void ig_menu_items_free_heap(void) {
+    if (menu_items) {
+        free(menu_items);
+        menu_items = NULL;
+    }
+    menu_count = 0;
+}
+
+
 void in_game_menu() {
     g_in_game_menu = true;
 
@@ -489,11 +575,15 @@ void in_game_menu() {
     lv_deinit();
     sleep_ms(50);
 
-    // To hold the gameplay frame for the screenshot
-    memcpy(&free_fb->data[0][0], &front_fb->data[0][0], sizeof(front_fb->data));
+    framebuffer_t *f  = __atomic_load_n(&front_fb, __ATOMIC_ACQUIRE);
+    framebuffer_t *w  = __atomic_load_n(&write_fb, __ATOMIC_ACQUIRE);
+    framebuffer_t *fr = __atomic_load_n(&free_fb, __ATOMIC_ACQUIRE);
 
-    lvgl_fb = front_fb->data;
-    lv_buf1 = (lv_color_t *)write_fb->data;
+    // To hold the gameplay frame for the screenshot
+    memcpy(&fr->data[0][0], &f->data[0][0], sizeof(f->data));
+
+    lvgl_fb = f->data;
+    lv_buf1 = (lv_color_t *)w->data;
 
     // Create list
     lv_init();
@@ -539,42 +629,7 @@ void in_game_menu() {
     lv_obj_t *hint_bar = create_bottom_bar(cont, &hint_left, &hint_right);
     (void)hint_bar;
 
-    // ================================================================
-    // Define menu items
-    // ================================================================
-    static ig_menu_item_t menu_items[] = {
-        { "Display      ", IG_ITEM_SLIDER, ig_get_lcd_brightness_text,
-            in_game_increase_lcd_brightness, in_game_decrease_lcd_brightness, in_game_increase_lcd_brightness, IG_ACT_NONE },
-
-        { "Buttons     ",  IG_ITEM_SLIDER, ig_get_btn_brightness_text,
-            in_game_increase_button_brightness, in_game_decrease_button_brightness, in_game_increase_button_brightness, IG_ACT_NONE },
-
-        { "Save Game",      IG_ITEM_ACTION, NULL, NULL, NULL, in_game_save_game, IG_ACT_NONE },
-        { "Save State",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_save_state, IG_ACT_NONE },
-        { "Load State",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_load_state, IG_ACT_NONE },
-        { "Load Auto State",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_load_auto_state, IG_ACT_NONE },
-        { "Screenshot",     IG_ITEM_ACTION, NULL, NULL, NULL, in_game_screenshot, IG_ACT_NONE },
-
-        { "Fast Forward     ",   IG_ITEM_TOGGLE, ig_get_fast_forward_text,
-            ig_toggle_fast_forward, ig_toggle_fast_forward, ig_toggle_fast_forward, IG_ACT_NONE },
-
-        { "Battery Saving  ", IG_ITEM_TOGGLE, ig_get_battery_save_text,
-            ig_toggle_battery_save, ig_toggle_battery_save, ig_toggle_battery_save, IG_ACT_NONE },
-
-        { "Auto Load State ", IG_ITEM_TOGGLE, ig_get_auto_load_state_text,
-            ig_toggle_auto_load_state, ig_toggle_auto_load_state, ig_toggle_auto_load_state, IG_ACT_NONE },
-
-        { "Color Palette",  IG_ITEM_VALUE,  ig_get_palette_text,
-            in_game_next_color_palette, in_game_prev_color_palette, in_game_next_color_palette, IG_ACT_NONE },
-
-        { "Wash Out    ",       IG_ITEM_SLIDER, ig_get_washout_text,
-            in_game_increase_washout, in_game_decrease_washout, in_game_cycle_washout, IG_ACT_NONE },
-
-        { "Exit Game & Save", IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_SAVE },
-        { "Exit Game w/o Save",    IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_NOSAVE },
-        { "Go to Sleep",      IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_SLEEP },
-    };
-    const int menu_count = (int)(sizeof(menu_items) / sizeof(menu_items[0]));
+    ig_menu_items_init_heap();
 
     draw_in_game_options_list(list, menu_items, menu_count, ig_selected, ig_page_start);
     ig_update_hints(&menu_items[ig_selected], hint_left, hint_right);
@@ -714,6 +769,7 @@ void in_game_menu() {
     }
 
     lv_deinit();
+    ig_menu_items_free_heap();
     sleep_ms(20);
 
 #if UNDERCLOCK_IN_GAME_MENU

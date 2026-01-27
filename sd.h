@@ -1563,8 +1563,8 @@ lv_obj_t *create_bottom_bar(lv_obj_t *parent, lv_obj_t **left_out, lv_obj_t **ri
 
 void update_bottom_bar(lv_obj_t *left, lv_obj_t *right, bool show_settings) {
     if (show_settings) {
-        lv_label_set_text(left,  "B: Save");
-        lv_label_set_text(right, "Select: Exit");
+        lv_label_set_text(left, "Select: Exit");
+        lv_label_set_text(right,  "Start: Save");
     } else {
         lv_label_set_text(left,  "A: Load");
         lv_label_set_text(right, "Start: Recent");
@@ -2088,32 +2088,33 @@ void rom_file_selector() {
 		}
 
 		if (!start && prev_start) {   // just pressed
-            // memset(front_fb->data, 0, sizeof(front_fb->data));
-            // printf("Recent game\n");
-#if ENABLE_PSRAM && !ROM_FLASH 
-            if (last_filename_raw != '\0') {
-                printf("LOADING %s\n", last_filename_raw);
-                load_cart_rom_file(last_filename_raw);
-            }
-#endif
-			/* re-start the last game (no need to reprogram flash) */
-			break;
-		}
-		if (!a && prev_a) {
-			/* copy the rom from the SD card to flash and start the game */
-            // memset(front_fb->data, 0, sizeof(front_fb->data));
-			printf("LOADING\n");
-			load_cart_rom_file(filename[selected]);
-			break;
-		}
-        if (!b && prev_b) {
             if (show_settings) {
                 mcp7940n_set_tm(RTC_I2C_PORT, &draft_tm);
                 show_settings = false;
                 draw_rom_list(list, filename, num_file, selected, page_start);
                 update_status_label(status_label);
                 update_bottom_bar(hint_left, hint_right, show_settings);
+            } else {
+                bool launched = false;
+#if ENABLE_PSRAM && !ROM_FLASH
+                if (last_filename_raw[0] != '\0') {
+                    load_cart_rom_file(last_filename_raw);
+                    launched = true;
+                }
+#endif
+                if (launched || ROM_FLASH) break;
             }
+		}
+		if (!a && prev_a) {
+            if (!show_settings) {
+                /* copy the rom from the SD card to flash and start the game */
+                // memset(front_fb->data, 0, sizeof(front_fb->data));
+                printf("LOADING\n");
+                load_cart_rom_file(filename[selected]);
+                break;
+            }
+		}
+        if (!b && prev_b) {
         }
         if (!down && prev_down) {
             if (show_settings) {

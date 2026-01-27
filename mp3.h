@@ -952,7 +952,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
 #if TIE_PWR_LED_TO_LCD
                 pwr_led_duty_cycle = temp_lcd_led;
 #endif
-                save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, true);
+                save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
 
                 release_power();
 

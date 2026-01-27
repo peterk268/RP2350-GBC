@@ -130,6 +130,9 @@ void in_game_screenshot() {
     }
 }
 
+void ig_toggle_auto_load_state() {
+    auto_load_state = !auto_load_state;
+}
 
 // ================================================================
 // In-game menu item model
@@ -291,6 +294,10 @@ static void ig_get_fast_forward_text(char *out, size_t out_sz) {
 static void ig_get_battery_save_text(char *out, size_t out_sz) {
     bool on = (run_mode == MODE_POWERSAVE);
     snprintf(out, out_sz, "%s", on ? "ON" : "OFF");
+}
+
+static void ig_get_auto_load_state_text(char *out, size_t out_sz) {
+    snprintf(out, out_sz, "%s", auto_load_state ? "ON" : "OFF");
 }
 
 #define MAX_PALETTE_SWATCH 6
@@ -553,6 +560,9 @@ void in_game_menu() {
 
         { "Battery Saving  ", IG_ITEM_TOGGLE, ig_get_battery_save_text,
             ig_toggle_battery_save, ig_toggle_battery_save, ig_toggle_battery_save, IG_ACT_NONE },
+
+        { "Auto Load State ", IG_ITEM_TOGGLE, ig_get_auto_load_state_text,
+            ig_toggle_auto_load_state, ig_toggle_auto_load_state, ig_toggle_auto_load_state, IG_ACT_NONE },
 
         { "Color Palette",  IG_ITEM_VALUE,  ig_get_palette_text,
             in_game_next_color_palette, in_game_prev_color_palette, in_game_next_color_palette, IG_ACT_NONE },

@@ -163,8 +163,18 @@ void read_cart_ram_file(struct gb_s *gb) {
 			return;
 		}
 
-		char save_path[PATH_MAX_LEN];
-		build_save_path_from_flash(SAVE_BATTERY, save_path, sizeof(save_path), -1);
+		char *save_path = (char *)malloc(PATH_MAX_LEN);
+        if (!save_path) {
+            printf("E malloc save_path failed\n");
+            return; // or handle error
+        }
+
+        int rc = build_save_path_from_flash(SAVE_BATTERY, save_path, PATH_MAX_LEN, -1);
+        if (rc != 0) {
+            printf("E build_save_path_from_flash(SAVE_BATTERY) failed\n");
+            free(save_path);
+            return;
+        }
 
 		FIL fil;
 		fr=f_open(&fil,save_path,FA_READ);
@@ -182,6 +192,7 @@ void read_cart_ram_file(struct gb_s *gb) {
 
 		// set_sd_busy(false);
 		printf("I read_cart_ram_file(%s) COMPLETE (%lu bytes)\n",save_path,save_size);
+        free(save_path);
 	}
 }
 
@@ -203,8 +214,18 @@ void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
 			return;
 		}
 
-		char save_path[PATH_MAX_LEN];
-		build_save_path_from_flash(SAVE_BATTERY, save_path, sizeof(save_path), -1);
+		char *save_path = (char *)malloc(PATH_MAX_LEN);
+        if (!save_path) {
+            printf("E malloc save_path failed\n");
+            return; // or handle error
+        }
+
+        int rc = build_save_path_from_flash(SAVE_BATTERY, save_path, PATH_MAX_LEN, -1);
+        if (rc != 0) {
+            printf("E build_save_path_from_flash(SAVE_BATTERY) failed\n");
+            free(save_path);
+            return;
+        }
 
 		FIL fil;
 		fr=f_open(&fil,save_path,FA_CREATE_ALWAYS | FA_WRITE);
@@ -222,6 +243,7 @@ void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
         if (!hold_sd_busy)
             set_sd_busy(false);
 		printf("I write_cart_ram_file(%s) COMPLETE (%lu bytes)\n",save_path,save_size);
+        free(save_path);
 	}
 }
 
@@ -327,7 +349,7 @@ void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy, int override_slot
     FIL fil;
     bool file_opened = false;
 
-    char save_path[PATH_MAX_LEN];
+    char *save_path = NULL;
 
     gb_save_state_t *s = NULL;
     save_state_header_t hdr;
@@ -336,6 +358,12 @@ void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy, int override_slot
 
     set_sd_busy(true);
 
+    save_path = (char *)malloc(PATH_MAX_LEN);
+    if (!save_path) {
+        printf("E malloc save_path failed\n");
+        goto cleanup;
+    }
+
     pSD = sd_get_by_num(0);
     fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
     if (fr != FR_OK) {
@@ -343,7 +371,7 @@ void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy, int override_slot
         goto cleanup;
     }
 
-    if (build_save_path_from_flash(SAVE_STATE, save_path, sizeof(save_path), override_slot) != 0) {
+    if (build_save_path_from_flash(SAVE_STATE, save_path, PATH_MAX_LEN, override_slot) != 0) {
         printf("E build_save_path_from_flash(SAVE_STATE) failed\n");
         goto cleanup;
     }
@@ -454,6 +482,12 @@ cleanup:
 
     if (s) free(s);
 
+    if (save_path) {
+        free(save_path);
+        save_path = NULL;
+    }
+
+
     if (!hold_sd_busy) set_sd_busy(false);
 }
 
@@ -466,13 +500,20 @@ bool read_cart_save_state(struct gb_s *gb, int override_slot) {
     FRESULT fr;
     FIL fil;
     save_state_header_t hdr;
-    char save_path[PATH_MAX_LEN];
+    char *save_path = NULL;
     gb_save_state_t *s = NULL;
     sd_card_t *pSD;
+    bool success = false;
 
     if (!gb) return false;
 
     set_sd_busy(true);
+
+    save_path = (char *)malloc(PATH_MAX_LEN);
+    if (!save_path) {
+        printf("E malloc save_path failed\n");
+        goto cleanup;
+    }
 
     pSD = sd_get_by_num(0);
     fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
@@ -481,7 +522,7 @@ bool read_cart_save_state(struct gb_s *gb, int override_slot) {
         goto cleanup;
     }
 
-    if (build_save_path_from_flash(SAVE_STATE, save_path, sizeof(save_path), override_slot) != 0) {
+    if (build_save_path_from_flash(SAVE_STATE, save_path, PATH_MAX_LEN, override_slot) != 0) {
         printf("E build_save_path_from_flash(SAVE_STATE) failed\n");
         goto cleanup;
     }
@@ -584,6 +625,7 @@ bool read_cart_save_state(struct gb_s *gb, int override_slot) {
 #endif
     // ---- END APPLY RESTORE ----
 
+    success = true;
     printf("I read_cart_save_state(%s) COMPLETE (%u bytes payload)\n",
            save_path, (unsigned)sizeof(*s));
 
@@ -594,10 +636,11 @@ cleanup:
     if (pSD) f_unmount(pSD->pcName);
 
     if (s) free(s);
+    if (save_path) { free(save_path); save_path = NULL; }
 
     set_sd_busy(false);
 
-    return (fr == FR_OK); // or keep your original success logic with a separate bool
+    return success && (fr == FR_OK);
 }
 
 // ------------------------------------------------------------
@@ -2180,6 +2223,7 @@ typedef struct {
     int8_t selected_palette;
     uint8_t wash_out_level;
     char last_filename_raw[FILENAME_MAX_LEN];
+    bool auto_load_state;
 } system_settings_t;
 
 system_settings_t g_saved_settings = {0};
@@ -2217,7 +2261,8 @@ static bool ensure_settings_dir(void) {
 // --- System settings ---
 bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
                           uint8_t *power_brightness, int8_t *selected_palette,
-                          uint8_t *wash_out_level, char last_filename_raw[FILENAME_MAX_LEN]) {
+                          uint8_t *wash_out_level, char last_filename_raw[FILENAME_MAX_LEN],
+                          bool *auto_load_state) {
     FIL fil;
     UINT br;
     system_settings_t s = {0};
@@ -2246,7 +2291,8 @@ bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
     *wash_out_level    = s.wash_out_level;
     strncpy(last_filename_raw, s.last_filename_raw, FILENAME_MAX_LEN);
     last_filename_raw[FILENAME_MAX_LEN - 1] = '\0'; // ensure null termination
-
+    *auto_load_state   = s.auto_load_state;
+    
     // Save to global
     g_saved_settings = s;
 
@@ -2256,6 +2302,7 @@ bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
 void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
                           uint8_t power_brightness, int8_t selected_palette,
                           uint8_t wash_out_level, char last_filename_raw[FILENAME_MAX_LEN],
+                          bool auto_load_state,
                           bool hold_sd_busy) {
     system_settings_t s = {
         .magic = SYSTEM_MAGIC,
@@ -2263,7 +2310,8 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
         .button_brightness = button_brightness,
         .power_brightness = power_brightness,
         .selected_palette = selected_palette,
-        .wash_out_level = wash_out_level
+        .wash_out_level = wash_out_level,
+        .auto_load_state = auto_load_state
     };
     // Properly copy the filename into the struct
     strncpy(s.last_filename_raw, last_filename_raw, FILENAME_MAX_LEN);
@@ -2301,12 +2349,14 @@ static inline bool system_settings_equal(const system_settings_t *a, const syste
            a->power_brightness   == b->power_brightness &&
            a->selected_palette   == b->selected_palette &&
            a->wash_out_level     == b->wash_out_level &&
+           a->auto_load_state    == b->auto_load_state &&
            strncmp(a->last_filename_raw, b->last_filename_raw, FILENAME_MAX_LEN) == 0;
 }
 
 void save_system_settings_if_changed(uint8_t lcd_brightness, uint8_t button_brightness,
                                      uint8_t power_brightness, int8_t selected_palette,
                                      uint8_t wash_out_level, char last_filename_raw[FILENAME_MAX_LEN],
+                                     bool auto_load_state,
                                      bool hold_sd_busy) {
 
 	system_settings_t current = {
@@ -2315,7 +2365,8 @@ void save_system_settings_if_changed(uint8_t lcd_brightness, uint8_t button_brig
         .button_brightness = button_brightness,
         .power_brightness = power_brightness,
         .selected_palette = selected_palette,
-        .wash_out_level = wash_out_level
+        .wash_out_level = wash_out_level,
+        .auto_load_state = auto_load_state
     };
     // Properly copy the filename into the struct
     strncpy(current.last_filename_raw, last_filename_raw, FILENAME_MAX_LEN);
@@ -2330,6 +2381,7 @@ void save_system_settings_if_changed(uint8_t lcd_brightness, uint8_t button_brig
                              selected_palette,
                              wash_out_level,
                              last_filename_raw,
+                             auto_load_state,
                              hold_sd_busy);
         g_saved_settings = current;
     }

@@ -134,7 +134,8 @@ bool read_system_settings(uint8_t *lcd_brightness,
                           uint8_t *power_brightness,
                           int8_t  *selected_palette,
                           uint8_t *wash_out_level,
-                          char last_filename_raw[FILENAME_MAX_LEN]);
+                          char last_filename_raw[FILENAME_MAX_LEN],
+                          bool *auto_load_state);
 
 void save_system_settings(uint8_t lcd_brightness,
                           uint8_t button_brightness,
@@ -142,6 +143,7 @@ void save_system_settings(uint8_t lcd_brightness,
                           int8_t  selected_palette,
                           uint8_t wash_out_level,
                           char last_filename_raw[FILENAME_MAX_LEN],
+                          bool auto_load_state,
                           bool hold_sd_busy);
 
 // --- ROM settings ---

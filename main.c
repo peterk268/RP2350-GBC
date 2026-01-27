@@ -161,7 +161,7 @@ int main(void)
 #endif
 
 	watchdog_update();
-	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level, last_filename_raw);
+	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level, last_filename_raw, &auto_load_state);
 #if TIE_PWR_LED_TO_LCD
 	pwr_target_brightness = lcd_target_brightness;
 #endif
@@ -284,9 +284,21 @@ while(true)
 	putstdio("AUDIO ");
 #endif
 
-#if ENABLE_SDCARD
-    // MARK: - Load Save File
-	read_cart_ram_file(&gb);
+#if ENABLE_SDCARD		
+	// MARK: - Load Auto State
+	if (auto_load_state) {
+		bool load_success = read_cart_save_state(&gb, 0);
+
+		// If auto-load fails, fall back to battery save
+		if (!load_success) {
+			printf("Auto load state failed.\n");
+			read_cart_ram_file(&gb);
+		}
+	} else {
+		// MARK: - Load Save File
+		// Auto-load disabled -> battery save only
+		read_cart_ram_file(&gb);
+	}
 #endif
 
 	putstdio("\n> ");
@@ -342,12 +354,12 @@ while(true)
 			in_game_save_auto_state(true);
 #endif			
 #if LED_PHASE_OUT_PWR_DOWN
-			save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level, last_filename_raw, true);
+			save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, );
 #else
 # if TIE_PWR_LED_TO_LCD
 			pwr_led_duty_cycle = temp_lcd_led;
 # endif
-			save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, true);
+			save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
 #endif
 			printf("Done");
 
@@ -391,7 +403,7 @@ while(true)
 # if TIE_PWR_LED_TO_LCD
 			pwr_led_duty_cycle = temp_lcd_led;
 # endif
-			save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, true);
+			save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
 #endif
 			release_power(); // Cut power hold
 			sleep_ms(1);

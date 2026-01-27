@@ -37,8 +37,21 @@ bool gb_alloc_ram(void)
     return true;
 }
 
-static int lcd_fb_ready = 0;
-static palette_t palette;	// Colour palette
+static palette_t *palette = NULL;
+
+bool palette_heap_init(void) {
+    palette = (palette_t *)malloc(sizeof(*palette));
+    if (!palette) return false;
+    memset(palette, 0, sizeof(*palette));
+    return true;
+}
+
+void palette_heap_deinit(void) {
+    if (palette) {
+        free(palette);
+        palette = NULL;
+    }
+}
 static int8_t manual_palette_selected=-1;
 char last_filename_raw[FILENAME_MAX_LEN];
 bool auto_load_state = false;

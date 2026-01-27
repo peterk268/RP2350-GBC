@@ -36,10 +36,10 @@ void in_game_cycle_color_palette() {
     }
 
     if (manual_palette_selected != -1) {
-    	manual_assign_palette(palette, manual_palette_selected);
+    	manual_assign_palette(*palette, manual_palette_selected);
     } else {
         char rom_title[16];
-        auto_assign_palette(palette, gb_colour_hash(&gb),gb_get_rom_name(&gb,rom_title));
+        auto_assign_palette(*palette, gb_colour_hash(&gb),gb_get_rom_name(&gb,rom_title));
     }
 }
 
@@ -332,7 +332,7 @@ static void ig_get_palette_text(char *out, size_t out_sz) {
     uint palette_num = manual_palette_selected + 1;
     // Build colored swatches using LVGL recolor tags: #RRGGBB text#
     uint16_t cols[MAX_PALETTE_SWATCH];
-    int n = collect_unique_rgb565(palette, cols, MAX_PALETTE_SWATCH);
+    int n = collect_unique_rgb565(*palette, cols, MAX_PALETTE_SWATCH);
 
     // Example output: "3 #ffcc00 |##00aaff |##000000 |#"
     size_t w = 0;
@@ -369,10 +369,10 @@ static void in_game_prev_color_palette(void) {
     else manual_palette_selected = 12;
 
     if (manual_palette_selected != -1) {
-        manual_assign_palette(palette, manual_palette_selected);
+        manual_assign_palette(*palette, manual_palette_selected);
     } else {
         char rom_title[16];
-        auto_assign_palette(palette, gb_colour_hash(&gb),gb_get_rom_name(&gb,rom_title));
+        auto_assign_palette(*palette, gb_colour_hash(&gb),gb_get_rom_name(&gb,rom_title));
     }
 }
 static void in_game_next_color_palette(void) {

@@ -380,14 +380,17 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
             for (unsigned int x = 0; x < LCD_WIDTH; x++)
                 dst[x] = shift_components(gb->cgb.fixPalette[pixels[x]]);
         } else {
-            for (unsigned int x = 0; x < LCD_WIDTH; x++)
-                dst[x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4][pixels[x] & 3];
+            // Force 4-color manual palette regardless of CGB palette number / OAM mark
+            for (unsigned x = 0; x < LCD_WIDTH; x++) {
+                uint8_t row = (pixels[x] & 0x20) ? 1 : 2;  // sprite->1, bg->2 (pick whatever you want)
+                dst[x] = (*palette)[row][pixels[x] & LCD_COLOUR];
+            }
         }
     } else
 #endif
     {
         for (unsigned int x = 0; x < LCD_WIDTH; x++)
-            dst[x] = palette[(pixels[x] & LCD_PALETTE_ALL) >> 4][pixels[x] & 3];
+            dst[x] = (*palette)[(pixels[x] & LCD_PALETTE_ALL) >> 4][pixels[x] & 3];
     }
 
     // End of frame: publish this buffer as READY

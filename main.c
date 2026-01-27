@@ -265,14 +265,20 @@ while(true)
 	}
 
 	// MARK: - Auto Assign Palette
+	if (!palette) {
+		if (!palette_heap_init()) {
+			printf("E: palette malloc failed\n");
+		}
+	}
+
 	char rom_title[16];
-	auto_assign_palette(palette, gb_colour_hash(&gb),gb_get_rom_name(&gb,rom_title));
+	auto_assign_palette(*palette, gb_colour_hash(&gb),gb_get_rom_name(&gb,rom_title));
 	
     // MARK: - GPU Init
 #if ENABLE_LCD
 	gb_init_lcd(&gb, &lcd_draw_line);
 	if (manual_palette_selected != -1) {
-		manual_assign_palette(palette, manual_palette_selected);
+		manual_assign_palette(*palette, manual_palette_selected);
 	}
 #endif
 

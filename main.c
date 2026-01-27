@@ -617,8 +617,7 @@ while(true)
     }
     // MARK: - Ending Emulation
     out:
-        puts("\nEmulation Ended");
-		memory_stats();
+        printf("\nEmulation Ended");
 		// Clean up for the ROM selector
 		if (rom) {
 			free(rom);
@@ -632,8 +631,10 @@ while(true)
 			free(filename);
 			filename = NULL;
 		}
-		watchdog_disable();
+
+		memory_stats();
 		release_power(); // release power hold
+		watchdog_disable();
 		sleep_ms(100);
     }
 

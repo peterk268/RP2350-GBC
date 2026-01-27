@@ -468,8 +468,8 @@ static void ig_update_hints(const ig_menu_item_t *it, lv_obj_t *hint_left, lv_ob
         default:             lv_label_set_text(hint_left,  ""); break;
     }
 }
-int ig_selected = 0;
-int ig_page_start = 0;
+uint8_t ig_selected = 0;
+uint8_t ig_page_start = 0;
 
 void in_game_menu() {
     g_in_game_menu = true;

@@ -201,10 +201,6 @@ void render_loop() {
                         __atomic_store_n(&next->state, FB_DISPLAYED, __ATOMIC_RELEASE);
                         __atomic_store_n(&old->state,  FB_FREE,      __ATOMIC_RELEASE);
 
-                        // Hand the freed buffer back to core0 as its free_fb if you want
-                        // (This part is optional; simplest is to let core0 manage free_fb itself.)
-                        free_fb = old; // <-- only do this if free_fb is NOT used by core0 concurrently
-
                         __atomic_store_n(&freed_fb, old, __ATOMIC_RELEASE);
                         __sev();
                     }

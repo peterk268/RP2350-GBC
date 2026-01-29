@@ -60,7 +60,9 @@ typedef struct {
 } framebuffer_t;
 
 // three buffers
-static framebuffer_t fb0, fb1, fb2;
+static framebuffer_t *fb0 = NULL;
+static framebuffer_t *fb1 = NULL;
+static framebuffer_t *fb2 = NULL;
 
 // Core1 display pointer (core1 reads it constantly)
 static framebuffer_t *front_fb = NULL;
@@ -73,6 +75,11 @@ static framebuffer_t *free_fb  = NULL;
 static framebuffer_t *ready_fb = NULL;  // atomic pointer
 
 static framebuffer_t *freed_fb = NULL; // core1->core0 mailbox
+
+// Alias with 2D array syntax
+static uint16_t (*lvgl_fb)[LCD_WIDTH];
+// Alias backbuffer as 1D LVGL buffer
+static lv_color_t *lv_buf1;
 
 bool double_frame_needs_bfi = 0;
 #define ENABLE_BFI 0
@@ -294,17 +301,55 @@ void main_core1(void) {
     HEDLEY_UNREACHABLE();
 }
 
+void fb_deinit(void)
+{
+    if (fb0) { free(fb0); fb0 = NULL; }
+    if (fb1) { free(fb1); fb1 = NULL; }
+    if (fb2) { free(fb2); fb2 = NULL; }
+
+    front_fb = NULL;
+    write_fb = NULL;
+    free_fb  = NULL;
+    __atomic_store_n(&ready_fb, (framebuffer_t *)NULL, __ATOMIC_RELAXED);
+}
+
+static framebuffer_t *fb_alloc_zeroed(void)
+{
+    framebuffer_t *p = (framebuffer_t *)malloc(sizeof(framebuffer_t));
+    if (!p) return NULL;
+    memset(p, 0, sizeof(*p));
+    return p;
+}
+
 void fb_init(void)
 {
+    fb_deinit();
+
+    fb0 = fb_alloc_zeroed();
+    fb1 = fb_alloc_zeroed();
+    fb2 = fb_alloc_zeroed();
+
+    if (!fb0 || !fb1 || !fb2) {
+        // Cleanup partial allocs
+        fb_deinit();
+        printf("E fb_init: malloc failed (need %u bytes each)\n",
+               (unsigned)sizeof(framebuffer_t));
+        return;
+    }
+
     // Initial states
-    fb0.state = FB_DISPLAYED;
-    fb1.state = FB_FREE;
-    fb2.state = FB_FREE;
+    fb0->state = FB_DISPLAYED;
+    fb1->state = FB_FREE;
+    fb2->state = FB_FREE;
 
-    front_fb = &fb0;   // core1 starts by displaying fb0
-    write_fb = &fb1;   // core0 starts writing fb1
-    free_fb  = &fb2;   // spare free buffer
 
+    front_fb = fb0;   // core1 starts by displaying fb0
+    write_fb = fb1;   // core0 starts writing fb1
+    free_fb  = fb2;   // spare free buffer
+
+    lvgl_fb = front_fb->data;
+    lv_buf1 = (lv_color_t *)write_fb->data;
+    
     __atomic_store_n(&ready_fb, (framebuffer_t *)NULL, __ATOMIC_RELAXED);
 }
 
@@ -667,8 +712,6 @@ static inline uint16_t rgb565_to_bgr565(uint16_t rgb) {
 #define DISP_VER_RES 144
 
 // static uint16_t lvgl_fb[DISP_HOR_RES][DISP_VER_RES];
-// Alias with 2D array syntax
-static uint16_t (*lvgl_fb)[LCD_WIDTH] = fb0.data;
 
 // Allocate draw buffers (double buffer, partial height to save RAM)
 #define LV_BUF_LINES DISP_VER_RES  // Number of lines per buffer chunk
@@ -676,8 +719,6 @@ static uint16_t (*lvgl_fb)[LCD_WIDTH] = fb0.data;
 // static lv_color_t lv_buf1[DISP_HOR_RES * LV_BUF_LINES];
 // static lv_color_t lv_buf2[DISP_HOR_RES * LV_BUF_LINES];
 
-// Alias backbuffer as 1D LVGL buffer
-static lv_color_t *lv_buf1 = (lv_color_t *)fb1.data;
 
 static void lvgl_flush_cb(struct _lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p) {
     int32_t x1 = area->x1;

@@ -965,7 +965,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             for (int i = 0;
                  i < 2 && stream->count < (MP3_STREAM_BUF_SIZE * 3 / 4) && !stream->eof;
                  i++) {
-                printf("refill\n");
+                // printf("refill\n");
                 mp3_refill(stream);
             }
 
@@ -1456,7 +1456,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
         uint64_t now = time_us_64();
         uint64_t time_since_last_update = now - last_lvgl_update;
         if (/*time_since_last_update >= 10000 && */!g_mp3_inactive) {   // 10 ms (100 Hz UI updates)
-            printf("%llu us\n", (unsigned long long)time_since_last_update);
+            // printf("%llu us\n", (unsigned long long)time_since_last_update);
             lv_tick_inc(time_since_last_update/1000);
             lv_timer_handler();
             last_lvgl_update = now;

@@ -831,8 +831,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
     printf("MP3: %d Hz, %d ch\n", mp3.sampleRate, mp3.channels);
     i2s_set_sample_freq(&i2s_config, mp3.sampleRate, false);
 
-    int channels = mp3.channels;
-    int sample_count = PCM_FRAME_COUNT * channels;
+    uint8_t channels = mp3.channels;
+    uint32_t sample_count = PCM_FRAME_COUNT * channels;
 
     // Triple PCM buffers + silence buffer for pause (all in PSRAM)
     // Make sure all PCM buffers start as silence (no old track data)
@@ -1759,7 +1759,17 @@ void play_mp3_stream(const char *start_filename) {
     // Create list
     lv_init();
 
-    lv_disp_draw_buf_t draw_buf;
+    // DO NOT EVER CHANGE THIS
+    // We don't need the lvgl framebuffers for mp3 or imu dash
+    // because the fb swaps that mess up lvgl only happen 
+    // with gbc gameplay for the triple buffering.
+    // But when having the lvgl fb buffers allocated,
+    // we waste memory and also crash with malloc failures.
+    lvgl_free_buffers();
+    lvgl_fb = front_fb->data;
+    lv_buf1 = (lv_color_t *)write_fb->data;
+
+    static lv_disp_draw_buf_t draw_buf;
     lv_disp_draw_buf_init(&draw_buf, lv_buf1, NULL, DISP_HOR_RES * LV_BUF_LINES);
 
     lv_disp_drv_init(&disp_drv);

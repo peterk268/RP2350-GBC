@@ -1016,8 +1016,8 @@ fail:
 void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
     while(led_ramp_done == false) sleep_ms(1); // Wait for LED fade-in to complete
     
-    // memset(front_fb->data, 0, sizeof(front_fb->data));
-    memset(write_fb->data, 0, sizeof(write_fb->data));
+    memset(front_fb->data, 0, sizeof(front_fb->data));
+    // memset(write_fb->data, 0, sizeof(write_fb->data));
     // memset(spare_fb->data, 0, sizeof(spare_fb->data));
     // sleep_ms(10); // wait for core1 to render black screen, 8.33ms refresh time
     
@@ -1979,6 +1979,8 @@ void rom_file_selector() {
     // Create list
     lv_init();
 
+    memset(lvgl_fb, 0, lvgl_fb_bytes);
+
     static lv_disp_draw_buf_t draw_buf;
     lv_disp_draw_buf_init(&draw_buf, lv_buf1, NULL, DISP_HOR_RES * LV_BUF_LINES);
 
@@ -2055,6 +2057,8 @@ void rom_file_selector() {
 	// sleep_ms(3000);
 	print_memory_usage();
 
+    __atomic_store_n(&show_gui, true, __ATOMIC_RELEASE);
+
 	while (true) {
 #if ENABLE_BAT_MONITORING
 		if (battery_task_flag) {
@@ -2108,7 +2112,6 @@ void rom_file_selector() {
 		if (!a && prev_a) {
             if (!show_settings) {
                 /* copy the rom from the SD card to flash and start the game */
-                // memset(front_fb->data, 0, sizeof(front_fb->data));
                 printf("LOADING\n");
                 load_cart_rom_file(filename[selected]);
                 break;

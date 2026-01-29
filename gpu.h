@@ -13,6 +13,10 @@
 #define ENABLE_SCANLINES 0
 #define ENABLE_V_SCANLINES 0
 
+#define DISP_HOR_RES 160
+#define DISP_VER_RES 144
+#define LV_BUF_LINES DISP_VER_RES  // Number of lines per buffer chunk
+
 const scanvideo_timing_t tft_timing_320x320_60 = {
     .clock_freq      =  20 * 1000 * 1000,
     .h_active        =  H_ACTIVE,
@@ -78,8 +82,12 @@ static framebuffer_t *freed_fb = NULL; // core1->core0 mailbox
 
 // Alias with 2D array syntax
 static uint16_t (*lvgl_fb)[LCD_WIDTH];
+#define lvgl_fb_bytes   ((size_t)LCD_WIDTH * (size_t)LCD_HEIGHT * sizeof(uint16_t))
+#define LVGL_BUF1_BYTES ((size_t)LCD_WIDTH * (size_t)LV_BUF_LINES * sizeof(lv_color_t))
 // Alias backbuffer as 1D LVGL buffer
 static lv_color_t *lv_buf1;
+
+static bool show_gui = false;
 
 bool double_frame_needs_bfi = 0;
 #define ENABLE_BFI 0
@@ -251,7 +259,7 @@ void render_loop() {
         && (!ENABLE_BFI || !double_frame_needs_bfi || gb.direct.frame_skip == 1) 
         && (!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field)) 
         && (!ADD_TOP_PADDING || (top_padding_counter > TOP_PADDING))
-        ? front_fb->data[y] : black_fb);
+        ? (__atomic_load_n(&show_gui, __ATOMIC_ACQUIRE) ? lvgl_fb[y] : front_fb->data[y]) : black_fb);
 
         scanvideo_end_scanline_generation(scanline_buffer);
 
@@ -317,6 +325,40 @@ static framebuffer_t *fb_alloc_zeroed(void)
     return p;
 }
 
+static bool lvgl_alloc_buffers() {
+    // Full-screen framebuffer for what gets displayed (RGB565)
+    if (!lvgl_fb) {
+        // Allocate as a flat block, then alias as [ver][hor]
+        void *p = malloc(lvgl_fb_bytes);
+        if (!p) return false;
+
+        memset(p, 0, lvgl_fb_bytes);
+        lvgl_fb = (uint16_t (*)[LCD_WIDTH])p;   // LCD_WIDTH must == hor_res
+    }
+
+    // LVGL draw buffer (partial buffer, LVGL flushes chunks)
+    if (!lv_buf1) {
+        lv_buf1 = (lv_color_t *)malloc(LVGL_BUF1_BYTES);
+        if (!lv_buf1) return false;
+
+        memset(lv_buf1, 0, LVGL_BUF1_BYTES);
+    }
+
+    return true;
+}
+
+// Optional cleanup (call on shutdown if you want; not required)
+static void lvgl_free_buffers(void) {
+    if (lvgl_fb) {
+        free((void*)lvgl_fb);
+        lvgl_fb = NULL;
+    }
+    if (lv_buf1) {
+        free(lv_buf1);
+        lv_buf1 = NULL;
+    }
+}
+
 void fb_init(void)
 {
     fb_deinit();
@@ -343,8 +385,7 @@ void fb_init(void)
     write_fb = fb1;   // core0 starts writing fb1
     free_fb  = fb2;   // spare free buffer
 
-    lvgl_fb = front_fb->data;
-    lv_buf1 = (lv_color_t *)write_fb->data;
+    lvgl_alloc_buffers();
     
     __atomic_store_n(&ready_fb, (framebuffer_t *)NULL, __ATOMIC_RELAXED);
 }
@@ -704,13 +745,10 @@ static inline uint16_t rgb565_to_bgr565(uint16_t rgb) {
 // }
 
 // Replace with your panel's width/height
-#define DISP_HOR_RES 160
-#define DISP_VER_RES 144
 
 // static uint16_t lvgl_fb[DISP_HOR_RES][DISP_VER_RES];
 
 // Allocate draw buffers (double buffer, partial height to save RAM)
-#define LV_BUF_LINES DISP_VER_RES  // Number of lines per buffer chunk
 
 // static lv_color_t lv_buf1[DISP_HOR_RES * LV_BUF_LINES];
 // static lv_color_t lv_buf2[DISP_HOR_RES * LV_BUF_LINES];
@@ -769,6 +807,8 @@ static lv_disp_drv_t disp_drv;
 void lvgl_setup(void)
 {
     lv_init();
+
+    __atomic_store_n(&show_gui, true, __ATOMIC_RELEASE);
 
     static lv_disp_draw_buf_t draw_buf;
     lv_disp_draw_buf_init(&draw_buf, lv_buf1, NULL, DISP_HOR_RES * LV_BUF_LINES);

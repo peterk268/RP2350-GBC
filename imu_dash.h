@@ -88,6 +88,10 @@ static gmeter_ui_t g_gmeter_ui = {0};
 static void gmeter_create_screen(void) {
     lv_init();
 
+    lvgl_free_buffers();
+    lvgl_fb = front_fb->data;
+    lv_buf1 = (lv_color_t *)write_fb->data;
+
     // Display driver setup
     static lv_disp_draw_buf_t draw_buf;
     lv_disp_draw_buf_init(&draw_buf, lv_buf1, NULL, DISP_HOR_RES * LV_BUF_LINES);

@@ -244,6 +244,9 @@ while(true)
 #if ENABLE_SDCARD && ENABLE_ROM_SELECTOR
 	rom_file_selector();
 #endif
+
+    __atomic_store_n(&show_gui, false, __ATOMIC_RELEASE);
+
 	set_sd_busy(true);
 
 	// MARK: - Initialise GB context
@@ -636,6 +639,10 @@ while(true)
     // MARK: - Ending Emulation
     out:
         printf("\nEmulation Ended");
+		
+		// To prevent the flicker of a game frame when exiting to rom selector
+		memset(front_fb->data, 0, sizeof(front_fb->data));
+
 		// Clean up for the ROM selector
 		if (rom) {
 			free(rom);

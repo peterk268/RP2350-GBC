@@ -124,7 +124,7 @@ void in_game_toggle_battery_save_mode() {
 }
 
 void in_game_screenshot() {
-    write_screenshot_png_from_fb(g_in_game_menu ? free_fb : front_fb, -1, false);
+    write_screenshot_png_from_fb(front_fb, -1, false);
     if (g_in_game_menu) {
         g_request_exit_menu = true;
     }
@@ -573,17 +573,12 @@ void in_game_menu() {
 
     // Essential
     lv_deinit();
-    sleep_ms(50);
 
-    framebuffer_t *f  = __atomic_load_n(&front_fb, __ATOMIC_ACQUIRE);
-    framebuffer_t *w  = __atomic_load_n(&write_fb, __ATOMIC_ACQUIRE);
-    framebuffer_t *fr = __atomic_load_n(&free_fb, __ATOMIC_ACQUIRE);
-
-    // To hold the gameplay frame for the screenshot
-    memcpy(&fr->data[0][0], &f->data[0][0], sizeof(f->data));
-
-    lvgl_fb = f->data;
-    lv_buf1 = (lv_color_t *)w->data;
+    if (lvgl_fb) {
+        for (size_t i = 0; i < (lvgl_fb_bytes / 2); i++) {
+            ((uint16_t*)lvgl_fb)[i] = 0xFFFF;
+        }
+    }
 
     // Create list
     lv_init();
@@ -644,6 +639,8 @@ void in_game_menu() {
     // LVGL tick baseline (prevents huge first dt)
     static uint64_t last_lvgl_tick = 0;
     last_lvgl_tick = time_us_64();
+
+    __atomic_store_n(&show_gui, true, __ATOMIC_RELEASE);
 
     while (1) {
 
@@ -794,4 +791,5 @@ void in_game_menu() {
 
     g_request_exit_menu = false; 
     g_in_game_menu = false;
+    __atomic_store_n(&show_gui, false, __ATOMIC_RELEASE);
 }

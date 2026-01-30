@@ -202,8 +202,9 @@ void render_loop() {
                 if (next) {
                     // If somehow it isn't READY, ignore (safety)
                     if (__atomic_load_n(&next->state, __ATOMIC_ACQUIRE) == FB_READY) {
-                        framebuffer_t *old = front_fb;
-                        front_fb = next;
+                        framebuffer_t *old = __atomic_load_n(&front_fb, __ATOMIC_RELAXED);
+                        __atomic_store_n(&front_fb, next, __ATOMIC_RELEASE);
+
 
                         // States: new is displayed, old becomes free
                         __atomic_store_n(&next->state, FB_DISPLAYED, __ATOMIC_RELEASE);
@@ -255,11 +256,13 @@ void render_loop() {
         }
         #warning "GB Games don't have this issue... so the opposite happens on them"
         // Render scanline
+        framebuffer_t *fb = __atomic_load_n(&front_fb, __ATOMIC_ACQUIRE);
+
         render_scanline(scanline_buffer, (y < LCD_HEIGHT) 
         && (!ENABLE_BFI || !double_frame_needs_bfi || gb.direct.frame_skip == 1) 
         && (!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field)) 
         && (!ADD_TOP_PADDING || (top_padding_counter > TOP_PADDING))
-        ? (__atomic_load_n(&show_gui, __ATOMIC_ACQUIRE) ? lvgl_fb[y] : front_fb->data[y]) : black_fb);
+        ? (__atomic_load_n(&show_gui, __ATOMIC_ACQUIRE) ? lvgl_fb[y] : fb->data[y]) : black_fb);
 
         scanvideo_end_scanline_generation(scanline_buffer);
 
@@ -486,9 +489,20 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
             free_fb = ret;
         }
 
-        // 2) Publish the finished frame
+        // 2) Publish finished frame (drop older if still pending)
         __atomic_store_n(&write_fb->state, FB_READY, __ATOMIC_RELEASE);
-        __atomic_store_n(&ready_fb, write_fb, __ATOMIC_RELEASE);
+
+        framebuffer_t *prev_pending =
+            __atomic_exchange_n(&ready_fb, write_fb, __ATOMIC_ACQ_REL);
+
+        if (prev_pending) {
+            // We are dropping it (it never got displayed) — reclaim it
+            __atomic_store_n(&prev_pending->state, FB_FREE, __ATOMIC_RELEASE);
+
+            // Optional: keep it as the free buffer candidate
+            free_fb = prev_pending;
+        }
+
         __sev();
 
         // 3) Rotate to a free buffer for the next frame
@@ -501,6 +515,15 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
             // No free buffer available -> drop next frame by reusing write_fb
             // Optional: drop counter here
         }
+
+        // framebuffer_t *front_fb_local = __atomic_load_n(&front_fb, __ATOMIC_ACQUIRE);
+        // framebuffer_t *write_fb_local = __atomic_load_n(&write_fb, __ATOMIC_ACQUIRE);
+        // framebuffer_t *freed_fb_local  = __atomic_load_n(&free_fb,  __ATOMIC_ACQUIRE);
+        // if (front_fb_local == write_fb_local || front_fb_local == freed_fb_local || write_fb_local == freed_fb_local) {
+        //     printf("FB ptrs: front=%p write=%p free=%p\n", front_fb_local, write_fb_local, freed_fb_local);
+        //     printf("E: framebuffer alias detected!\n");
+        // }
+
     }
 }
 #endif

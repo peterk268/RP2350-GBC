@@ -417,6 +417,7 @@ while(true)
 			release_power(); // Cut power hold
 			sleep_ms(1);
 			watchdog_disable();
+			shutdown_screen(2000);
 			shutdown_peripherals(true);
 			sleep_ms(10);
 			// powman_example_init(0);

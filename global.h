@@ -227,6 +227,7 @@ bool minimal_battery_monitoring_cb() {
 		release_power(); // Cut power hold
 		sleep_ms(1);
 		watchdog_disable();
+		shutdown_screen(2000);
 		shutdown_peripherals(true);
 		sleep_ms(10);
 	}

@@ -1255,6 +1255,7 @@ uint16_t get_bat_charge_percent_with_learning(uint16_t voltage_mV, uint16_t repo
 uint16_t get_remaining_bat_capacity_mAh();
 uint16_t get_full_bat_capacity_mAh();
 uint16_t read_voltage_mV();
+int16_t get_average_current_mA();
 
 static int powman_example_off(void);
 
@@ -1320,6 +1321,7 @@ void draw_settings(lv_obj_t *list) {
     lv_obj_clean(list);
 
     uint16_t bat_percent = get_bat_charge_percent();
+    int16_t current_mA = get_average_current_mA();
     uint16_t remaining_cap = get_remaining_bat_capacity_mAh();
     uint16_t full_cap = get_full_bat_capacity_mAh();
     uint16_t voltage_mV = read_voltage_mV();
@@ -1336,19 +1338,28 @@ void draw_settings(lv_obj_t *list) {
     // SECTION: BATTERY
     // ------------------------------
     lv_obj_t *bat_title = lv_label_create(list);
-    lv_label_set_text(bat_title, "Battery");
     lv_obj_set_style_text_color(bat_title, normal_color, 0);
     lv_obj_set_style_text_font(bat_title, LV_FONT_DEFAULT, 0);
+
+    char bat_title_text[48];
+    snprintf(bat_title_text, sizeof(bat_title_text),
+            "Battery  %d%%  %.2fV",
+            bat_percent, voltage_mV / 1000.0f);
+
+    lv_label_set_text(bat_title, bat_title_text);
     lv_obj_align(bat_title, LV_ALIGN_TOP_MID, 0, y_offset);
 
-    lv_obj_t *percent = lv_label_create(list);
-    char percent_text[48];
-    snprintf(percent_text, sizeof(percent_text),
-             "%d%%  %d/%dmAh  %.2fV",
-             bat_percent, remaining_cap, full_cap, voltage_mV / 1000.0);
-    lv_label_set_text(percent, percent_text);
-    lv_obj_set_style_text_color(percent, normal_color, 0);
-    lv_obj_align_to(percent, bat_title, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
+    // Second line: signed current + capacity
+    lv_obj_t *bat_line2 = lv_label_create(list);
+    lv_obj_set_style_text_color(bat_line2, normal_color, 0);
+
+    char line2_text[48];
+    snprintf(line2_text, sizeof(line2_text),
+            "%+dmA  %d/%dmAh",
+            current_mA, remaining_cap, full_cap);
+
+    lv_label_set_text(bat_line2, line2_text);
+    lv_obj_align_to(bat_line2, bat_title, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
 
 
     // ------------------------------
@@ -1357,7 +1368,7 @@ void draw_settings(lv_obj_t *list) {
     lv_obj_t *date_title = lv_label_create(list);
     lv_label_set_text(date_title, "\nDate");
     lv_obj_set_style_text_color(date_title, normal_color, 0);
-    lv_obj_align_to(date_title, percent, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
+    lv_obj_align_to(date_title, line2_text, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
 
     // create label for the formatted date
     lv_obj_t *date_label = lv_label_create(list);
@@ -2070,6 +2081,7 @@ void rom_file_selector() {
 			release_power(); // Cut power hold
 			sleep_ms(1);
 			watchdog_disable();
+            shutdown_screen(2000);
 			shutdown_peripherals(true);
 			sleep_ms(10);
 		}

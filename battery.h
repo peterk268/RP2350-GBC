@@ -661,3 +661,44 @@ void setup_switch_sleep() {
     // Set up the interrupt
     gpio_set_irq_enabled_with_callback(GPIO_SW_OUT, GPIO_IRQ_LEVEL_LOW, true, &gpio_callback);
 }
+
+void shutdown_screen(uint32_t duration_ms) {
+    lv_deinit();
+
+    if (lvgl_fb) memset(lvgl_fb, 0, lvgl_fb_bytes);
+
+    lv_init();
+
+    static lv_disp_draw_buf_t draw_buf;
+    lv_disp_draw_buf_init(&draw_buf, lv_buf1, NULL, DISP_HOR_RES * LV_BUF_LINES);
+
+    lv_disp_drv_init(&disp_drv);
+    disp_drv.hor_res = DISP_HOR_RES;
+    disp_drv.ver_res = DISP_VER_RES;
+    disp_drv.flush_cb = lvgl_flush_cb;
+    disp_drv.draw_buf = &draw_buf;
+
+    lv_disp_t *disp = lv_disp_drv_register(&disp_drv);
+    (void)disp;
+
+    // Create a container to hold UI
+    lv_obj_t *cont = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(cont, DISP_HOR_RES, DISP_VER_RES);
+    lv_obj_center(cont);
+    lv_obj_set_style_bg_color(cont, lv_color_hex(0), 0);
+    lv_obj_set_scrollbar_mode(cont, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0), 0);
+
+    lv_obj_t *title = lv_label_create(cont);
+	lv_label_set_text(title, "Battery low\nPico Pal shutting down...");
+	lv_obj_set_style_text_font(title, LV_FONT_DEFAULT, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
+
+    lv_tick_inc(1);
+    lv_timer_handler();
+
+    __atomic_store_n(&show_gui, true, __ATOMIC_RELEASE);
+
+    sleep_ms(duration_ms);
+}

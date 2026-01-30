@@ -523,22 +523,8 @@ static inline void run_gmeter_dashboard(void) {
         // BATTERY MONITORING //
         minimal_battery_monitoring_cb();
 
-        // ------------------------------
-        // Handle SELECT calibration (active-low)
-        // ------------------------------
-        bool select_now = gpio_get(GPIO_B_SELECT);
-
-        if (!select_now && prev_select) {
-            // Save offsets on button press
-            offset_gy = filt_gy;
-            offset_gz = filt_gz;
-            offset_gx = filt_gx;
-            printf("G-meter calibrated!\n");
-        }
-        prev_select = select_now;
-
         // =====================================================
-        //  Brightness Control
+        //  Brightness Control & IMU Calibration
         // =====================================================
         read_io_expander_states(0);   // refresh GPIO states
 
@@ -547,12 +533,49 @@ static inline void run_gmeter_dashboard(void) {
         bool cur_down  = gpio_read(IOX_B_DOWN);
         bool cur_left  = gpio_read(IOX_B_LEFT);
         bool cur_right = gpio_read(IOX_B_RIGHT);
+        bool cur_a = gpio_read(IOX_B_A);
+        bool cur_b = gpio_read(IOX_B_B);
+        bool cur_start = gpio_read(IOX_B_START);
+
+        // ------------------------------
+        // Handle calibration (active-low)
+        // SELECT is direct GPIO, A/B/START are from IO expander
+        // ------------------------------
+        bool select_now = gpio_get(GPIO_B_SELECT);   // active-low (0 = pressed)
 
         // previous states (keep in this block, static)
         static bool prev_up    = true;
         static bool prev_down  = true;
         static bool prev_left  = true;
         static bool prev_right = true;
+        static bool prev_a     = true;
+        static bool prev_b     = true;
+        static bool prev_start = true;
+        static bool prev_select = true;
+
+        // "just pressed" events (active-low)
+        bool select_just_pressed = (!select_now && prev_select);
+        bool a_just_pressed      = (!cur_a      && prev_a);
+        bool b_just_pressed      = (!cur_b      && prev_b);
+        bool start_just_pressed  = (!cur_start  && prev_start);
+
+        bool calibrate_requested = (select_just_pressed ||
+                                    a_just_pressed ||
+                                    b_just_pressed ||
+                                    start_just_pressed);
+
+        if (calibrate_requested) {
+            offset_gy = filt_gy;
+            offset_gz = filt_gz;
+            offset_gx = filt_gx;
+            printf("G-meter calibrated!\n");
+        }
+
+        // update prev states at end of loop/block
+        prev_select = select_now;
+        prev_a      = cur_a;
+        prev_b      = cur_b;
+        prev_start  = cur_start;
 
         // =====================================================
         //  LCD / PWR Brightness (Up & Down)

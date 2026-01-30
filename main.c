@@ -639,6 +639,10 @@ while(true)
     // MARK: - Ending Emulation
     out:
         printf("\nEmulation Ended");
+
+		// reset emulation mode back to normal
+		if (run_mode == MODE_POWERSAVE) in_game_toggle_battery_save_mode();
+		if (run_mode == MODE_TURBO) in_game_toggle_fast_forward();
 		
 		// To prevent the flicker of a game frame when exiting to rom selector
 		memset(front_fb->data, 0, sizeof(front_fb->data));

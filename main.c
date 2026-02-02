@@ -397,6 +397,9 @@ while(true)
 			do_rtc_update = !do_rtc_update; // toggle for next round
         }
 		if (low_power_shutdown) {
+			// need this before everything else because sd busy will shut off lcd
+			shutdown_screen(1500);
+
 			if (run_mode == MODE_POWERSAVE) {
 				// if run mode was power save, step back up the lcd brightness
 				step_lcd_brightness(true);
@@ -417,7 +420,6 @@ while(true)
 			release_power(); // Cut power hold
 			sleep_ms(1);
 			watchdog_disable();
-			shutdown_screen(2000);
 			shutdown_peripherals(true);
 			sleep_ms(10);
 			// powman_example_init(0);

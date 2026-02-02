@@ -663,6 +663,8 @@ void setup_switch_sleep() {
 }
 
 void shutdown_screen(uint32_t duration_ms) {
+    watchdog_update();
+
     lv_deinit();
 
     if (lvgl_fb) memset(lvgl_fb, 0, lvgl_fb_bytes);
@@ -700,5 +702,7 @@ void shutdown_screen(uint32_t duration_ms) {
 
     __atomic_store_n(&show_gui, true, __ATOMIC_RELEASE);
 
+    watchdog_update();
     sleep_ms(duration_ms);
+    watchdog_update();
 }

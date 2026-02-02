@@ -766,6 +766,24 @@ static inline void mp3_select_relative(int delta,
     );
 }
 
+void mp3_save_shutdown(int current_track_index, uint64_t played_frames, drmp3_uint32 sampleRate) {
+    uint32_t final_position_ms =
+    (played_frames * 1000ULL) / sampleRate;
+
+    uint8_t temp_lcd_led = g_mp3_inactive ? sd_prev_lcd_led_duty_cycle : lcd_led_duty_cycle;
+    uint8_t temp_button_led = g_mp3_inactive ? saved_button_brightness : button_led_duty_cycle;
+
+    // Save resume info
+    mp3_save_resume(current_track_index, final_position_ms, true);
+
+    // Save shuffle order
+    shuffle_save_state(true);
+
+#if TIE_PWR_LED_TO_LCD
+    pwr_led_duty_cycle = temp_lcd_led;
+#endif
+    save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
+}
 // ===================================================================
 // Single-track player: returns what the playlist should do next
 // ===================================================================
@@ -937,22 +955,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             watchdog_update();
 
             if (!gpio_read(GPIO_SW_OUT)) {
-                uint32_t final_position_ms =
-                (played_frames * 1000ULL) / mp3.sampleRate;
-
-                uint8_t temp_lcd_led = g_mp3_inactive ? sd_prev_lcd_led_duty_cycle : lcd_led_duty_cycle;
-                uint8_t temp_button_led = g_mp3_inactive ? saved_button_brightness : button_led_duty_cycle;
-
-                // Save resume info
-                mp3_save_resume(current_track_index, final_position_ms, true);
-
-                // Save shuffle order
-                shuffle_save_state(true);
-
-#if TIE_PWR_LED_TO_LCD
-                pwr_led_duty_cycle = temp_lcd_led;
-#endif
-                save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
+                mp3_save_shutdown(current_track_index, played_frames, mp3.sampleRate);
 
                 release_power();
 
@@ -1466,7 +1469,33 @@ static play_result_t mp3_play_single_track(const char *filepath,
         // BATTERY MONITORING //
         static bool timer_task_flagged = false;
         static bool prev_timer_task_flagged = false;
-        timer_task_flagged = minimal_battery_monitoring_cb();
+
+        // minimal battery monitoring callback function code extracted with the addition of the mp3 save shutdown function.
+#if ENABLE_BAT_MONITORING
+        bool was_task_flagged = false;
+        // Check battery status periodically
+        if (battery_task_flag) {
+            battery_task_flag = false;
+            process_bat_percent();
+            was_task_flagged = true;
+        }
+        if (low_power_shutdown) {
+            shutdown_screen(1500);
+            mp3_save_shutdown(current_track_index, played_frames, mp3.sampleRate);
+
+            release_power(); // Cut power hold
+            sleep_ms(1);
+            watchdog_disable();
+            shutdown_peripherals(true);
+            sleep_ms(10);
+        }
+        while(low_power_shutdown) {
+            process_bat_percent();
+            sleep_ms(BATTERY_TIMER_INTERVAL_MS);
+        }
+        timer_task_flagged = was_task_flagged;
+#endif
+        
         // we typically don't want to check the battery and update the rtc at the same time
         // this is due to both using i2c which we don't want to block for too long with audio running.
         // so we are going to do the rtc update only when the timer task flag goes from true to false

@@ -1646,7 +1646,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
         uint64_t time_since_last_update = now - last_lvgl_update;
         if (/*time_since_last_update >= 10000 && */!g_mp3_inactive) {   // 10 ms (100 Hz UI updates)
             // printf("%llu us\n", (unsigned long long)time_since_last_update);
-            lv_tick_inc(time_since_last_update/1000);
+            uint32_t inc_ms = (uint32_t)(time_since_last_update / 1000);
+            if (inc_ms > 300) inc_ms = 0;   // clamp to avoid anim jump on initial load of file.. otherwise increments range from 10ms-88ms
+            lv_tick_inc(inc_ms);
             lv_timer_handler();
             last_lvgl_update = now;
         }

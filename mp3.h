@@ -313,9 +313,20 @@ void draw_track_list(lv_obj_t *list,
         lv_label_set_long_mode(sep, LV_LABEL_LONG_CLIP);
     }
 }
-// ===================================================================
-// SD ring buffer logic (HEAP-BASED, in PSRAM via malloc)
-// ===================================================================
+
+typedef struct {
+    char title[96];
+    char artist[96];
+    char album[96];
+} mp3_tags_t;
+
+mp3_tags_t *g_mp3_tags = NULL;
+static bool mp3_tags_ensure_alloc(void) {
+    if (g_mp3_tags) return true;
+    g_mp3_tags = (mp3_tags_t *)calloc(1, sizeof(mp3_tags_t));
+    return (g_mp3_tags != NULL);
+}
+
 typedef struct {
     FIL file;
     uint8_t *buf;                // was: uint8_t buf[MP3_STREAM_BUF_SIZE];
@@ -323,7 +334,172 @@ typedef struct {
     uint32_t wr;
     uint32_t count;
     bool eof;
+
+    mp3_tags_t tags;
 } mp3_stream_t;
+
+static uint32_t id3_syncsafe_u32(const uint8_t b[4]) {
+    return ((uint32_t)(b[0] & 0x7F) << 21) |
+           ((uint32_t)(b[1] & 0x7F) << 14) |
+           ((uint32_t)(b[2] & 0x7F) << 7)  |
+           ((uint32_t)(b[3] & 0x7F) << 0);
+}
+
+static uint32_t be32_u32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8)  | ((uint32_t)p[3] << 0);
+}
+
+static void trim_trailing_spaces(char *s) {
+    size_t n = strlen(s);
+    while (n > 0 && (s[n-1] == ' ' || s[n-1] == '\0')) {
+        s[n-1] = '\0';
+        n--;
+    }
+}
+
+static void copy_text_frame(char *dst, size_t dstsz, const uint8_t *payload, size_t payload_sz) {
+    if (!dst || dstsz == 0) return;
+    dst[0] = '\0';
+    if (!payload || payload_sz < 1) return;
+
+    uint8_t enc = payload[0];
+    const uint8_t *txt = payload + 1;
+    size_t txt_sz = payload_sz - 1;
+
+    // enc: 0=ISO-8859-1, 1=UTF-16 w/BOM, 2=UTF-16BE, 3=UTF-8
+    if (enc == 0 || enc == 3) {
+        // ISO-8859-1 or UTF-8: copy bytes, stop at first '\0'
+        size_t n = 0;
+        while (n + 1 < dstsz && n < txt_sz && txt[n] != '\0') {
+            dst[n] = (char)txt[n];
+            n++;
+        }
+        dst[n] = '\0';
+        trim_trailing_spaces(dst);
+        return;
+    }
+
+    // Best-effort UTF-16: if mostly ASCII, pull every other byte.
+    // Handle BOM if present.
+    bool le = true; // default
+    if (txt_sz >= 2) {
+        if (txt[0] == 0xFF && txt[1] == 0xFE) { le = true;  txt += 2; txt_sz -= 2; }
+        else if (txt[0] == 0xFE && txt[1] == 0xFF) { le = false; txt += 2; txt_sz -= 2; }
+    }
+
+    size_t n = 0;
+    for (size_t i = 0; i + 1 < txt_sz && n + 1 < dstsz; i += 2) {
+        uint8_t lo = le ? txt[i] : txt[i+1];
+        uint8_t hi = le ? txt[i+1] : txt[i];
+
+        if (lo == 0 && hi == 0) break;
+
+        // ASCII if hi==0
+        if (hi == 0) dst[n++] = (char)lo;
+        else dst[n++] = '?';
+    }
+    dst[n] = '\0';
+    trim_trailing_spaces(dst);
+}
+
+static void parse_id3v1(const uint8_t *tag128, size_t sz, mp3_tags_t *out) {
+    if (!tag128 || sz < 128 || !out) return;
+    if (memcmp(tag128, "TAG", 3) != 0) return;
+
+    // ID3v1: title[30], artist[30], album[30]
+    char tmp[64];
+
+    memset(tmp, 0, sizeof(tmp));
+    memcpy(tmp, tag128 + 3, 30);
+    tmp[30] = '\0';
+    strncpy(out->title, tmp, sizeof(out->title)-1);
+
+    memset(tmp, 0, sizeof(tmp));
+    memcpy(tmp, tag128 + 33, 30);
+    tmp[30] = '\0';
+    strncpy(out->artist, tmp, sizeof(out->artist)-1);
+
+    memset(tmp, 0, sizeof(tmp));
+    memcpy(tmp, tag128 + 63, 30);
+    tmp[30] = '\0';
+    strncpy(out->album, tmp, sizeof(out->album)-1);
+
+    trim_trailing_spaces(out->title);
+    trim_trailing_spaces(out->artist);
+    trim_trailing_spaces(out->album);
+}
+
+static void parse_id3v2(const uint8_t *raw, size_t raw_sz, mp3_tags_t *out) {
+    if (!raw || raw_sz < 10 || !out) return;
+    if (memcmp(raw, "ID3", 3) != 0) return;
+
+    uint8_t ver = raw[3];          // 3 = ID3v2.3, 4 = ID3v2.4
+    uint8_t flags = raw[5];
+    uint32_t tag_size = id3_syncsafe_u32(raw + 6); // size excludes 10-byte header
+    size_t total = 10 + (size_t)tag_size;
+    if (total > raw_sz) total = raw_sz;
+
+    size_t off = 10;
+
+    // Skip extended header if present (best-effort; differs between v2.3 and v2.4)
+    if (flags & 0x40) {
+        if (off + 4 <= total) {
+            uint32_t extsz = (ver == 4) ? id3_syncsafe_u32(raw + off) : be32_u32(raw + off);
+            off += 4;
+            if (extsz <= (total - off)) off += extsz;
+            if (off > total) return;
+        }
+    }
+
+    while (off + 10 <= total) {
+        const uint8_t *fh = raw + off;
+
+        // Padding/end
+        if (fh[0] == 0 && fh[1] == 0 && fh[2] == 0 && fh[3] == 0) break;
+
+        char id[5] = { (char)fh[0], (char)fh[1], (char)fh[2], (char)fh[3], 0 };
+        uint32_t fsz = (ver == 4) ? id3_syncsafe_u32(fh + 4) : be32_u32(fh + 4);
+        // uint16_t fflags = ((uint16_t)fh[8] << 8) | fh[9];
+
+        off += 10;
+        if (fsz == 0) continue;
+        if (off + fsz > total) break;
+
+        const uint8_t *payload = raw + off;
+
+        if (strcmp(id, "TIT2") == 0) {
+            if (out->title[0] == '\0') copy_text_frame(out->title, sizeof(out->title), payload, fsz);
+        } else if (strcmp(id, "TPE1") == 0) {
+            if (out->artist[0] == '\0') copy_text_frame(out->artist, sizeof(out->artist), payload, fsz);
+        } else if (strcmp(id, "TALB") == 0) {
+            if (out->album[0] == '\0') copy_text_frame(out->album, sizeof(out->album), payload, fsz);
+        }
+
+        off += fsz;
+
+        // Early exit if we got everything
+        if (out->title[0] && out->artist[0] && out->album[0]) break;
+    }
+}
+
+/* dr_mp3 metadata callback.
+   NOTE: for drmp3_init(), pUserData passed to onMeta is the same pUserData you pass to init,
+   so we keep tags inside mp3_stream_t. */
+static void drmp3_on_meta(void *pUserData, const drmp3_metadata *m) {
+    mp3_stream_t *s = (mp3_stream_t *)pUserData;
+    if (!s || !m || !m->pRawData || m->rawDataSize == 0) return;
+
+    if (m->type == DRMP3_METADATA_TYPE_ID3V2) {
+        parse_id3v2((const uint8_t *)m->pRawData, m->rawDataSize, &s->tags);
+    } else if (m->type == DRMP3_METADATA_TYPE_ID3V1) {
+        parse_id3v1((const uint8_t *)m->pRawData, m->rawDataSize, &s->tags);
+    }
+}
+
+// ===================================================================
+// SD ring buffer logic (HEAP-BASED, in PSRAM via malloc)
+// ===================================================================
 
 // SD → ring buffer refill, capped to MP3_REFILL_CHUNK to avoid stalls
 static void mp3_refill(mp3_stream_t *s) {
@@ -833,17 +1009,27 @@ static play_result_t mp3_play_single_track(const char *filepath,
         mp3_refill(stream);
     }
 
+    memset(&stream->tags, 0, sizeof(stream->tags));
+
     drmp3 mp3;
     if (!drmp3_init(&mp3,
                     mp3_stream_read,
                     NULL,   // no seek callback
                     NULL,   // no tell
-                    NULL,   // no meta
+                    drmp3_on_meta,
                     stream, // pUserData
                     NULL)) {
         printf("E drmp3_init failed\n");
         result = PLAY_RESULT_NEXT;
         goto CLEANUP_FILE;
+    }
+
+    if (mp3_tags_ensure_alloc()) {
+        *g_mp3_tags = stream->tags;
+    }
+    // to update the tags
+    if (show_now_playing) {
+        draw_now_playing(mp3_list_obj);
     }
 
     printf("MP3: %d Hz, %d ch\n", mp3.sampleRate, mp3.channels);
@@ -1717,8 +1903,14 @@ void draw_now_playing(lv_obj_t *parent)
 
     const char *filename = g_playlist[current_index];
     char title_with_break[256];
+
+    
+    // NEW: prefer ID3 title if available, else your filename fallback
+    const char *display_title =
+        (g_mp3_tags && g_mp3_tags->title[0]) ? g_mp3_tags->title : basename_from_path(filename);
+
     snprintf(title_with_break, sizeof(title_with_break),
-            "%s\n", basename_from_path(filename));   // <-- add line break here
+            "%s\n", display_title);
 
     lv_label_set_text(title_label, title_with_break);
 
@@ -1736,22 +1928,30 @@ void draw_now_playing(lv_obj_t *parent)
 
     lv_obj_align_to(tracknum_label, title_label, LV_ALIGN_TOP_LEFT, 6, 6);
 
+    const char *artist = (g_mp3_tags && g_mp3_tags->artist[0]) ? g_mp3_tags->artist : "Unknown";
+    const char *album  = (g_mp3_tags && g_mp3_tags->album[0])  ? g_mp3_tags->album  : "Unknown";
+
     // ============================================================
-    // ARTIST  (placeholder)
+    // ARTIST
     // ============================================================
     lv_obj_t *artist_label = lv_label_create(parent);
     lv_obj_set_style_text_color(artist_label, txt_color, 0);
-    lv_label_set_text(artist_label, "Artist: Unknown");
+
+    char artist_txt[128];
+    snprintf(artist_txt, sizeof(artist_txt), "Artist: %s", artist);
+    lv_label_set_text(artist_label, artist_txt);
 
     lv_obj_align_to(artist_label, title_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
     // ============================================================
-    // ALBUM  (placeholder)
+    // ALBUM
     // ============================================================
     lv_obj_t *album_label = lv_label_create(parent);
     lv_obj_set_style_text_color(album_label, txt_color, 0);
-    lv_label_set_text(album_label, "Album: Unknown\n\n");
 
+    char album_txt[160];
+    snprintf(album_txt, sizeof(album_txt), "Album: %s\n\n", album);
+    lv_label_set_text(album_label, album_txt);
     lv_obj_align_to(album_label, artist_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
     // ============================================================

@@ -1,4 +1,3 @@
-#define UNDERCLOCK_IN_GAME_MENU 0
 
 void in_game_increase_lcd_brightness() {
     if (!low_power) {
@@ -541,7 +540,7 @@ static bool ig_menu_items_init_heap(void) {
 
     menu_items[i++] = (ig_menu_item_t){ "Exit Game & Save",   IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_SAVE };
     menu_items[i++] = (ig_menu_item_t){ "Exit Game w/o Save", IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_NOSAVE };
-    menu_items[i++] = (ig_menu_item_t){ "Go to Sleep",        IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_SLEEP };
+    menu_items[i++] = (ig_menu_item_t){ "Take a Nap",        IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_SLEEP };
 
     // Finalize counts + sanity
     if (i != MENU_COUNT) {
@@ -566,10 +565,6 @@ static void ig_menu_items_free_heap(void) {
 
 void in_game_menu() {
     g_in_game_menu = true;
-
-#if UNDERCLOCK_IN_GAME_MENU
-    hyper_underclock_cpu(true); // reduce CPU speed for menu
-#endif
 
     // Essential
     lv_deinit();
@@ -669,9 +664,6 @@ void in_game_menu() {
 
         // Exit menu on B or power switch out or low power shutdown
         if (!b || !gpio_read(GPIO_SW_OUT) || low_power_shutdown || g_request_exit_menu) {
-#if UNDERCLOCK_IN_GAME_MENU
-            underclock_cpu(false); // restore CPU speed
-#endif
             // while(!b && gpio_read(GPIO_SW_OUT) && !low_power_shutdown) {
             //     if (!iox_nint) {
             //         read_io_expander_states(0);

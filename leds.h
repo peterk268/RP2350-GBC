@@ -4,10 +4,12 @@
 #define HIGHEST_BRIGHTNESS_LEVEL 230
 #define LOWEST_BRIGHTNESS_LEVEL 0
 
+#define DEFAULT_LED_DC 25
+
 // Duty Cycle Values
-uint8_t lcd_led_duty_cycle = MAX_BRIGHTNESS/8;   
-uint8_t pwr_led_duty_cycle = MAX_BRIGHTNESS/8;  
-uint8_t button_led_duty_cycle = MAX_BRIGHTNESS/8; 
+uint8_t lcd_led_duty_cycle = DEFAULT_LED_DC;   
+uint8_t pwr_led_duty_cycle = DEFAULT_LED_DC;  
+uint8_t button_led_duty_cycle = DEFAULT_LED_DC; 
 
 // perceptual brightness curve 
 static const uint8_t brightness_levels[16] = {
@@ -152,7 +154,7 @@ void step_pwr_brightness(bool increase) {
 }
 
 
-static const uint8_t button_brightness_levels[6] = {0, 13, 23, 55, 130, 230};
+static const uint8_t button_brightness_levels[6] = {0, 13, 25, 55, 130, 230};
 
 uint8_t get_next_button_brightness(uint8_t current, bool increase) {
     int idx = 0;
@@ -230,9 +232,9 @@ void remove_pwr_led_flash() {
 
 // LED Fade in on start up here
 // Target brightness for each LED at startup
-uint8_t lcd_target_brightness    = (MAX_BRIGHTNESS/8);
-uint8_t pwr_target_brightness    = (MAX_BRIGHTNESS/8);
-uint8_t button_target_brightness = (MAX_BRIGHTNESS/8);
+uint8_t lcd_target_brightness    = DEFAULT_LED_DC;
+uint8_t pwr_target_brightness    = DEFAULT_LED_DC;
+uint8_t button_target_brightness = DEFAULT_LED_DC;
 
 static repeating_timer_t led_ramp_timer;
 volatile bool led_ramp_done = false; // flag you can check in main()

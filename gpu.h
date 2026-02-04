@@ -281,6 +281,7 @@ void render_loop() {
 
 // MARK: - CORE1 DOORBELL SETUP
 static uint8_t g_core1_db = 0xFF;
+bool doorbell_setup = false;
 
 // ISR runs on CORE1 when CORE0 rings the doorbell
 static void __isr core1_doorbell_isr(void) {
@@ -293,12 +294,13 @@ static inline void core1_doorbell_setup() {
     uint irq = multicore_doorbell_irq_num(g_core1_db); // resolves to SIO_IRQ_BELL(_NS) as needed by SDK
     irq_set_exclusive_handler(irq, core1_doorbell_isr);
     irq_set_enabled(irq, true);
+    doorbell_setup = true;
 }
 
 // MARK: - MAIN CORE1 LOOP
 _Noreturn
 void main_core1(void) {
-    core1_doorbell_setup();
+    if (!doorbell_setup) core1_doorbell_setup();
     #if !PICO_SCANVIDEO_ENABLE_DEN_PIN
     #warning "We'll take this out at some point"
     gpio_write(GPIO_DPI_DEN, 1);

@@ -171,14 +171,45 @@ void underclock_cpu(bool enable) {
 	}
 }
 
+#define USE_XOSC_FOR_UNDERCLOCK 0
+
+#if USE_XOSC_FOR_UNDERCLOCK
+#include "hardware/regs/clocks.h"   // for CLOCKS_* constants
+#include "hardware/pll.h"
+
+static void run_sys_from_xosc_and_kill_pll_sys(void) {
+    // Make clk_sys come from clk_ref (which is normally XOSC / 1)
+    // 12*MHZ assumes a 12MHz crystal; if yours differs, use clock_get_hz(clk_ref) instead.
+    clock_configure(clk_sys,
+                    CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLK_REF,
+                    0,
+                    12 * MHZ,
+                    12 * MHZ);
+
+    // Keep peripheral clock sourced from clk_sys (important for UART/SPI timing expectations)
+    clock_configure(clk_peri,
+                    0,
+                    CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS,
+                    12 * MHZ,
+                    12 * MHZ);
+
+    // Now that clk_sys is NOT using PLL_SYS anymore, shut PLL_SYS down to save power
+    pll_deinit(pll_sys);
+}
+#endif
+
 void hyper_underclock_cpu(bool enable) {
 	if (enable) {
+#if USE_XOSC_FOR_UNDERCLOCK
+		run_sys_from_xosc_and_kill_pll_sys();
+#else
 		// Going down: lower frequency first, then voltage
-		set_sys_clock_khz(120 * 1000, true);
+		set_sys_clock_khz(20 * 1000, true);
 		sleep_ms(10);
 
 		vreg_set_voltage(VREG_VOLTAGE_1_00);
 		sleep_ms(10);
+#endif
 	} else {
         // Going up: up voltage then frequency
         vreg_set_voltage(VREG_VOLTAGE_DEFAULT);

@@ -540,7 +540,7 @@ static bool ig_menu_items_init_heap(void) {
 
     menu_items[i++] = (ig_menu_item_t){ "Exit Game & Save",   IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_SAVE };
     menu_items[i++] = (ig_menu_item_t){ "Exit Game w/o Save", IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_NOSAVE };
-    menu_items[i++] = (ig_menu_item_t){ "Take a Nap",        IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_SLEEP };
+    menu_items[i++] = (ig_menu_item_t){ "Sleep (Wake w/ Select)",        IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_SLEEP };
 
     // Finalize counts + sanity
     if (i != MENU_COUNT) {
@@ -778,7 +778,83 @@ void in_game_menu() {
     } else if (requested_action == IG_ACT_EXIT_NOSAVE) {
         g_request_exit_to_rom_selector = true;
     } else if (requested_action == IG_ACT_SLEEP) {
-        // g_request_sleep = true;
+        // lcd nrst going low
+        // audio en going low
+        // sd nen going high
+        // core1 shutdown
+        // wfi on core0 for iox or select button
+        gpio_write(IOX_LCD_nRST, 0);
+
+        uint8_t temp_lcd_led = lcd_led_duty_cycle;
+        uint8_t temp_button_led = button_led_duty_cycle;
+        decrease_lcd_brightness(MAX_BRIGHTNESS);
+        decrease_button_brightness(MAX_BRIGHTNESS);
+
+        gpio_write(IOX_AUDIO_EN, 0);
+
+        multicore_reset_core1();
+
+        hyper_underclock_cpu(true); // goes to 20MHz
+
+        sleep_ms(100);
+        // // wait for a button to be released
+        // while(!a && gpio_read(GPIO_SW_OUT) && !low_power_shutdown) {
+        //     if (!gpio_read(GPIO_IOX_nINT)) {
+        //         read_io_expander_states(0);
+        //         a = gpio_read(IOX_B_A);
+        //     }
+        //     watchdog_update();
+        //     tight_loop_contents();
+        // }
+
+        bool wake_up = false; 
+        // loop sleep as long as we haven't been waken up and the switch is still high and we are not going to low power shutdown
+        while(!wake_up && gpio_read(GPIO_SW_OUT) && !low_power_shutdown) {
+            process_bat_percent();
+            wake_up = /*!gpio_read(GPIO_IOX_nINT) || */!gpio_read(GPIO_B_SELECT);
+            sleep_ms(100);
+            watchdog_update();
+            tight_loop_contents();
+        }
+
+        // start back up everything
+
+        // clear iox int
+        read_io_expander_states(0);
+
+        // DAC powered back on (needs time since LDO starts up too)
+        gpio_write(IOX_AUDIO_EN, 1);
+
+        // CPU Clock
+        underclock_cpu(false); // takes us back to 300MHz and steps voltage back up properly.
+        if (run_mode == MODE_POWERSAVE) underclock_cpu(true); // will take us to 180MHz
+
+        // start up core1 and lcd
+        lcd_power_on_reset();
+        init_spi_lcd();
+        gpio_write(IOX_LCD_nCS, 0);
+        lcd_config();
+        gpio_write(IOX_LCD_nCS, 1);
+
+        sleep_ms(1);
+        // Give SPI back to SD Card
+        gpio_set_function(GPIO_SPI0_SCK, GPIO_FUNC_SPI);
+        gpio_set_function(GPIO_SPI0_MOSI, GPIO_FUNC_SPI);
+        gpio_set_function(GPIO_SPI0_MISO, GPIO_FUNC_SPI);
+
+        multicore_launch_core1(main_core1);
+
+        // LEDs
+        increase_lcd_brightness(temp_lcd_led);
+        increase_button_brightness(temp_button_led);
+
+        // Audio again
+        setup_dac();
+        // Set current volume level to 0 to start reading the pot again because
+        // read_volume checks for a change in pot value to set the volume.
+        current_volume_level = 0;
+        read_volume();
+
     }
 
     g_request_exit_menu = false; 

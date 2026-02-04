@@ -152,7 +152,7 @@ void step_pwr_brightness(bool increase) {
 }
 
 
-static const uint8_t button_brightness_levels[6] = {0, 17, 25, 55, 130, 230};
+static const uint8_t button_brightness_levels[6] = {0, 13, 23, 55, 130, 230};
 
 uint8_t get_next_button_brightness(uint8_t current, bool increase) {
     int idx = 0;

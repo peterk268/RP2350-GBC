@@ -4,7 +4,7 @@
 #define HIGHEST_BRIGHTNESS_LEVEL 230
 #define LOWEST_BRIGHTNESS_LEVEL 0
 
-#define DEFAULT_LED_DC 25
+#define DEFAULT_LED_DC 26
 
 // Duty Cycle Values
 uint8_t lcd_led_duty_cycle = DEFAULT_LED_DC;   
@@ -13,8 +13,8 @@ uint8_t button_led_duty_cycle = DEFAULT_LED_DC;
 
 // perceptual brightness curve 
 static const uint8_t brightness_levels[16] = {
-     LOWEST_BRIGHTNESS_LEVEL,  6,  8, 10, 14, 19, 25, 33,
-    43, 55, 70, 90,115,145,185,HIGHEST_BRIGHTNESS_LEVEL
+     LOWEST_BRIGHTNESS_LEVEL,  6,  8, 10, 13, 19, DEFAULT_LED_DC, 36,
+    44, 57, 74, 91,116,146,190,HIGHEST_BRIGHTNESS_LEVEL
 };
 
 // Generalized LED Configuration Function
@@ -154,7 +154,7 @@ void step_pwr_brightness(bool increase) {
 }
 
 
-static const uint8_t button_brightness_levels[6] = {0, 13, 25, 55, 130, 230};
+static const uint8_t button_brightness_levels[6] = {LOWEST_BRIGHTNESS_LEVEL, 13, DEFAULT_LED_DC, 57, 132, HIGHEST_BRIGHTNESS_LEVEL};
 
 uint8_t get_next_button_brightness(uint8_t current, bool increase) {
     int idx = 0;
@@ -582,10 +582,13 @@ bool led_ramp_timer_callback(repeating_timer_t *rt) {
 
             uint8_t step = (uint8_t)(step_f < 1 ? 1 : step_f);
 
+            uint8_t remaining = (uint8_t)(target - duty);
+            if (step > remaining) step = remaining;   // prevents overshoot
+
             adjust_brightness(l->gpio, l->duty, step, true, l->is_active_low);
 
-            if (*(l->duty) < target)
-                all_done = false;
+            if (*(l->duty) < target) all_done = false;
+            else *(l->duty) = target; // hard clamp
         }
     }
 

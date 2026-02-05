@@ -229,6 +229,304 @@ void remove_pwr_led_flash() {
     increase_pwr_brightness(pwr_led_duty_cycle); // Apply restored brightness
 }
 
+// ================================================================
+// Heartbeat pulse animation for PWR LED (two quick beats + pause)
+// Uses the same style: increase_pwr_brightness(), decrease_pwr_brightness(),
+// pwr_led_duty_cycle, MIN_BRIGHTNESS, MAX_BRIGHTNESS, step, repeating_timer_t.
+// ================================================================
+
+// This one is really nice for low power
+
+// Heartbeat state machine
+typedef enum {
+    HB_RISE_1,
+    HB_FALL_1,
+    HB_GAP_1,     // short gap after first beat
+    HB_RISE_2,
+    HB_FALL_2,
+    HB_PAUSE      // longer pause before repeating
+} hb_state_t;
+
+static hb_state_t hb_state = HB_RISE_1;
+
+// Counters for timing gaps/pauses (measured in timer ticks)
+static uint16_t hb_ticks_left = 0;
+
+// Tuning knobs (in ticks). With interval_ms=10:
+//  HB_GAP_1=6  -> 60ms
+//  HB_PAUSE=40 -> 400ms
+static uint16_t hb_gap1_ticks   = 6;
+static uint16_t hb_pause_ticks  = 40;
+
+// Beat amplitudes (duty targets)
+static uint8_t hb_peak1 = 0;  // set on start
+static uint8_t hb_peak2 = 0;  // set on start
+static uint8_t hb_base  = 0;  // MIN_BRIGHTNESS typically
+
+// Speed per phase (duty delta per tick)
+static uint8_t hb_step_rise1 = 10;
+static uint8_t hb_step_fall1 = 14;
+static uint8_t hb_step_rise2 = 18; // second beat is snappier
+static uint8_t hb_step_fall2 = 16;
+
+// Optional: independent direction flag (kept similar to your style)
+static bool hb_increasing = true;
+
+bool pwr_led_heartbeat_timer_callback(repeating_timer_t *rt) {
+    // Handle "wait" phases (gap/pause) without touching brightness
+    if (hb_state == HB_GAP_1 || hb_state == HB_PAUSE) {
+        if (hb_ticks_left > 0) hb_ticks_left--;
+        if (hb_ticks_left == 0) {
+            hb_state = (hb_state == HB_GAP_1) ? HB_RISE_2 : HB_RISE_1;
+            hb_increasing = true;
+        }
+        return true;
+    }
+
+    switch (hb_state) {
+        case HB_RISE_1:
+            hb_increasing = true;
+            increase_pwr_brightness(hb_step_rise1);
+            if (pwr_led_duty_cycle >= hb_peak1) {
+                pwr_led_duty_cycle = hb_peak1;
+                hb_state = HB_FALL_1;
+                hb_increasing = false;
+            }
+            break;
+
+        case HB_FALL_1:
+            hb_increasing = false;
+            decrease_pwr_brightness(hb_step_fall1);
+            if (pwr_led_duty_cycle <= hb_base) {
+                pwr_led_duty_cycle = hb_base;
+                hb_state = HB_GAP_1;
+                hb_ticks_left = hb_gap1_ticks;
+            }
+            break;
+
+        case HB_RISE_2:
+            hb_increasing = true;
+            increase_pwr_brightness(hb_step_rise2);
+            if (pwr_led_duty_cycle >= hb_peak2) {
+                pwr_led_duty_cycle = hb_peak2;
+                hb_state = HB_FALL_2;
+                hb_increasing = false;
+            }
+            break;
+
+        case HB_FALL_2:
+            hb_increasing = false;
+            decrease_pwr_brightness(hb_step_fall2);
+            if (pwr_led_duty_cycle <= hb_base) {
+                pwr_led_duty_cycle = hb_base;
+                hb_state = HB_PAUSE;
+                hb_ticks_left = hb_pause_ticks;
+            }
+            break;
+
+        default:
+            hb_state = HB_RISE_1;
+            hb_increasing = true;
+            break;
+    }
+
+    return true;
+}
+
+// You can reuse your existing prev_pwr_led_duty_cycle and timer handle.
+// Use either 10ms, 12ms (slow), or 5ms (fast)
+void setup_pwr_led_heartbeat(uint32_t interval_ms) {
+#if !TIE_PWR_LED_TO_LCD
+    prev_pwr_led_duty_cycle = pwr_led_duty_cycle; // Save current brightness
+#endif
+
+    // Base is your minimum (or you can set it to current brightness if you want)
+    hb_base = MIN_BRIGHTNESS;
+
+    // Two peaks: first is stronger, second is a bit smaller (classic heartbeat feel)
+    hb_peak1 = (uint8_t)(MAX_BRIGHTNESS);
+    hb_peak2 = (uint8_t)((uint16_t)MAX_BRIGHTNESS * 70 / 100); // ~70% of max
+
+    // Reset state machine
+    hb_state = HB_RISE_1;
+    hb_increasing = true;
+    hb_ticks_left = 0;
+
+    // Force starting point at base (optional)
+    if (pwr_led_duty_cycle > hb_base) {
+        decrease_pwr_brightness(MAX_BRIGHTNESS);
+        pwr_led_duty_cycle = hb_base;
+        increase_pwr_brightness(pwr_led_duty_cycle);
+    }
+
+    if (!add_repeating_timer_ms(interval_ms, pwr_led_heartbeat_timer_callback, NULL, &pwr_led_timer)) {
+        printf("Failed to add repeating timer\n");
+    }
+}
+
+// ================================================================
+// Simple "double pulse": bright -> dim -> bright quickly -> dim (repeat)
+// interval_ms controls the feel (10ms is a good default)
+// ================================================================
+// Faster pulse than the heartbeat.. could be used for critical low power
+
+typedef enum {
+    PULSE_RISE1,
+    PULSE_FALL1,
+    PULSE_RISE2,
+    PULSE_FALL2,
+    PULSE_PAUSE
+} pulse_state_t;
+
+static pulse_state_t pulse_state = PULSE_RISE1;
+static uint16_t pulse_wait_ticks = 0;
+
+// Tuning (in timer ticks)
+static uint16_t pulse_pause_ticks = 20;   // pause after the double pulse
+static uint8_t  pulse_peak1_pct   = 100;  // first peak strength (% of MAX)
+static uint8_t  pulse_peak2_pct   = 70;   // second peak strength (% of MAX)
+
+// Speeds (duty per tick)
+static uint8_t pulse_step1_up   = 10;
+static uint8_t pulse_step1_down = 14;
+static uint8_t pulse_step2_up   = 18;     // quicker second pulse up
+static uint8_t pulse_step2_down = 16;
+
+static uint8_t pulse_base;   // usually MIN_BRIGHTNESS
+static uint8_t pulse_peak1;  // computed
+static uint8_t pulse_peak2;  // computed
+
+bool pwr_led_simple_pulse_timer_callback(repeating_timer_t *rt) {
+    if (pulse_state == PULSE_PAUSE) {
+        if (pulse_wait_ticks) pulse_wait_ticks--;
+        if (!pulse_wait_ticks) pulse_state = PULSE_RISE1;
+        return true;
+    }
+
+    switch (pulse_state) {
+        case PULSE_RISE1:
+            increase_pwr_brightness(pulse_step1_up);
+            if (pwr_led_duty_cycle >= pulse_peak1) {
+                pwr_led_duty_cycle = pulse_peak1;
+                pulse_state = PULSE_FALL1;
+            }
+            break;
+
+        case PULSE_FALL1:
+            decrease_pwr_brightness(pulse_step1_down);
+            if (pwr_led_duty_cycle <= pulse_base) {
+                pwr_led_duty_cycle = pulse_base;
+                pulse_state = PULSE_RISE2;
+            }
+            break;
+
+        case PULSE_RISE2:
+            increase_pwr_brightness(pulse_step2_up);
+            if (pwr_led_duty_cycle >= pulse_peak2) {
+                pwr_led_duty_cycle = pulse_peak2;
+                pulse_state = PULSE_FALL2;
+            }
+            break;
+
+        case PULSE_FALL2:
+            decrease_pwr_brightness(pulse_step2_down);
+            if (pwr_led_duty_cycle <= pulse_base) {
+                pwr_led_duty_cycle = pulse_base;
+                pulse_state = PULSE_PAUSE;
+                pulse_wait_ticks = pulse_pause_ticks;
+            }
+            break;
+
+        default:
+            pulse_state = PULSE_RISE1;
+            break;
+    }
+
+    return true;
+}
+
+void setup_pwr_led_simple_pulse(uint32_t interval_ms) {
+#if !TIE_PWR_LED_TO_LCD
+    prev_pwr_led_duty_cycle = pwr_led_duty_cycle; // Save current brightness
+#endif
+
+    pulse_base  = MIN_BRIGHTNESS;
+    pulse_peak1 = (uint8_t)((uint16_t)MAX_BRIGHTNESS * pulse_peak1_pct / 100);
+    pulse_peak2 = (uint8_t)((uint16_t)MAX_BRIGHTNESS * pulse_peak2_pct / 100);
+
+    // Start from base (optional but makes it consistent)
+    decrease_pwr_brightness(MAX_BRIGHTNESS);
+    pwr_led_duty_cycle = pulse_base;
+    increase_pwr_brightness(pwr_led_duty_cycle);
+
+    pulse_state = PULSE_RISE1;
+    pulse_wait_ticks = 0;
+
+    if (!add_repeating_timer_ms(interval_ms, pwr_led_simple_pulse_timer_callback, NULL, &pwr_led_timer)) {
+        printf("Failed to add repeating timer\n");
+    }
+}
+
+// Bright -> Dim -> (quick) Bright -> Dim, repeat.
+// Never turns fully off (dim is clamped above MIN_BRIGHTNESS).
+// This ones mid.. not as complex as the other 2
+bool pwr_led_double_pulse_timer_callback(repeating_timer_t *rt) {
+    // 0: rise1->bright, 1: fall1->dim, 2: rise2 quick->bright, 3: fall2->dim
+    static uint8_t phase = 0;
+
+    // Pick your two levels (edit these 2 numbers only)
+    const uint8_t BRIGHT = MAX_BRIGHTNESS/2;              // peak level
+    const uint8_t DIM    = 15;        // never off
+
+    // Step sizes (second rise is quicker)
+    const uint8_t STEP_SLOW = step;                     // use your global step
+    const uint8_t STEP_FAST = (uint8_t)(step * 2);      // quick pulse
+
+    switch (phase) {
+        case 0: // up to BRIGHT
+            increase_pwr_brightness(STEP_SLOW);
+            if (pwr_led_duty_cycle >= BRIGHT) {
+                pwr_led_duty_cycle = BRIGHT;
+                phase = 1;
+            }
+            break;
+
+        case 1: // down to DIM
+            decrease_pwr_brightness(STEP_SLOW);
+            if (pwr_led_duty_cycle <= DIM) {
+                pwr_led_duty_cycle = DIM;
+                phase = 2;
+            }
+            break;
+
+        case 2: // quick up to BRIGHT
+            increase_pwr_brightness(STEP_FAST);
+            if (pwr_led_duty_cycle >= BRIGHT) {
+                pwr_led_duty_cycle = BRIGHT;
+                phase = 3;
+            }
+            break;
+
+        default: // 3: down to DIM
+            decrease_pwr_brightness(STEP_SLOW);
+            if (pwr_led_duty_cycle <= DIM) {
+                pwr_led_duty_cycle = DIM;
+                phase = 0;
+            }
+            break;
+    }
+
+    return true;
+}
+
+void setup_pwr_led_double_pulse(uint32_t interval_ms) {
+#if !TIE_PWR_LED_TO_LCD
+    prev_pwr_led_duty_cycle = pwr_led_duty_cycle;
+#endif
+    if (!add_repeating_timer_ms(interval_ms, pwr_led_double_pulse_timer_callback, NULL, &pwr_led_timer)) {
+        printf("Failed to add repeating timer\n");
+    }
+}
 
 // LED Fade in on start up here
 // Target brightness for each LED at startup

@@ -785,9 +785,10 @@ void in_game_menu() {
         // wfi on core0 for iox or select button
         gpio_write(IOX_LCD_nRST, 0);
 
-        uint8_t temp_lcd_led = lcd_led_duty_cycle;
+        // uint8_t temp_lcd_led = lcd_led_duty_cycle;
         uint8_t temp_button_led = button_led_duty_cycle;
-        decrease_lcd_brightness(MAX_BRIGHTNESS);
+        // decrease_lcd_brightness(MAX_BRIGHTNESS);
+        set_sd_busy(true);
         decrease_button_brightness(MAX_BRIGHTNESS);
 
         gpio_write(IOX_AUDIO_EN, 0);
@@ -810,10 +811,10 @@ void in_game_menu() {
         bool wake_up = false; 
         // loop sleep as long as we haven't been waken up and the switch is still high and we are not going to low power shutdown
         while(!wake_up && gpio_read(GPIO_SW_OUT) && !low_power_shutdown) {
+            watchdog_update();
+            sleep_ms(100);
             process_bat_percent();
             wake_up = /*!gpio_read(GPIO_IOX_nINT) || */!gpio_read(GPIO_B_SELECT);
-            sleep_ms(100);
-            watchdog_update();
             tight_loop_contents();
         }
 
@@ -845,7 +846,8 @@ void in_game_menu() {
         multicore_launch_core1(main_core1);
 
         // LEDs
-        increase_lcd_brightness(temp_lcd_led);
+        // increase_lcd_brightness(temp_lcd_led);
+        set_sd_busy(false);
         increase_button_brightness(temp_button_led);
 
         // Audio again

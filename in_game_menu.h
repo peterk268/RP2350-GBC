@@ -791,6 +791,8 @@ void in_game_menu() {
         set_sd_busy(true);
         decrease_button_brightness(MAX_BRIGHTNESS);
 
+        wait_for_core1_parked(10 * 1000);
+
         gpio_write(IOX_AUDIO_EN, 0);
 
         multicore_reset_core1();

@@ -894,7 +894,7 @@ static bool seek_relative_seconds(
                     mp3_stream_read,
                     NULL,
                     NULL,
-                    NULL,
+                    drmp3_on_meta,
                     stream,
                     NULL)) {
         printf("E drmp3_init after seek\n");
@@ -1221,7 +1221,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
                         drmp3_uninit(&mp3);
                         if (!drmp3_init(&mp3, mp3_stream_read,
-                                        NULL, NULL, NULL, stream, NULL)) {
+                                        NULL, NULL, drmp3_on_meta, stream, NULL)) {
                             printf("E drmp3_init after repeat\n");
                             result = PLAY_RESULT_NEXT;
                             goto END_PLAYBACK;

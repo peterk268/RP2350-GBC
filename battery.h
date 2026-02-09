@@ -490,6 +490,71 @@ void verify_design_capacity() {
     printf("Confirm Checksum: 0x%02X\n", check_csum);
 }
 
+// Sleep Current is in Data Memory: State subclass (0x52), offset 23, type I2 (signed 16-bit), units mA
+// Offset 23 is inside block 0 (offsets 0..31), so bytes live at 0x40 + 23 = 0x57 (LSB) and 0x58 (MSB)
+
+void set_sleep_current_mA(int16_t sleep_current_mA) {
+    if (sleep_current_mA < 0) sleep_current_mA = -sleep_current_mA; // parameter is magnitude threshold
+    if (sleep_current_mA > 1000) sleep_current_mA = 1000;
+
+    printf("\n--- Setting BQ27427 Sleep Current to %dmA ---\n", sleep_current_mA);
+
+    // --- Step 1: Enable Block Data Control ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){0x61, 0x00}, 2, false);
+
+    // --- Step 2: Select State subclass (0x52) ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){0x3E, 0x52}, 2, false);
+
+    // --- Step 3: Select block 0 (offsets 0..31) ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){0x3F, 0x00}, 2, false);
+
+    // Sleep Current @ offset 23 => 0x57/0x58
+    const uint8_t REG_LSB = 0x57;
+    const uint8_t REG_MSB = 0x58;
+
+    uint8_t old_lsb  = read_register_8(REG_LSB);
+    uint8_t old_msb  = read_register_8(REG_MSB);
+    uint8_t old_csum = read_register_8(0x60);
+
+    int16_t old_val = (int16_t)((old_msb << 8) | old_lsb);
+    printf("Current Sleep Current: %dmA (raw 0x%04X)\n", old_val, (uint16_t)old_val);
+    printf("Current checksum: 0x%02X\n", old_csum);
+
+    uint8_t new_lsb = (uint8_t)(sleep_current_mA & 0xFF);
+    uint8_t new_msb = (uint8_t)((sleep_current_mA >> 8) & 0xFF);
+
+    // If already set, skip
+    if (old_lsb == new_lsb && old_msb == new_msb) {
+        printf("Sleep Current already set. Skipping write.\n");
+        return;
+    }
+
+    // You already manage unseal + cfgupdate inside enter_config()
+    enter_config();
+
+    // --- Write new value ---
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){REG_LSB, new_lsb}, 2, false);
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){REG_MSB, new_msb}, 2, false);
+
+    // --- Incremental checksum update (same method you used) ---
+    uint8_t new_csum =
+        255 - ((255 - old_csum - old_lsb - old_msb + new_lsb + new_msb) & 0xFF);
+
+    i2c_write_blocking(BAT_MONITOR_I2C_PORT, BAT_MONITOR_I2C_ADDR,
+                       (uint8_t[]){0x60, new_csum}, 2, false);
+
+    printf("Wrote Sleep Current: %dmA (LSB=0x%02X MSB=0x%02X)\n", sleep_current_mA, new_lsb, new_msb);
+    printf("Wrote new checksum: 0x%02X\n", new_csum);
+
+    sleep_ms(10);
+    bq_needs_to_save = true;
+}
+
 void config_battery_monitor() {
     printf("Configuring Battery Monitor...\n");
 
@@ -705,4 +770,163 @@ void shutdown_screen(uint32_t duration_ms) {
     watchdog_update();
     sleep_ms(duration_ms);
     watchdog_update();
+}
+
+
+#define USE_IOX_TO_WAKEUP 1
+
+static volatile bool g_wake_button = false;
+#if USE_IOX_TO_WAKEUP
+static volatile bool g_wake_iox    = false;
+#endif
+static volatile bool g_wake_swlow  = false;
+static volatile bool g_wake_tick   = false;
+
+// One callback for GPIO_B_SELECT, GPIO_SW_OUT, and IOX nINT
+static void gpio_wake_cb(uint gpio, uint32_t events) {
+    (void)events;
+
+    if (gpio == GPIO_B_SELECT) {
+        g_wake_button = true;   // active-low press -> falling edge
+    } else if (gpio == GPIO_SW_OUT) {
+        g_wake_swlow  = true;   // falling edge means switch went low
+    } 
+#if USE_IOX_TO_WAKEUP
+    else if (gpio == GPIO_IOX_nINT) {
+        g_wake_iox    = true;   // IO expander interrupt asserted (active-low)
+    }
+#endif
+}
+
+// TIMER alarm 0 IRQ: every 10s
+static void __isr alarm0_irq(void) {
+    // clear alarm0 interrupt
+    hw_clear_bits(&timer_hw->intr, 1u << 0);
+
+    g_wake_tick = true;
+
+    // re-arm for +10s
+    uint32_t now = timer_hw->timerawl;
+    timer_hw->alarm[0] = now + 10u * 1000u * 1000u; // 10 seconds in us
+}
+
+static void tick_timer_start_10s(void) {
+    uint32_t now = timer_hw->timerawl;
+    timer_hw->alarm[0] = now + 10u * 1000u * 1000u;
+
+    hw_set_bits(&timer_hw->inte, 1u << 0);
+    irq_set_exclusive_handler(TIMER0_IRQ_0, alarm0_irq);
+    irq_set_enabled(TIMER0_IRQ_0, true);
+}
+
+static void tick_timer_stop(void) {
+    irq_set_enabled(TIMER0_IRQ_0, false);
+    hw_clear_bits(&timer_hw->inte, 1u << 0);
+    hw_clear_bits(&timer_hw->intr, 1u << 0);
+}
+
+
+void light_sleep_loop(void) {
+    g_wake_button = false;
+#if USE_IOX_TO_WAKEUP
+    g_wake_iox    = false;
+#endif
+    g_wake_swlow  = false;
+    g_wake_tick   = true;   // run maintenance once immediately (optional)
+
+    // Change watchdog timeout to 12s while sleeping
+    watchdog_enable(12 * 1000, true);
+
+    // Enable button wake (active-low)
+    gpio_set_irq_enabled_with_callback(GPIO_B_SELECT,
+                                       GPIO_IRQ_EDGE_FALL,
+                                       true,
+                                       &gpio_wake_cb);
+
+    // Enable switch wake ONLY on going low
+    gpio_set_irq_enabled(GPIO_SW_OUT, GPIO_IRQ_EDGE_FALL, true);
+
+#if USE_IOX_TO_WAKEUP
+    // Enable IO expander interrupt wake (active-low nINT)
+    gpio_set_irq_enabled(GPIO_IOX_nINT, GPIO_IRQ_EDGE_FALL, true);
+
+    // ------------------------------------------------------------
+    // IMPORTANT: snapshot currently-held IOX buttons BEFORE sleeping
+    // so that RELEASE events don't wake us up.
+    //
+    // Also ACK/refresh once here so nINT isn't already low when we
+    // go into __wfi().
+    // ------------------------------------------------------------
+    read_io_expander_states(0);
+    uint32_t held_at_sleep = iox_pressed_mask_now();
+#endif
+
+    tick_timer_start_10s();
+
+    // Sleep as long as switch is high and we’re not shutting down and button not pressed
+    while (gpio_read(GPIO_SW_OUT) && !low_power_shutdown && !g_wake_button) {
+
+        // If switch went low, break (while condition will also fail on next iteration)
+        if (g_wake_swlow) {
+            break;
+        }
+
+#if USE_IOX_TO_WAKEUP
+        // If IOX interrupt fired, ACK it by reading the expander to release nINT
+        if (g_wake_iox) {
+            // This should clear the expander's interrupt latch / deassert nINT
+            read_io_expander_states(0);
+
+            // ------------------------------------------------------------
+            // Only wake if a *new press* happened.
+            // - If user was holding A at sleep entry, then letting go causes
+            //   an interrupt edge -> we do NOT want to wake.
+            //
+            // "pressed mask" is ACTIVE-LOW (pressed = 1 in the bitmask).
+            // new_presses = pressed_now AND NOT held_before
+            // ------------------------------------------------------------
+            uint32_t pressed_now = iox_pressed_mask_now();
+            uint32_t new_presses = pressed_now & ~held_at_sleep;
+
+            // Update baseline so future interrupts behave correctly
+            held_at_sleep = pressed_now;
+
+            // Clear flag AFTER ACK+read to avoid missing back-to-back events
+            g_wake_iox = false;
+
+            // If a new press occurred, wake the system
+            if (new_presses) {
+                break;
+            }
+
+            // Otherwise ignore (it was a release or already-held button activity)
+        }
+#endif
+
+        // 10s maintenance tick
+        if (g_wake_tick) {
+            g_wake_tick = false;
+
+            watchdog_update();
+
+            // If you're chasing low current, consider a quiet version here (no printf)
+            process_bat_percent();
+        }
+
+        // Wait for interrupt: button, iox nINT, switch-low, or timer tick
+        __wfi();
+        tight_loop_contents();
+    }
+
+    // Restore your normal watchdog timeout
+    watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
+
+    tick_timer_stop();
+
+    // Disable IRQs
+    gpio_set_irq_enabled(GPIO_B_SELECT, GPIO_IRQ_EDGE_FALL, false);
+#if USE_IOX_TO_WAKEUP
+    gpio_set_irq_enabled(GPIO_IOX_nINT, GPIO_IRQ_EDGE_FALL, false);
+#endif
+    gpio_set_irq_enabled(GPIO_SW_OUT,   GPIO_IRQ_EDGE_FALL, false);
 }

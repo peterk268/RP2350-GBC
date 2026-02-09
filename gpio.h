@@ -488,3 +488,23 @@ void init_adc(uint8_t adc_gpio) {
 uint16_t read_adc() {
     return adc_read(); // Reads raw 12-bit ADC value (0-4095)
 }
+
+// Build a bitmask of "pressed" buttons on the IO expander.
+// Assumes your IOX buttons are active-low and readable via gpio_read(IOX_B_...).
+// Add/remove buttons to match your design.
+static inline uint32_t iox_pressed_mask_now(void) {
+    uint32_t m = 0;
+
+    // Example mapping (edit to your actual IOX button defines)
+    // "pressed" = !gpio_read(...)
+    if (!gpio_read(IOX_B_A))        m |= (1u << 0);
+    if (!gpio_read(IOX_B_B))        m |= (1u << 1);
+    if (!gpio_read(IOX_B_UP))       m |= (1u << 2);
+    if (!gpio_read(IOX_B_DOWN))     m |= (1u << 3);
+    if (!gpio_read(IOX_B_LEFT))     m |= (1u << 4);
+    if (!gpio_read(IOX_B_RIGHT))    m |= (1u << 5);
+    if (!gpio_read(IOX_B_START))    m |= (1u << 6);
+    if (!gpio_read(IOX_DVI_DETECT)) m |= (1u << 7);
+
+    return m;
+}

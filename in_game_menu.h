@@ -793,9 +793,9 @@ void in_game_menu() {
 
         wait_for_core1_parked(10 * 1000);
 
-        gpio_write(IOX_AUDIO_EN, 0);
-
         multicore_reset_core1();
+
+        gpio_write(IOX_AUDIO_EN, 0);
 
         hyper_underclock_cpu(true); // goes to 20MHz
 
@@ -810,15 +810,7 @@ void in_game_menu() {
         //     tight_loop_contents();
         // }
 
-        bool wake_up = false; 
-        // loop sleep as long as we haven't been waken up and the switch is still high and we are not going to low power shutdown
-        while(!wake_up && gpio_read(GPIO_SW_OUT) && !low_power_shutdown) {
-            watchdog_update();
-            sleep_ms(100);
-            process_bat_percent();
-            wake_up = /*!gpio_read(GPIO_IOX_nINT) || */!gpio_read(GPIO_B_SELECT);
-            tight_loop_contents();
-        }
+        light_sleep_loop();
 
         // start back up everything
 

@@ -72,9 +72,9 @@ void in_game_toggle_fast_forward() {
     printf("Frame Skip = %d\n", (run_mode == MODE_TURBO));
 }
 
-void in_game_save_game() {
+void in_game_save_game(bool hold_sd_busy) {
 #if ENABLE_SDCARD				
-    write_cart_ram_file(&gb, false);
+    write_cart_ram_file(&gb, hold_sd_busy);
 #endif				
 }
 
@@ -773,13 +773,13 @@ void in_game_menu() {
     // For now, just example stubs:
     if (requested_action == IG_ACT_EXIT_SAVE) {
         in_game_save_auto_state(true);
-        in_game_save_game();
+        in_game_save_game(false);
         g_request_exit_to_rom_selector = true;
     } else if (requested_action == IG_ACT_EXIT_NOSAVE) {
         g_request_exit_to_rom_selector = true;
     } else if (requested_action == IG_ACT_SLEEP) {
         in_game_save_auto_state(true);
-        in_game_save_game();
+        in_game_save_game(true);
 
         sleep_and_shutdown_peripherals();
 

@@ -526,7 +526,7 @@ while(true)
 			}
 			if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
 				/* select + B: Save game ram*/
-				in_game_save_game();
+				in_game_save_game(false);
 			}
 		}
 		// Start + combo

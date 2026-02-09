@@ -778,6 +778,9 @@ void in_game_menu() {
     } else if (requested_action == IG_ACT_EXIT_NOSAVE) {
         g_request_exit_to_rom_selector = true;
     } else if (requested_action == IG_ACT_SLEEP) {
+        in_game_save_auto_state(true);
+        in_game_save_game();
+
         sleep_and_shutdown_peripherals();
 
         // start back up everything

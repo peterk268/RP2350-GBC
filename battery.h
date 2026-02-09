@@ -971,3 +971,42 @@ void start_lcd(bool button_leds_restore) {
     set_sd_busy(false);
     if (button_leds_restore) increase_button_brightness(saved_button_brightness);
 }
+
+void sleep_and_shutdown_peripherals() {
+    // lcd nrst going low
+    // audio en going low
+    // sd nen going high
+    // core1 shutdown
+    // wfi on core0 for iox or select button
+
+    shutdown_lcd(true);
+
+    gpio_write(IOX_AUDIO_EN, 0);
+
+    hyper_underclock_cpu(true); // goes to 20MHz
+
+    sleep_ms(100);
+
+    light_sleep_loop();
+}
+
+void wakeup_and_start_peripherals() {
+    // clear iox int
+    read_io_expander_states(0);
+
+    // DAC powered back on (needs time since LDO starts up too)
+    gpio_write(IOX_AUDIO_EN, 1);
+
+    // CPU Clock
+    underclock_cpu(false); // takes us back to 300MHz and steps voltage back up properly.
+    if (run_mode == MODE_POWERSAVE) underclock_cpu(true); // will take us to 180MHz
+
+    start_lcd(true);
+
+    // Audio again
+    setup_dac();
+    // Set current volume level to 0 to start reading the pot again because
+    // read_volume checks for a change in pot value to set the volume.
+    current_volume_level = 0;
+    read_volume();
+}

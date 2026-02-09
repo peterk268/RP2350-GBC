@@ -778,51 +778,10 @@ void in_game_menu() {
     } else if (requested_action == IG_ACT_EXIT_NOSAVE) {
         g_request_exit_to_rom_selector = true;
     } else if (requested_action == IG_ACT_SLEEP) {
-        // lcd nrst going low
-        // audio en going low
-        // sd nen going high
-        // core1 shutdown
-        // wfi on core0 for iox or select button
-        shutdown_lcd(true);
-
-        gpio_write(IOX_AUDIO_EN, 0);
-
-        hyper_underclock_cpu(true); // goes to 20MHz
-
-        sleep_ms(100);
-        // // wait for a button to be released
-        // while(!a && gpio_read(GPIO_SW_OUT) && !low_power_shutdown) {
-        //     if (!gpio_read(GPIO_IOX_nINT)) {
-        //         read_io_expander_states(0);
-        //         a = gpio_read(IOX_B_A);
-        //     }
-        //     watchdog_update();
-        //     tight_loop_contents();
-        // }
-
-        light_sleep_loop();
+        sleep_and_shutdown_peripherals();
 
         // start back up everything
-
-        // clear iox int
-        read_io_expander_states(0);
-
-        // DAC powered back on (needs time since LDO starts up too)
-        gpio_write(IOX_AUDIO_EN, 1);
-
-        // CPU Clock
-        underclock_cpu(false); // takes us back to 300MHz and steps voltage back up properly.
-        if (run_mode == MODE_POWERSAVE) underclock_cpu(true); // will take us to 180MHz
-
-        start_lcd(true);
-
-        // Audio again
-        setup_dac();
-        // Set current volume level to 0 to start reading the pot again because
-        // read_volume checks for a change in pot value to set the volume.
-        current_volume_level = 0;
-        read_volume();
-
+        wakeup_and_start_peripherals();
     }
 
     g_request_exit_menu = false; 

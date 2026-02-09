@@ -540,7 +540,7 @@ static bool ig_menu_items_init_heap(void) {
 
     menu_items[i++] = (ig_menu_item_t){ "Exit Game & Save",   IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_SAVE };
     menu_items[i++] = (ig_menu_item_t){ "Exit Game w/o Save", IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_EXIT_NOSAVE };
-    menu_items[i++] = (ig_menu_item_t){ "Sleep (Wake w/ Select)",        IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_SLEEP };
+    menu_items[i++] = (ig_menu_item_t){ "Sleep",        IG_ITEM_ACTION, NULL, NULL, NULL, NULL, IG_ACT_SLEEP };
 
     // Finalize counts + sanity
     if (i != MENU_COUNT) {
@@ -783,17 +783,7 @@ void in_game_menu() {
         // sd nen going high
         // core1 shutdown
         // wfi on core0 for iox or select button
-        gpio_write(IOX_LCD_nRST, 0);
-
-        // uint8_t temp_lcd_led = lcd_led_duty_cycle;
-        uint8_t temp_button_led = button_led_duty_cycle;
-        // decrease_lcd_brightness(MAX_BRIGHTNESS);
-        set_sd_busy(true);
-        decrease_button_brightness(MAX_BRIGHTNESS);
-
-        wait_for_core1_parked(10 * 1000);
-
-        multicore_reset_core1();
+        shutdown_lcd(true);
 
         gpio_write(IOX_AUDIO_EN, 0);
 
@@ -824,25 +814,7 @@ void in_game_menu() {
         underclock_cpu(false); // takes us back to 300MHz and steps voltage back up properly.
         if (run_mode == MODE_POWERSAVE) underclock_cpu(true); // will take us to 180MHz
 
-        // start up core1 and lcd
-        lcd_power_on_reset();
-        init_spi_lcd();
-        gpio_write(IOX_LCD_nCS, 0);
-        lcd_config();
-        gpio_write(IOX_LCD_nCS, 1);
-
-        sleep_ms(1);
-        // Give SPI back to SD Card
-        gpio_set_function(GPIO_SPI0_SCK, GPIO_FUNC_SPI);
-        gpio_set_function(GPIO_SPI0_MOSI, GPIO_FUNC_SPI);
-        gpio_set_function(GPIO_SPI0_MISO, GPIO_FUNC_SPI);
-
-        multicore_launch_core1(main_core1);
-
-        // LEDs
-        // increase_lcd_brightness(temp_lcd_led);
-        set_sd_busy(false);
-        increase_button_brightness(temp_button_led);
+        start_lcd(true);
 
         // Audio again
         setup_dac();

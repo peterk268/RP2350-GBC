@@ -930,3 +930,44 @@ void light_sleep_loop(void) {
 #endif
     gpio_set_irq_enabled(GPIO_SW_OUT,   GPIO_IRQ_EDGE_FALL, false);
 }
+
+uint8_t saved_button_brightness = 0;
+
+void shutdown_lcd(bool button_leds_off) {
+    // Shut off display and LEDs
+    gpio_write(IOX_LCD_nRST, 0);
+    set_sd_busy(true);
+    if (button_leds_off) {
+        saved_button_brightness = button_led_duty_cycle;
+        decrease_button_brightness(MAX_BRIGHTNESS);
+    }
+
+    wait_for_core1_parked(10 * 1000);
+
+    multicore_reset_core1();
+
+    scanvideo_timing_enable(false);
+}
+
+void start_lcd(bool button_leds_restore) {
+    // start up core1 and lcd
+    lcd_power_on_reset();
+    init_spi_lcd();
+    gpio_write(IOX_LCD_nCS, 0);
+    lcd_config();
+    gpio_write(IOX_LCD_nCS, 1);
+
+    sleep_ms(1);
+    // Give SPI pins back to SPI controller
+    gpio_set_function(GPIO_SPI0_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(GPIO_SPI0_MOSI, GPIO_FUNC_SPI);
+    gpio_set_function(GPIO_SPI0_MISO, GPIO_FUNC_SPI);
+
+    scanvideo_timing_enable(true);
+
+    multicore_launch_core1(main_core1);
+
+    // LEDs
+    set_sd_busy(false);
+    if (button_leds_restore) increase_button_brightness(saved_button_brightness);
+}

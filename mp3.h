@@ -145,7 +145,6 @@ static bool g_buttons_locked   = false;   // START+SELECT toggle
 static bool select_was_combo   = false;   // tracks if SELECT was used in a combo
 
 // uint8_t saved_lcd_brightness = 0;
-uint8_t saved_button_brightness = 0;
 
 // bool mp3_led_faded = false;
 
@@ -1735,39 +1734,11 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
         // ================= MP3 Inactivity Handling =================
         if (g_mp3_inactive && !prev_inactive) {
-            // Fade out ONLY LCD + button LEDs
-            // fade_out_leds_mp3_inactive();
-            saved_button_brightness = button_led_duty_cycle;
-            decrease_button_brightness(MAX_BRIGHTNESS);
-
-            printf("Setting sd busy\n");
-
-            set_sd_busy(true);
-
-            wait_for_core1_parked(10 * 1000);
-
-            // NOW safe: core1 is not inside scanvideo
-            sleep_lcd();
-            // we can't reset core1 because of the uncertainties with scanvideo 
-            // when re-launching and it's not a crazy difference in 
-            // current consumption when parking instead. ranges from 1-5mA.
-            // multicore_reset_core1();
-
+            shutdown_lcd(true);
             prev_inactive = true;
         }
         else if (!g_mp3_inactive && prev_inactive) {
-            // clear sd_busy to start core1 out of parked state
-            set_sd_busy(false);
-            // sleep_ms(1); // let core1 notice sd_busy cleared
-
-            // launch core1 --- CAN'T due to scanvideo issues
-            // multicore_launch_core1(main_core1);
-            wake_lcd();
-
-            // Fade LCD + button LEDs back in
-            // fade_in_leds_mp3_restore();
-            increase_button_brightness(saved_button_brightness);
-
+            start_lcd(true);
             prev_inactive = false;
         }
 

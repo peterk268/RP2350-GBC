@@ -1727,17 +1727,19 @@ static play_result_t mp3_play_single_track(const char *filepath,
         // thus meaning the battery was checked in the previous iteration but not this one.
         if (!timer_task_flagged && prev_timer_task_flagged) {
             update_status_label(mp3_status_label_obj);
-            // Refresh core1 every 10s in this timer to keep scanvideo happy in case of long wfi.
-            multicore_doorbell_set_other_core(g_core1_db);
         }
         prev_timer_task_flagged = timer_task_flagged;
 
         // ================= MP3 Inactivity Handling =================
         if (g_mp3_inactive && !prev_inactive) {
             shutdown_lcd(true);
+            underclock_cpu(true);
+            i2s_set_sample_freq(&i2s_config, mp3.sampleRate, false);
             prev_inactive = true;
         }
         else if (!g_mp3_inactive && prev_inactive) {
+            underclock_cpu(false);
+            i2s_set_sample_freq(&i2s_config, mp3.sampleRate, false);
             start_lcd(true);
             prev_inactive = false;
         }

@@ -963,9 +963,13 @@ void start_lcd(bool button_leds_restore) {
     gpio_set_function(GPIO_SPI0_MOSI, GPIO_FUNC_SPI);
     gpio_set_function(GPIO_SPI0_MISO, GPIO_FUNC_SPI);
 
+    __atomic_store_n(&core1_parked, false, __ATOMIC_RELEASE);
+
     scanvideo_timing_enable(true);
 
     multicore_launch_core1(main_core1);
+
+    wait_for_core1_parked(10 * 1000);
 
     // LEDs
     set_sd_busy(false);

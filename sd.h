@@ -244,7 +244,10 @@ void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
             set_sd_busy(false);
 		printf("I write_cart_ram_file(%s) COMPLETE (%lu bytes)\n",save_path,save_size);
         free(save_path);
-	}
+	} else {
+        if (!hold_sd_busy)
+            set_sd_busy(false);
+    }
 }
 
 // ============================================================

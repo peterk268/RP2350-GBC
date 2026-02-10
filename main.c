@@ -160,6 +160,7 @@ int main(void)
 # endif
 #endif
 
+	last_filename_init();
 	watchdog_update();
 	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level, last_filename_raw, &auto_load_state);
 #if TIE_PWR_LED_TO_LCD

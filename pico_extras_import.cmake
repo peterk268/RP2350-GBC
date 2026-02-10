@@ -27,7 +27,7 @@ if (NOT PICO_EXTRAS_PATH)
         endif ()
         FetchContent_Declare(
                 pico_extras
-                GIT_REPOSITORY https://github.com/raspberrypi/pico-extras
+                GIT_REPOSITORY https://github.com/peterk268/pico-extras
                 GIT_TAG master
         )
         if (NOT pico_extras)

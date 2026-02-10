@@ -53,19 +53,32 @@ void palette_heap_deinit(void) {
     }
 }
 static int8_t manual_palette_selected=-1;
-char last_filename_raw[FILENAME_MAX_LEN];
+static char *last_filename_raw = NULL;
+bool last_filename_init(void) {
+    last_filename_raw = (char *)malloc(FILENAME_MAX_LEN);
+    if (!last_filename_raw) {
+        return false;
+    }
+    last_filename_raw[0] = '\0'; // start as empty string
+    return true;
+}
+void last_filename_deinit(void) {
+    free(last_filename_raw);
+    last_filename_raw = NULL;
+}
+
 bool auto_load_state = false;
 
 static struct
 {
-	unsigned a	: 1;
-	unsigned b	: 1;
-	unsigned select	: 1;
-	unsigned start	: 1;
-	unsigned right	: 1;
-	unsigned left	: 1;
-	unsigned up	: 1;
-	unsigned down	: 1;
+	bool a	: 1;
+	bool b	: 1;
+	bool select	: 1;
+	bool start	: 1;
+	bool right	: 1;
+	bool left	: 1;
+	bool up	: 1;
+	bool down	: 1;
 } prev_joypad_bits;
 
 /* Multicore command structure. */

@@ -35,7 +35,9 @@ void set_sd_busy(bool is_sd_busy) {
     __atomic_store_n(&sd_busy, is_sd_busy, __ATOMIC_RELEASE);
    
     // Wake core1 from parked state regardless so it can observe the new state immediately
+#if ENABLE_DOORBELL
     multicore_doorbell_set_other_core(g_core1_db);
+#endif
     __sev();
 
     if (sd_busy) {

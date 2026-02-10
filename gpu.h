@@ -168,9 +168,9 @@ void render_loop() {
 
             // Park until sd_busy clears
             while (__atomic_load_n(&sd_busy, __ATOMIC_ACQUIRE)) {
-                sleep_us(10);
+                sleep_ms(1);
                 tight_loop_contents();
-                __wfi();
+                __wfe();
             }
 
             __atomic_store_n(&core1_parked, false, __ATOMIC_RELEASE);
@@ -280,6 +280,7 @@ void render_loop() {
 }
 
 // MARK: - CORE1 DOORBELL SETUP
+#define ENABLE_DOORBELL 0
 static uint8_t g_core1_db = 0xFF;
 bool doorbell_setup = false;
 
@@ -300,7 +301,9 @@ static inline void core1_doorbell_setup() {
 // MARK: - MAIN CORE1 LOOP
 _Noreturn
 void main_core1(void) {
+#if ENABLE_DOORBELL
     if (!doorbell_setup) core1_doorbell_setup();
+#endif
     #if !PICO_SCANVIDEO_ENABLE_DEN_PIN
     #warning "We'll take this out at some point"
     gpio_write(GPIO_DPI_DEN, 1);

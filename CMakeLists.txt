@@ -23,7 +23,7 @@ if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
 # ====================================================================================
-set(PICO_BOARD sparkfun_promicro_rp2350 CACHE STRING "Board type")
+set(PICO_BOARD solderparty_rp2350_stamp_xl CACHE STRING "Board type")
 
 # the following enables the system malloc/free to be wrapped
 set(SKIP_PICO_MALLOC 1)

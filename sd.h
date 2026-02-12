@@ -2071,6 +2071,10 @@ void rom_file_selector() {
 	static bool prev_up = true, prev_down = true, prev_left = true, prev_right = true;
 	static bool prev_a = true, prev_b = true, prev_start = true, prev_select = true;
 
+    // need this for the start recent on power up straight in.
+    // the state gets refreshed in main so no need to read iox
+    start = gpio_read(IOX_B_START);
+
 	// sleep_ms(3000);
 	print_memory_usage();
 

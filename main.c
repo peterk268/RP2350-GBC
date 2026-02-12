@@ -241,6 +241,8 @@ int main(void)
 // MARK: - Infinite Loop
 while(true)
 {
+	read_io_expander_states(0);
+	bool force_auto_load = !gpio_read(IOX_B_START);
 	// MARK: - ROM File selector
 #if ENABLE_SDCARD && ENABLE_ROM_SELECTOR
 	rom_file_selector();
@@ -296,7 +298,7 @@ while(true)
 
 #if ENABLE_SDCARD		
 	// MARK: - Load Auto State
-	if (auto_load_state) {
+	if (auto_load_state || force_auto_load) {
 		bool load_success = read_cart_save_state(&gb, 0);
 
 		// If auto-load fails, fall back to battery save

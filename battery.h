@@ -944,9 +944,9 @@ void shutdown_lcd(bool button_leds_off) {
 
     wait_for_core1_parked(10 * 1000);
 
-    multicore_reset_core1();
-
     scanvideo_timing_enable(false);
+
+    multicore_reset_core1();
 }
 
 void start_lcd(bool button_leds_restore) {

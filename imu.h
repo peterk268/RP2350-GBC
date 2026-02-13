@@ -698,3 +698,81 @@ void imu_example(void) {
         sleep_ms(200);
     }
 }
+
+/* ============================================================
+ * Sleep / Wake helpers (power down sensors, keep I2C alive)
+ * ============================================================ */
+
+typedef struct {
+    uint8_t ctrl1_xl;
+    uint8_t ctrl2_g;
+    uint8_t fifo_ctrl4;   // in your map this is 0x0A (you named FIFO_CTRL4 but it's FIFO_CTRL5 on some docs)
+    uint8_t md1_cfg;
+    uint8_t md2_cfg;
+} imu_saved_state_t;
+
+static imu_saved_state_t g_imu_saved;
+static bool g_imu_saved_valid = false;
+
+/* Save current run state (ODR/FS, FIFO ODR, MD routing) */
+static inline void imu_save_state(void) {
+    imu_read_reg(IMU_REG_CTRL1_XL, &g_imu_saved.ctrl1_xl);
+    imu_read_reg(IMU_REG_CTRL2_G,  &g_imu_saved.ctrl2_g);
+    imu_read_reg(IMU_REG_FIFO_CTRL4, &g_imu_saved.fifo_ctrl4); // your define = 0x0A
+    imu_read_reg(IMU_REG_MD1_CFG,  &g_imu_saved.md1_cfg);
+    imu_read_reg(IMU_REG_MD2_CFG,  &g_imu_saved.md2_cfg);
+    g_imu_saved_valid = true;
+}
+
+/* Power down accel+gyro and stop FIFO clock. Keep I2C enabled. */
+static inline void imu_sleep(void) {
+    // If we can read the device, capture config so wake restores correctly
+    if (imu_check_whoami()) {
+        imu_save_state();
+    }
+
+    // Optionally stop routing motion interrupts while asleep (prevents noisy INT line)
+    imu_write_reg(IMU_REG_MD1_CFG, 0x00);
+    imu_write_reg(IMU_REG_MD2_CFG, 0x00);
+
+    // Stop FIFO ODR (ODR_FIFO = 0000). We don't assume other bits, we just write 0.
+    // If you rely on FIFO watermark mode etc, save_state() + wake() will restore it.
+    imu_write_reg(IMU_REG_FIFO_CTRL4, 0x00);
+
+    // Power-down accel + gyro by setting ODR fields to 0, preserving FS bits.
+    uint8_t v;
+
+    // CTRL1_XL: [7:4] ODR_XL, [3:2] FS_XL  -> keep FS, clear ODR
+    imu_read_reg(IMU_REG_CTRL1_XL, &v);
+    v &= 0x0F;                 // keep low nibble (FS + LPF bits), clear ODR
+    imu_write_reg(IMU_REG_CTRL1_XL, v);
+
+    // CTRL2_G: [7:4] ODR_G, [3:2] FS_G -> keep FS, clear ODR
+    imu_read_reg(IMU_REG_CTRL2_G, &v);
+    v &= 0x0F;
+    imu_write_reg(IMU_REG_CTRL2_G, v);
+
+    // NOTE: do NOT set I2C disable bits here (keeps it wakeable over I2C)
+}
+
+/* Restore previous configuration (if we saved it), otherwise fall back to your defaults. */
+static inline void imu_wake(void) {
+    if (g_imu_saved_valid) {
+        // Restore FIFO/MD routing first (optional ordering)
+        imu_write_reg(IMU_REG_FIFO_CTRL4, g_imu_saved.fifo_ctrl4);
+        imu_write_reg(IMU_REG_MD1_CFG,    g_imu_saved.md1_cfg);
+        imu_write_reg(IMU_REG_MD2_CFG,    g_imu_saved.md2_cfg);
+
+        // Restore sensors
+        imu_write_reg(IMU_REG_CTRL1_XL,   g_imu_saved.ctrl1_xl);
+        imu_write_reg(IMU_REG_CTRL2_G,    g_imu_saved.ctrl2_g);
+    } else {
+        // If we didn't have a saved state, just re-apply your baseline
+        imu_basic_config();
+    }
+
+    // Optional: clear any latched interrupts after wake
+    (void)imu_read_all_int_src();
+    (void)imu_read_wake_src();
+    (void)imu_read_tap_src();
+}

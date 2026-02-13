@@ -798,21 +798,21 @@ static void gpio_wake_cb(uint gpio, uint32_t events) {
 #endif
 }
 
-// TIMER alarm 0 IRQ: every 10s
+// TIMER alarm 0 IRQ: every 50s
 static void __isr alarm0_irq(void) {
     // clear alarm0 interrupt
     hw_clear_bits(&timer_hw->intr, 1u << 0);
 
     g_wake_tick = true;
 
-    // re-arm for +10s
+    // re-arm for +50s
     uint32_t now = timer_hw->timerawl;
-    timer_hw->alarm[0] = now + 10u * 1000u * 1000u; // 10 seconds in us
+    timer_hw->alarm[0] = now + 50u * 1000u * 1000u; // 50 seconds in us
 }
 
-static void tick_timer_start_10s(void) {
+static void tick_timer_start_50s(void) {
     uint32_t now = timer_hw->timerawl;
-    timer_hw->alarm[0] = now + 10u * 1000u * 1000u;
+    timer_hw->alarm[0] = now + 50u * 1000u * 1000u;
 
     hw_set_bits(&timer_hw->inte, 1u << 0);
     irq_set_exclusive_handler(TIMER0_IRQ_0, alarm0_irq);
@@ -834,8 +834,8 @@ void light_sleep_loop(void) {
     g_wake_swlow  = false;
     g_wake_tick   = true;   // run maintenance once immediately (optional)
 
-    // Change watchdog timeout to 12s while sleeping
-    watchdog_enable(12 * 1000, true);
+    // Change watchdog timeout to 52s while sleeping
+    watchdog_enable(52 * 1000, true);
 
     // Enable button wake (active-low)
     gpio_set_irq_enabled_with_callback(GPIO_B_SELECT,
@@ -861,7 +861,7 @@ void light_sleep_loop(void) {
     uint32_t held_at_sleep = iox_pressed_mask_now();
 #endif
 
-    tick_timer_start_10s();
+    tick_timer_start_50s();
 
     // Sleep as long as switch is high and we’re not shutting down and button not pressed
     while (gpio_read(GPIO_SW_OUT) && !low_power_shutdown && !g_wake_button) {
@@ -903,7 +903,7 @@ void light_sleep_loop(void) {
         }
 #endif
 
-        // 10s maintenance tick
+        // 50s maintenance tick to check on battery for shutdown (monitor updates every 48s in sleep)
         if (g_wake_tick) {
             g_wake_tick = false;
 
@@ -987,6 +987,8 @@ void sleep_and_shutdown_peripherals() {
 
     gpio_write(IOX_AUDIO_EN, 0);
 
+    imu_sleep();
+
     hyper_underclock_cpu(true); // goes to 20MHz
 
     sleep_ms(100);
@@ -997,6 +999,8 @@ void sleep_and_shutdown_peripherals() {
 void wakeup_and_start_peripherals() {
     // clear iox int
     read_io_expander_states(0);
+
+    imu_wake();
 
     // DAC powered back on (needs time since LDO starts up too)
     gpio_write(IOX_AUDIO_EN, 1);

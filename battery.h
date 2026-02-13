@@ -834,8 +834,11 @@ void light_sleep_loop(void) {
     g_wake_swlow  = false;
     g_wake_tick   = true;   // run maintenance once immediately (optional)
 
-    // Change watchdog timeout to 52s while sleeping
-    watchdog_enable(52 * 1000, true);
+    // remove power hold since we already saved everything prior to going to bed
+    release_power();
+
+    // Disable watchdog because max timer is 16.7s
+    watchdog_disable();
 
     // Enable button wake (active-low)
     gpio_set_irq_enabled_with_callback(GPIO_B_SELECT,
@@ -920,6 +923,9 @@ void light_sleep_loop(void) {
 
     // Restore your normal watchdog timeout
     watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
+
+    // Restore power hold now that we have watchdog back
+    hold_power();
 
     tick_timer_stop();
 

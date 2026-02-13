@@ -933,7 +933,10 @@ void light_sleep_loop(void) {
 
 uint8_t saved_button_brightness = 0;
 
-void shutdown_lcd(bool button_leds_off) {
+// adding a bool for shutdown core1 because when doing mp3 we get some issues shutting down core1 
+// that I haven't fully investigated yet, so this allows us to skip that step for now when doing mp3
+// shutdowns until I can figure out the root cause.
+void shutdown_lcd(bool button_leds_off, bool shutdown_core1) {
     // Shut off display and LEDs
     gpio_write(IOX_LCD_nRST, 0);
     set_sd_busy(true);
@@ -946,10 +949,11 @@ void shutdown_lcd(bool button_leds_off) {
 
     scanvideo_timing_enable(false);
 
-    multicore_reset_core1();
+    if (shutdown_core1)
+        multicore_reset_core1();
 }
 
-void start_lcd(bool button_leds_restore) {
+void start_lcd(bool button_leds_restore, bool start_core1) {
     // start up core1 and lcd
     lcd_power_on_reset();
     init_spi_lcd();
@@ -967,7 +971,8 @@ void start_lcd(bool button_leds_restore) {
 
     scanvideo_timing_enable(true);
 
-    multicore_launch_core1(main_core1);
+    if (start_core1)
+        multicore_launch_core1(main_core1);
 
     wait_for_core1_parked(10 * 1000);
 
@@ -976,6 +981,9 @@ void start_lcd(bool button_leds_restore) {
     if (button_leds_restore) increase_button_brightness(saved_button_brightness);
 }
 
+static inline void imu_sleep(void);
+static inline void imu_wake(void);
+
 void sleep_and_shutdown_peripherals() {
     // lcd nrst going low
     // audio en going low
@@ -983,7 +991,7 @@ void sleep_and_shutdown_peripherals() {
     // core1 shutdown
     // wfi on core0 for iox or select button
 
-    shutdown_lcd(true);
+    shutdown_lcd(true, true);
 
     gpio_write(IOX_AUDIO_EN, 0);
 
@@ -1009,7 +1017,7 @@ void wakeup_and_start_peripherals() {
     underclock_cpu(false); // takes us back to 300MHz and steps voltage back up properly.
     if (run_mode == MODE_POWERSAVE) underclock_cpu(true); // will take us to 180MHz
 
-    start_lcd(true);
+    start_lcd(true, true);
 
     // Audio again
     setup_dac();

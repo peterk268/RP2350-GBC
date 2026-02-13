@@ -1732,15 +1732,15 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
         // ================= MP3 Inactivity Handling =================
         if (g_mp3_inactive && !prev_inactive) {
-            shutdown_lcd(true);
-            underclock_cpu(true);
-            i2s_set_sample_freq(&i2s_config, mp3.sampleRate, false);
+            shutdown_lcd(true, false);
+            // underclock_cpu(true);
+            // i2s_set_sample_freq(&i2s_config, mp3.sampleRate, false);
             prev_inactive = true;
         }
         else if (!g_mp3_inactive && prev_inactive) {
-            underclock_cpu(false);
-            i2s_set_sample_freq(&i2s_config, mp3.sampleRate, false);
-            start_lcd(true);
+            // underclock_cpu(false);
+            // i2s_set_sample_freq(&i2s_config, mp3.sampleRate, false);
+            start_lcd(true, false);
             prev_inactive = false;
         }
 

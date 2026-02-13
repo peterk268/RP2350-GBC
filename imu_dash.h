@@ -38,6 +38,8 @@ extern "C" {
 
 #define ACCEL_BAR_FULLSCALE_G   0.6f   // or whatever max g you want
 
+#define CALIBRATE_ON_STARTUP 1
+
 // ----------------------------------------------------
 // UI state
 // ----------------------------------------------------
@@ -515,7 +517,10 @@ static inline void run_gmeter_dashboard(void) {
     float offset_gy = 0.0f;   // Ball X movement axis
     float offset_gz = 0.0f;   // Ball Y movement axis
     float offset_gx = 0.0f;   // Ball Z movement axis
-    bool prev_select = true;
+
+    // For auto calibration on start up
+    bool auto_cal_done = false;
+    absolute_time_t gmeter_start_time = get_absolute_time();
 
     while (1) {
         watchdog_update();
@@ -649,6 +654,19 @@ static inline void run_gmeter_dashboard(void) {
             filt_gx += GMETER_SMOOTH_ALPHA * (gx - filt_gx);
             filt_gy += GMETER_SMOOTH_ALPHA * (gy - filt_gy);
             filt_gz += GMETER_SMOOTH_ALPHA * (gz - filt_gz);
+        }
+
+        // -------------------------------------------------
+        // Auto-calibrate once after 100ms (uses filtered values)
+        // -------------------------------------------------
+        if (CALIBRATE_ON_STARTUP && !auto_cal_done) {
+            if (absolute_time_diff_us(gmeter_start_time, get_absolute_time()) >= 100000) {
+                offset_gy = filt_gy;
+                offset_gz = filt_gz;
+                offset_gx = filt_gx;
+                auto_cal_done = true;
+                printf("G-meter AUTO calibrated after 1s!\n");
+            }
         }
 
         // ------------------------------

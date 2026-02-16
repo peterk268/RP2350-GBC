@@ -793,6 +793,12 @@ void in_game_menu() {
         fade_out_leds_powerdown();
 #endif
 
+        // we want to shut down the lcd here first and not let save game or state do it because they don't turn off the button leds and i dont trust it
+        // this allows us to keep the is lcd on check to prevent back to back shut down lcds
+        // wake and start peripherals will turn it back on
+        // this is a volatile area to be kept with care and thought of everything going on because there's a lot.
+        shutdown_lcd(true, true);
+
 #if ENABLE_SDCARD
         in_game_save_auto_state(true);
         in_game_save_game(true);
@@ -804,7 +810,7 @@ void in_game_menu() {
 # if TIE_PWR_LED_TO_LCD
         pwr_led_duty_cycle = temp_lcd_led;
 # endif
-        save_system_settings_if_changed(temp_lcd_led, button_led_duty_cycle, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
+        save_system_settings_if_changed(temp_lcd_led, saved_button_brightness, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
 #endif
 
 

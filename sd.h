@@ -349,6 +349,10 @@ static uint32_t crc32_ieee(const void *data, size_t len) {
 // WRITE SAVE STATE
 // ============================================================
 void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy, int override_slot) {
+    if (!gb) return;
+
+    shutdown_lcd(false, true);
+
     UINT bw = 0;
     FRESULT fr = FR_OK;
 
@@ -360,10 +364,6 @@ void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy, int override_slot
 
     gb_save_state_t *s = NULL;
     save_state_header_t hdr;
-
-    if (!gb) return;
-
-    shutdown_lcd(false, true);
 
     save_path = (char *)malloc(PATH_MAX_LEN);
     if (!save_path) {
@@ -503,6 +503,10 @@ cleanup:
 // Returns true if state loaded, false if missing/invalid.
 // ============================================================
 bool read_cart_save_state(struct gb_s *gb, int override_slot, bool hold_sd_busy) {
+    if (!gb) return false;
+
+    shutdown_lcd(false, true);
+
     UINT br = 0;
     FRESULT fr;
     FIL fil;
@@ -511,10 +515,6 @@ bool read_cart_save_state(struct gb_s *gb, int override_slot, bool hold_sd_busy)
     gb_save_state_t *s = NULL;
     sd_card_t *pSD;
     bool success = false;
-
-    if (!gb) return false;
-
-    shutdown_lcd(false, true);
 
     save_path = (char *)malloc(PATH_MAX_LEN);
     if (!save_path) {
@@ -803,7 +803,6 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
 {
     if (!front_fb) return false;
 
-    // Your existing busy indicator
     shutdown_lcd(false, true);
 
     sd_card_t *pSD = sd_get_by_num(0);

@@ -190,6 +190,8 @@ typedef struct {
 static mp3_resume_t g_resume = {0};
 
 static void mp3_save_resume(int track_index, uint32_t position_ms, bool hold_sd_busy, uint32_t byte_offset) {
+    shutdown_lcd(false, true);
+
     FIL wf;
     UINT bw;
 
@@ -200,8 +202,6 @@ static void mp3_save_resume(int track_index, uint32_t position_ms, bool hold_sd_
     g_resume.repeat_mode = (uint8_t)g_repeat_mode;
     g_resume.byte_offset = byte_offset;
 
-    set_sd_busy(true);
-
     if (f_open(&wf, RESUME_FILE, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
         f_write(&wf, &g_resume, sizeof(g_resume), &bw);
         f_close(&wf);
@@ -210,7 +210,7 @@ static void mp3_save_resume(int track_index, uint32_t position_ms, bool hold_sd_
     }
 
     if (!hold_sd_busy)
-        set_sd_busy(false);
+        start_lcd(false, true);
 }
 
 typedef struct {
@@ -677,6 +677,8 @@ static void shuffle_save_state(bool hold_sd_busy) {
     if (!g_shuffle_order || g_track_count <= 0 || g_shuffle_seed == 0)
         return;
 
+    shutdown_lcd(false, true);
+
     FIL f;
     UINT bw;
 
@@ -686,15 +688,13 @@ static void shuffle_save_state(bool hold_sd_busy) {
     hdr.pos   = g_shuffle_pos;
     hdr.seed  = g_shuffle_seed;
 
-    set_sd_busy(true);
-
     if (f_open(&f, SHUFFLE_FILE, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
         f_write(&f, &hdr, sizeof(hdr), &bw);
         f_close(&f);
     }
 
     if (!hold_sd_busy)
-        set_sd_busy(false);
+        start_lcd(false, true);
 }
 
 static bool shuffle_load_state(void) {

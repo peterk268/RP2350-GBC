@@ -942,6 +942,7 @@ uint8_t saved_button_brightness = 0;
 // adding a bool for shutdown core1 because when doing mp3 we get some issues shutting down core1 
 // that I haven't fully investigated yet, so this allows us to skip that step for now when doing mp3
 // shutdowns until I can figure out the root cause.
+// SHOULD ALWAYS BE THE FIRST STEP BEFORE DOING A SD READ/WRITE AND THE LAST STEP AFTER DOING A SD READ/WRITE to avoid resource contention.
 void shutdown_lcd(bool button_leds_off, bool shutdown_core1) {
     // Shut off display and LEDs
     gpio_write(IOX_LCD_nRST, 0);

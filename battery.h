@@ -1007,7 +1007,7 @@ void sleep_and_shutdown_peripherals() {
 
     gpio_write(IOX_AUDIO_EN, 0);
 
-    imu_sleep();
+    // imu_sleep();
 
     hyper_underclock_cpu(true); // goes to 20MHz
 
@@ -1020,7 +1020,7 @@ void wakeup_and_start_peripherals() {
     // clear iox int
     read_io_expander_states(0);
 
-    imu_wake();
+    // imu_wake();
 
     // DAC powered back on (needs time since LDO starts up too)
     gpio_write(IOX_AUDIO_EN, 1);

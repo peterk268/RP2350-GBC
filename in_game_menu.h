@@ -77,7 +77,9 @@ void in_game_save_game(bool hold_sd_busy) {
     write_cart_ram_file(&gb, hold_sd_busy);
 #endif				
 }
-
+void in_game_save_game_no_hold() {
+    in_game_save_game(false);
+}
 void in_game_increase_washout() {
     wash_out_level = increase_clamp(wash_out_level, 16);
 }
@@ -89,7 +91,7 @@ void in_game_save_state() {
     write_cart_save_state(&gb, false, -1);
 }
 void in_game_load_state() {
-    read_cart_save_state(&gb, -1);
+    read_cart_save_state(&gb, -1, false);
     if (g_in_game_menu) {
         g_request_exit_menu = true;
     }
@@ -100,7 +102,7 @@ void in_game_save_auto_state(bool hold_sd_busy) {
     write_cart_save_state(&gb, hold_sd_busy, 0);
 }
 void in_game_load_auto_state() {
-    read_cart_save_state(&gb, 0);
+    read_cart_save_state(&gb, 0, false);
     if (g_in_game_menu) {
         g_request_exit_menu = true;
     }
@@ -505,7 +507,7 @@ static bool ig_menu_items_init_heap(void) {
         in_game_increase_button_brightness, IG_ACT_NONE
     };
 
-    menu_items[i++] = (ig_menu_item_t){ "Save Game",       IG_ITEM_ACTION, NULL, NULL, NULL, in_game_save_game, IG_ACT_NONE };
+    menu_items[i++] = (ig_menu_item_t){ "Save Game",       IG_ITEM_ACTION, NULL, NULL, NULL, in_game_save_game_no_hold, IG_ACT_NONE };
     menu_items[i++] = (ig_menu_item_t){ "Save State",      IG_ITEM_ACTION, NULL, NULL, NULL, in_game_save_state, IG_ACT_NONE };
     menu_items[i++] = (ig_menu_item_t){ "Load State",      IG_ITEM_ACTION, NULL, NULL, NULL, in_game_load_state, IG_ACT_NONE };
     menu_items[i++] = (ig_menu_item_t){ "Load Auto State", IG_ITEM_ACTION, NULL, NULL, NULL, in_game_load_auto_state, IG_ACT_NONE };

@@ -149,15 +149,14 @@ int build_save_path_from_flash(save_type_t type, char *out_path, size_t out_path
 }
 
 
-void read_cart_ram_file(struct gb_s *gb) {
+void read_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
 
-	uint_fast32_t save_size;
+	size_t save_size;
 	UINT br;
 
-	save_size=gb_get_save_size(gb);
+    gb_get_save_size_s(gb, &save_size);
 	if(save_size>0) {
-        // sd busy not needed here since its held until emulation starts
-		// set_sd_busy(true);
+        shutdown_lcd(false, true);
 
 		sd_card_t *pSD=sd_get_by_num(0);
 		FRESULT fr=f_mount(&pSD->fatfs,pSD->pcName,1);
@@ -193,20 +192,22 @@ void read_cart_ram_file(struct gb_s *gb) {
 		}
 		f_unmount(pSD->pcName);	
 
-		// set_sd_busy(false);
+		if (!hold_sd_busy) start_lcd(false, true);
 		printf("I read_cart_ram_file(%s) COMPLETE (%lu bytes)\n",save_path,save_size);
         free(save_path);
-	}
+	} else {
+        if (!hold_sd_busy) start_lcd(false, true);
+    }
 }
 
 /**
  * Write a save file to the SD card
  */
 void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
-	uint_fast32_t save_size;
+	size_t save_size;
 	UINT bw;
 	
-	save_size=gb_get_save_size(gb);
+    gb_get_save_size_s(gb, &save_size);
 	if(save_size>0) {
         shutdown_lcd(false, true);
 
@@ -501,7 +502,7 @@ cleanup:
 // READ SAVE STATE
 // Returns true if state loaded, false if missing/invalid.
 // ============================================================
-bool read_cart_save_state(struct gb_s *gb, int override_slot) {
+bool read_cart_save_state(struct gb_s *gb, int override_slot, bool hold_sd_busy) {
     UINT br = 0;
     FRESULT fr;
     FIL fil;
@@ -644,7 +645,7 @@ cleanup:
     if (s) free(s);
     if (save_path) { free(save_path); save_path = NULL; }
 
-    start_lcd(false, true);
+    if (!hold_sd_busy) start_lcd(false, true);
 
     return success && (fr == FR_OK);
 }
@@ -1019,9 +1020,11 @@ fail:
 #define BLOCK_SIZE   (64 * 1024)   // SD read buffer size (big enough but not too big)
 
 
-void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
+void __not_in_flash_func(load_cart_rom_file)(const char *filename, bool hold_sd_busy) {
     while(led_ramp_done == false) sleep_ms(1); // Wait for LED fade-in to complete
     
+    shutdown_lcd(false, true);
+
     // Don't touch again please..
     memset(front_fb->data, 0, sizeof(front_fb->data));
     memset(write_fb->data, 0, sizeof(write_fb->data));
@@ -1032,8 +1035,6 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
     FIL fil;
     UINT br;
     sd_card_t *pSD = sd_get_by_num(0);
-
-	shutdown_lcd(false, true);
 
     // Mount SD card
     fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
@@ -1180,7 +1181,7 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
 	save_rom_settings(filename, 0, 1);
     strncpy(last_filename_raw, filename, FILENAME_MAX_LEN - 1);
 
-    start_lcd(false, true);
+    if (!hold_sd_busy) start_lcd(false, true);
 	watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
 
     printf("I load_cart_rom_file(%s) COMPLETE (%lu bytes written)\n", filename, rom_size);
@@ -2120,7 +2121,7 @@ void rom_file_selector() {
                 bool launched = false;
 #if ENABLE_PSRAM && !ROM_FLASH
                 if (last_filename_raw[0] != '\0') {
-                    load_cart_rom_file(last_filename_raw);
+                    load_cart_rom_file(last_filename_raw, true);
                     launched = true;
                 }
 #endif
@@ -2131,7 +2132,7 @@ void rom_file_selector() {
             if (!show_settings) {
                 /* copy the rom from the SD card to flash and start the game */
                 printf("LOADING\n");
-                load_cart_rom_file(filename[selected]);
+                load_cart_rom_file(filename[selected], true);
                 break;
             }
 		}
@@ -2326,6 +2327,9 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
                           uint8_t wash_out_level, char last_filename_raw[FILENAME_MAX_LEN],
                           bool auto_load_state,
                           bool hold_sd_busy) {
+
+    shutdown_lcd(false, true);
+
     system_settings_t s = {
         .magic = SYSTEM_MAGIC,
         .lcd_brightness = lcd_brightness,
@@ -2339,7 +2343,6 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
     strncpy(s.last_filename_raw, last_filename_raw, FILENAME_MAX_LEN);
     s.last_filename_raw[FILENAME_MAX_LEN - 1] = '\0';  // ensure null termination
 
-    shutdown_lcd(false, true);
     sd_card_t *pSD = sd_get_by_num(0);
     FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
     if (fr != FR_OK) return;

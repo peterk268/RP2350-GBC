@@ -52,7 +52,23 @@ static void frame_update_logic();
 static void scanline_update_logic();
 static void render_scanline(struct scanvideo_scanline_buffer *dest, const uint16_t *fb);
 uint16_t shift_components(uint16_t pixel);
-static uint16_t black_fb[LCD_WIDTH] = {0}; // all black
+
+static uint16_t *black_fb = NULL;
+bool black_fb_init(void) {
+    if (black_fb) return true;  // already allocated
+
+    black_fb = (uint16_t *)malloc(sizeof(uint16_t) * LCD_WIDTH);
+    if (!black_fb) return false;
+
+    memset(black_fb, 0, sizeof(uint16_t) * LCD_WIDTH);
+    return true;
+}
+void black_fb_deinit(void) {
+    if (!black_fb) return;
+    free(black_fb);
+    black_fb = NULL;
+}
+
 // MARK: - RENDER LOOP
 // "Worker thread" for each core
 
@@ -369,6 +385,7 @@ static void lvgl_free_buffers(void) {
 void fb_init(void)
 {
     fb_deinit();
+    black_fb_deinit();
 
     fb0 = fb_alloc_zeroed();
     fb1 = fb_alloc_zeroed();
@@ -395,6 +412,8 @@ void fb_init(void)
     lvgl_alloc_buffers();
     
     __atomic_store_n(&ready_fb, (framebuffer_t *)NULL, __ATOMIC_RELAXED);
+
+    black_fb_init();
 }
 
 // MARK: - DPI SETUP

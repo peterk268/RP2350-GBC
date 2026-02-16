@@ -939,11 +939,17 @@ void light_sleep_loop(void) {
 
 uint8_t saved_button_brightness = 0;
 
+bool lcd_is_on() {
+    return iox_state_lookup(IOX_LCD_nRST) != 0;
+}
+
 // adding a bool for shutdown core1 because when doing mp3 we get some issues shutting down core1 
 // that I haven't fully investigated yet, so this allows us to skip that step for now when doing mp3
 // shutdowns until I can figure out the root cause.
 // SHOULD ALWAYS BE THE FIRST STEP BEFORE DOING A SD READ/WRITE AND THE LAST STEP AFTER DOING A SD READ/WRITE to avoid resource contention.
 void shutdown_lcd(bool button_leds_off, bool shutdown_core1) {
+    if (!lcd_is_on()) return;
+
     // Shut off display and LEDs
     gpio_write(IOX_LCD_nRST, 0);
     set_sd_busy(true);
@@ -961,6 +967,8 @@ void shutdown_lcd(bool button_leds_off, bool shutdown_core1) {
 }
 
 void start_lcd(bool button_leds_restore, bool start_core1) {
+    if (lcd_is_on()) return;
+
     // start up core1 and lcd
     lcd_power_on_reset();
     init_spi_lcd();

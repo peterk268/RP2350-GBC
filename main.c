@@ -298,17 +298,17 @@ while(true)
 #if ENABLE_SDCARD		
 	// MARK: - Load Auto State
 	if (auto_load_state || force_auto_load) {
-		bool load_success = read_cart_save_state(&gb, 0);
+		bool load_success = read_cart_save_state(&gb, 0, false);
 
 		// If auto-load fails, fall back to battery save
 		if (!load_success) {
 			printf("Auto load state failed.\n");
-			read_cart_ram_file(&gb);
+			read_cart_ram_file(&gb, false);
 		}
 	} else {
 		// MARK: - Load Save File
 		// Auto-load disabled -> battery save only
-		read_cart_ram_file(&gb);
+		read_cart_ram_file(&gb, false);
 	}
 #endif
 

@@ -73,7 +73,19 @@ typedef struct {
 } gmeter_ui_t;
 
 // Single global instance
-static gmeter_ui_t g_gmeter_ui = {0};
+static gmeter_ui_t *g_gmeter_ui = NULL;
+
+static bool gmeter_ui_alloc(void) {
+    if (g_gmeter_ui) return true;
+    g_gmeter_ui = (gmeter_ui_t *)calloc(1, sizeof(gmeter_ui_t)); // zeroed like {0}
+    return (g_gmeter_ui != NULL);
+}
+
+static void gmeter_ui_free(void) {
+    if (!g_gmeter_ui) return;
+    free(g_gmeter_ui);
+    g_gmeter_ui = NULL;
+}
 
 // ----------------------------------------------------
 // Internal helpers
@@ -99,7 +111,7 @@ static void gmeter_create_screen(void) {
     lv_disp_drv_register(&disp_drv);
 	///
 
-    gmeter_ui_t *ui = &g_gmeter_ui;
+    gmeter_ui_t *ui = g_gmeter_ui;
 
     // Create a fresh screen
     ui->screen = lv_obj_create(NULL);
@@ -328,7 +340,7 @@ static void gmeter_create_screen(void) {
 }
 
 static void gmeter_update_trail(lv_coord_t x, lv_coord_t y, lv_color_t c) {
-    gmeter_ui_t *ui = &g_gmeter_ui;
+    gmeter_ui_t *ui = g_gmeter_ui;
 
     uint8_t i = ui->trail_index;
     ui->trail_index = (ui->trail_index + 1) % TRAIL_COUNT;
@@ -354,7 +366,7 @@ static void gmeter_update_trail(lv_coord_t x, lv_coord_t y, lv_color_t c) {
 // Update ball position + numeric label
 // gx and gz drive the ball; gy is numeric-only
 static void gmeter_update_ui(float gx, float gz, float gy) {
-    gmeter_ui_t *ui = &g_gmeter_ui;
+    gmeter_ui_t *ui = g_gmeter_ui;
 
     if (!ui->screen) {
         return;
@@ -447,7 +459,7 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
                    ball_center_y - ui->ball_radius);
 
     // --- Acceleration Bar Update ---
-    lv_coord_t max_w = g_gmeter_ui.accel_bar_width / 2;
+    lv_coord_t max_w = g_gmeter_ui->accel_bar_width / 2;
 
     // Limit to ±0.6g (map scale)
     float z = gz / ACCEL_BAR_FULLSCALE_G;   // Normalize
@@ -457,28 +469,28 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
     lv_coord_t bar_w = (lv_coord_t)(max_w * fabsf(z));
 
     // Choose position depending on sign
-    lv_coord_t bg_y = lv_obj_get_y(g_gmeter_ui.accel_bar_bg);
-    lv_coord_t center_x = g_gmeter_ui.accel_bar_center_x;
+    lv_coord_t bg_y = lv_obj_get_y(g_gmeter_ui->accel_bar_bg);
+    lv_coord_t center_x = g_gmeter_ui->accel_bar_center_x;
 
     // Move the bar either left or right
     if (z >= 0) {
         // accelerating → right, green
-        lv_obj_set_style_bg_color(g_gmeter_ui.accel_bar_fill, lv_color_hex(0x00FF00), 0);
+        lv_obj_set_style_bg_color(g_gmeter_ui->accel_bar_fill, lv_color_hex(0x00FF00), 0);
 
-        lv_obj_set_pos(g_gmeter_ui.accel_bar_fill,
+        lv_obj_set_pos(g_gmeter_ui->accel_bar_fill,
                     center_x,
                     bg_y);
     } else {
         // braking → left, red
-        lv_obj_set_style_bg_color(g_gmeter_ui.accel_bar_fill, lv_color_hex(0xFF0000), 0);
+        lv_obj_set_style_bg_color(g_gmeter_ui->accel_bar_fill, lv_color_hex(0xFF0000), 0);
 
-        lv_obj_set_pos(g_gmeter_ui.accel_bar_fill,
+        lv_obj_set_pos(g_gmeter_ui->accel_bar_fill,
                     center_x - bar_w,
                     bg_y);
     }
 
     // Set fill size
-    lv_obj_set_size(g_gmeter_ui.accel_bar_fill, bar_w, g_gmeter_ui.accel_bar_height);
+    lv_obj_set_size(g_gmeter_ui->accel_bar_fill, bar_w, g_gmeter_ui->accel_bar_height);
 
 }
 
@@ -489,6 +501,7 @@ static void gmeter_update_ui(float gx, float gz, float gy) {
 // This takes over execution and runs the G-meter forever
 // (like your MP3 example). Reset device to exit.
 static inline void run_gmeter_dashboard(void) {
+    gmeter_ui_alloc();
 
     // Init IMU (safe to call even if already done elsewhere)
     if (!imu_init()) {
@@ -673,15 +686,15 @@ static inline void run_gmeter_dashboard(void) {
         // Change ball color depending on acceleration direction
         if (gz_corrected > 0.05f) {
             // Accelerating → GREEN
-            lv_obj_set_style_bg_color(g_gmeter_ui.ball, lv_color_hex(0x00FF00), 0);
+            lv_obj_set_style_bg_color(g_gmeter_ui->ball, lv_color_hex(0x00FF00), 0);
         } 
         else if (gz_corrected < -0.05f) {
             // Braking → RED
-            lv_obj_set_style_bg_color(g_gmeter_ui.ball, lv_color_hex(0xFF0000), 0);
+            lv_obj_set_style_bg_color(g_gmeter_ui->ball, lv_color_hex(0xFF0000), 0);
         }
         else {
             // Neutral → WHITE (or blue if you prefer)
-            lv_obj_set_style_bg_color(g_gmeter_ui.ball, GMETER_ACCENT_COLOR, 0);
+            lv_obj_set_style_bg_color(g_gmeter_ui->ball, GMETER_ACCENT_COLOR, 0);
         }
 
         // ------------------------------

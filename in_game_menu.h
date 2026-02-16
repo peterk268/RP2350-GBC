@@ -438,12 +438,30 @@ static void draw_in_game_options_list(lv_obj_t *list,
         int idx = i + ig_page_start;
 
         // Build row text: "Label    <value>"
-        char value[64] = {0};
-        if (items[idx].get_value_text) items[idx].get_value_text(value, sizeof(value));
+        char *value = (char *)malloc(64);
+        if (!value) return; // out of heap; bail (or you can continue)
+        value[0] = '\0';
 
-        char row[128];
-        if (value[0]) snprintf(row, sizeof(row), "%s  %s", items[idx].label, value);
-        else          snprintf(row, sizeof(row), "%s", items[idx].label);
+        if (items[idx].get_value_text) items[idx].get_value_text(value, 64);
+
+        // Build row text on heap (size exactly as needed)
+        const char *label = items[idx].label ? items[idx].label : "";
+
+        size_t need = 0;
+        if (value[0]) {
+            need = (size_t)snprintf(NULL, 0, "%s  %s", label, value) + 1;
+        } else {
+            need = (size_t)snprintf(NULL, 0, "%s", label) + 1;
+        }
+
+        char *row = (char *)malloc(need);
+        if (!row) {
+            free(value);
+            return; // out of heap; bail (or you can continue)
+        }
+
+        if (value[0]) snprintf(row, need, "%s  %s", label, value);
+        else          snprintf(row, need, "%s", label);
 
         lv_obj_t *row_obj = lv_list_add_text(list, row);
         lv_obj_set_style_text_font(row_obj, LV_FONT_DEFAULT, 0);
@@ -460,6 +478,10 @@ static void draw_in_game_options_list(lv_obj_t *list,
             lv_label_set_long_mode(row_obj, LV_LABEL_LONG_CLIP);
         }
         lv_label_set_recolor(row_obj, true);
+
+        // LVGL copies the string for list text labels, so we can free immediately.
+        free(row);
+        free(value);
     }
 }
 

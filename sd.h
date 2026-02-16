@@ -38,7 +38,8 @@ void set_sd_busy(bool is_sd_busy) {
 #if ENABLE_DOORBELL
     multicore_doorbell_set_other_core(g_core1_db);
 #endif
-    __sev();
+    // Sometimes just one send event isn't enought to wake core1 from wfe.. zzz
+    __sev(); __sev();
 
     if (sd_busy) {
         sd_prev_lcd_led_duty_cycle = lcd_led_duty_cycle;
@@ -207,7 +208,7 @@ void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
 	
 	save_size=gb_get_save_size(gb);
 	if(save_size>0) {
-		set_sd_busy(true);
+        shutdown_lcd(false, true);
 
 		sd_card_t *pSD=sd_get_by_num(0);
 		FRESULT fr=f_mount(&pSD->fatfs,pSD->pcName,1);
@@ -243,12 +244,12 @@ void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
 		}
 		f_unmount(pSD->pcName);
         if (!hold_sd_busy)
-            set_sd_busy(false);
+            start_lcd(false, true);
 		printf("I write_cart_ram_file(%s) COMPLETE (%lu bytes)\n",save_path,save_size);
         free(save_path);
 	} else {
         if (!hold_sd_busy)
-            set_sd_busy(false);
+            start_lcd(false, true);
     }
 }
 
@@ -361,7 +362,7 @@ void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy, int override_slot
 
     if (!gb) return;
 
-    set_sd_busy(true);
+    shutdown_lcd(false, true);
 
     save_path = (char *)malloc(PATH_MAX_LEN);
     if (!save_path) {
@@ -493,7 +494,7 @@ cleanup:
     }
 
 
-    if (!hold_sd_busy) set_sd_busy(false);
+    if (!hold_sd_busy) start_lcd(false, true);
 }
 
 // ============================================================
@@ -512,7 +513,7 @@ bool read_cart_save_state(struct gb_s *gb, int override_slot) {
 
     if (!gb) return false;
 
-    set_sd_busy(true);
+    shutdown_lcd(false, true);
 
     save_path = (char *)malloc(PATH_MAX_LEN);
     if (!save_path) {
@@ -643,7 +644,7 @@ cleanup:
     if (s) free(s);
     if (save_path) { free(save_path); save_path = NULL; }
 
-    set_sd_busy(false);
+    start_lcd(false, true);
 
     return success && (fr == FR_OK);
 }
@@ -802,13 +803,13 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
     if (!front_fb) return false;
 
     // Your existing busy indicator
-    set_sd_busy(true);
+    shutdown_lcd(false, true);
 
     sd_card_t *pSD = sd_get_by_num(0);
     FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
     if (fr != FR_OK) {
         printf("E f_mount error: %s (%d)\n", FRESULT_str(fr), fr);
-        if (!hold_sd_busy) set_sd_busy(false);
+        if (!hold_sd_busy) start_lcd(false, true);
         return false;
     }
 
@@ -818,7 +819,7 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
         if (!screenshot_find_free_num(pSD, &use_num)) {
             printf("E could not find free screenshot number\n");
             f_unmount(pSD->pcName);
-            if (!hold_sd_busy) set_sd_busy(false);
+            if (!hold_sd_busy) start_lcd(false, true);
             return false;
         }
     }
@@ -828,7 +829,7 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
     if (build_screenshot_path_from_flash(use_num, path, sizeof(path)) != 0) {
         printf("E build_screenshot_path_from_flash failed\n");
         f_unmount(pSD->pcName);
-        if (!hold_sd_busy) set_sd_busy(false);
+        if (!hold_sd_busy) start_lcd(false, true);
         return false;
     }
 
@@ -837,7 +838,7 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
     if (fr != FR_OK) {
         printf("E f_open(%s) error: %s (%d)\n", path, FRESULT_str(fr), fr);
         f_unmount(pSD->pcName);
-        if (!hold_sd_busy) set_sd_busy(false);
+        if (!hold_sd_busy) start_lcd(false, true);
         return false;
     }
 
@@ -997,7 +998,7 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
     }
 
     f_unmount(pSD->pcName);
-    if (!hold_sd_busy) set_sd_busy(false);
+    if (!hold_sd_busy) start_lcd(false, true);
 
     printf("I screenshot saved: %s (%dx%d)\n", path, LCD_WIDTH, LCD_HEIGHT);
     return true;
@@ -1006,7 +1007,7 @@ fail:
     printf("E screenshot write failed: %s (%d)\n", FRESULT_str(fr), fr);
     f_close(&fil);
     f_unmount(pSD->pcName);
-    if (!hold_sd_busy) set_sd_busy(false);
+    if (!hold_sd_busy) start_lcd(false, true);
     return false;
 }
 
@@ -1032,7 +1033,7 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
     UINT br;
     sd_card_t *pSD = sd_get_by_num(0);
 
-	set_sd_busy(true);
+	shutdown_lcd(false, true);
 
     // Mount SD card
     fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
@@ -1179,10 +1180,7 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename) {
 	save_rom_settings(filename, 0, 1);
     strncpy(last_filename_raw, filename, FILENAME_MAX_LEN - 1);
 
-    // Crashes occur without setting sd busy false here but I want sd busy to be on until the first gb frame is rendered
-    // So that it can instantly go from the black screen to gb instead of black screen to gui to gb
-	set_sd_busy(false);
-    set_sd_busy(true);
+    start_lcd(false, true);
 	watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
 
     printf("I load_cart_rom_file(%s) COMPLETE (%lu bytes written)\n", filename, rom_size);
@@ -1897,14 +1895,13 @@ bool lvgl_set_random_gbc_screenshot_background_from_sd(lv_obj_t *parent,
                                                        lv_opa_t fade_opa,
                                                        bool hold_sd_busy)
 {
-    set_sd_busy(true);
+    shutdown_lcd(false, true);
 
     sd_card_t *pSD = sd_get_by_num(sd_num);
     FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
     if (fr != FR_OK) {
         printf("E f_mount error: %s (%d)\n", FRESULT_str(fr), fr);
-        if (!hold_sd_busy) set_sd_busy(false);
-        return false;
+        goto cleanup;
     }
 
     // Build volume-prefixed root for FatFs recursion
@@ -1918,15 +1915,11 @@ bool lvgl_set_random_gbc_screenshot_background_from_sd(lv_obj_t *parent,
 
     if (fr != FR_OK && fr != FR_NO_FILE && fr != FR_NO_PATH) {
         printf("E random screenshot scan failed: %s (%d)\n", FRESULT_str(fr), fr);
-        f_unmount(pSD->pcName);
-        if (!hold_sd_busy) set_sd_busy(false);
-        return false;
+        goto cleanup;
     }
     if (seen == 0) {
         printf("W no screenshots found under %s\n", root);
-        f_unmount(pSD->pcName);
-        if (!hold_sd_busy) set_sd_busy(false);
-        return false;
+        goto cleanup;
     }
 
     // Decode PNG now (while mounted)
@@ -1934,14 +1927,12 @@ bool lvgl_set_random_gbc_screenshot_background_from_sd(lv_obj_t *parent,
     int w = 0, h = 0;
     if (!png_load_rgb565_from_fatfs(chosen, &pix, &w, &h)) {
         printf("E png decode failed: %s\n", chosen);
-        f_unmount(pSD->pcName);
-        if (!hold_sd_busy) set_sd_busy(false);
-        return false;
+        goto cleanup;
     }
 
     // Done with SD now
     f_unmount(pSD->pcName);
-    if (!hold_sd_busy) set_sd_busy(false);
+    if (!hold_sd_busy) start_lcd(false, true);
 
     // Replace any previous bg
     lvgl_bg_free_current();
@@ -1988,6 +1979,11 @@ bool lvgl_set_random_gbc_screenshot_background_from_sd(lv_obj_t *parent,
 
     printf("I random screenshot bg loaded to RAM: %dx%d from %s\n", w, h, chosen);
     return true;
+
+    cleanup: 
+        f_unmount(pSD->pcName);
+        if (!hold_sd_busy) start_lcd(false, true);
+        return false;
 }
 
 void rom_file_selector() {	
@@ -2343,7 +2339,7 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
     strncpy(s.last_filename_raw, last_filename_raw, FILENAME_MAX_LEN);
     s.last_filename_raw[FILENAME_MAX_LEN - 1] = '\0';  // ensure null termination
 
-    set_sd_busy(true);
+    shutdown_lcd(false, true);
     sd_card_t *pSD = sd_get_by_num(0);
     FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
     if (fr != FR_OK) return;
@@ -2366,7 +2362,7 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
 
     f_unmount(pSD->pcName);
     if (!hold_sd_busy)
-        set_sd_busy(false);
+        start_lcd(false, true);
 }
 
 static inline bool system_settings_equal(const system_settings_t *a, const system_settings_t *b) {

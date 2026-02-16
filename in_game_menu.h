@@ -778,13 +778,44 @@ void in_game_menu() {
     } else if (requested_action == IG_ACT_EXIT_NOSAVE) {
         g_request_exit_to_rom_selector = true;
     } else if (requested_action == IG_ACT_SLEEP) {
+
+        if (run_mode == MODE_POWERSAVE) {
+            // if run mode was power save, step back up the lcd brightness
+            step_lcd_brightness(true);
+        }
+        uint8_t temp_lcd_led = lcd_led_duty_cycle;
+        // sd busy handles lcd led turn off
+#if LED_PHASE_OUT_PWR_DOWN
+        uint8_t temp_button_led = button_led_duty_cycle;
+        uint8_t temp_pwr_led = pwr_led_duty_cycle;
+        fade_out_leds_powerdown();
+#endif
+
+#if ENABLE_SDCARD
         in_game_save_auto_state(true);
         in_game_save_game(true);
+#endif
+
+#if LED_PHASE_OUT_PWR_DOWN
+        save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, );
+#else
+# if TIE_PWR_LED_TO_LCD
+        pwr_led_duty_cycle = temp_lcd_led;
+# endif
+        save_system_settings_if_changed(temp_lcd_led, button_led_duty_cycle, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
+#endif
+
 
         sleep_and_shutdown_peripherals();
 
         // start back up everything
         wakeup_and_start_peripherals();
+
+
+        if (run_mode == MODE_POWERSAVE) {
+            // if run mode was power save, step back down the lcd brightness
+            step_lcd_brightness(false);
+        }
     }
 
     g_request_exit_menu = false; 

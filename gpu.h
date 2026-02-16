@@ -167,11 +167,10 @@ void render_loop() {
             __atomic_store_n(&core1_parked, true, __ATOMIC_RELEASE);
 
             // Park until sd_busy clears
-            while (__atomic_load_n(&sd_busy, __ATOMIC_ACQUIRE)) {
-                sleep_ms(1);
-                tight_loop_contents();
-                __wfe();
-            }
+            sleep_ms(1);
+            // this is so much more stable than using wfe here.. 
+            // wfe just doesn't always wake up for some reason, even with the doorbell.
+            __wfi();
 
             __atomic_store_n(&core1_parked, false, __ATOMIC_RELEASE);
             continue;
@@ -182,7 +181,7 @@ void render_loop() {
 
         if (!scanline_buffer) {
             // no scanline ready right now; allow sd_busy to be observed quickly
-            __wfe();
+            // __wfe();
             continue;
         }
 
@@ -280,7 +279,7 @@ void render_loop() {
 }
 
 // MARK: - CORE1 DOORBELL SETUP
-#define ENABLE_DOORBELL 0
+#define ENABLE_DOORBELL 1
 static uint8_t g_core1_db = 0xFF;
 bool doorbell_setup = false;
 

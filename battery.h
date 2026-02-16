@@ -977,14 +977,12 @@ void start_lcd(bool button_leds_restore, bool start_core1) {
 
     scanvideo_timing_enable(true);
 
-    if (start_core1)
-        multicore_launch_core1(main_core1);
-
-    wait_for_core1_parked(10 * 1000);
-
     // LEDs
     set_sd_busy(false);
     if (button_leds_restore) increase_button_brightness(saved_button_brightness);
+
+    if (start_core1)
+        multicore_launch_core1(main_core1);
 }
 
 static inline void imu_sleep(void);

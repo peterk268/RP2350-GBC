@@ -250,7 +250,6 @@ while(true)
 
     __atomic_store_n(&show_gui, false, __ATOMIC_RELEASE);
 
-	set_sd_busy(true);
 
 	// MARK: - Initialise GB context
 	gb_alloc_ram();
@@ -604,7 +603,6 @@ while(true)
 			fps_counter = 0;
 			fps_last_time = now;
 		}
-		set_sd_busy(false);
 
 #if FPS_LIMITER_ENABLED
 		// --- Dynamic FPS control ---

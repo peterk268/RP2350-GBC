@@ -764,34 +764,50 @@ static FRESULT write_png_chunk_end(FIL *fil, uint32_t crc) {
 
 // Returns true and sets *out_num to the first available screenshot index.
 // Returns false if it couldn't find one (or an unexpected FS error happened).
-static bool screenshot_find_free_num(sd_card_t *pSD, int *out_num) {
+static bool screenshot_find_free_num(int *out_num) {
     if (!out_num) return false;
 
-    FILINFO fno;
-    char path[PATH_MAX_LEN];
+    bool ok = false;
+
+    // Heap allocate these instead of stack
+    FILINFO *fno = (FILINFO *)malloc(sizeof(FILINFO));
+    char *path   = (char *)malloc(PATH_MAX_LEN);
+
+    if (!fno || !path) {
+        printf("E malloc failed (fno=%p path=%p)\n", fno, path);
+        goto cleanup;
+    }
 
     // Start at 0; you can start at 1 if you prefer.
     for (int n = 0; n < 100000; n++) { // cap so we don't loop forever
-        if (build_screenshot_path_from_flash(n, path, sizeof(path)) != 0) {
-            return false;
+        if (build_screenshot_path_from_flash(n, path, PATH_MAX_LEN) != 0) {
+            ok = false;
+            goto cleanup;
         }
 
-        FRESULT fr = f_stat(path, &fno);
+        FRESULT fr = f_stat(path, fno);
         if (fr == FR_NO_FILE) {
             *out_num = n;
-            return true; // free slot found
+            ok = true;
+            goto cleanup; // free slot found
         }
         if (fr != FR_OK) {
             // Some other filesystem error
             printf("E f_stat(%s) error: %s (%d)\n", path, FRESULT_str(fr), fr);
-            return false;
+            ok = false;
+            goto cleanup;
         }
 
         // FR_OK => file exists, keep going
     }
 
     printf("E screenshot_find_free_num: ran out of indices\n");
-    return false;
+    ok = false;
+
+cleanup:
+    free(path);
+    free(fno);
+    return ok;
 }
 
 // ------------------------------------------------------------
@@ -813,34 +829,43 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
         return false;
     }
 
+    bool ok = false;
+    FIL fil;
+    bool fil_open = false;
+
+    // ----------------------------
+    // Heap allocations
+    // ----------------------------
+    char    *path  = (char *)malloc(PATH_MAX_LEN);
+    uint8_t *ihdr  = (uint8_t *)malloc(13);
+    const uint32_t row_bytes = 1 + (3 * LCD_WIDTH);
+    uint8_t *rowbuf = (uint8_t *)malloc(row_bytes);
+
+    if (!path || !ihdr || !rowbuf) {
+        printf("E malloc failed (path=%p ihdr=%p rowbuf=%p)\n", path, ihdr, rowbuf);
+        goto cleanup;
+    }
+
     int use_num = screenshot_num;
 
     if (use_num < 0) {
-        if (!screenshot_find_free_num(pSD, &use_num)) {
+        if (!screenshot_find_free_num(&use_num)) {
             printf("E could not find free screenshot number\n");
-            f_unmount(pSD->pcName);
-            if (!hold_sd_busy) start_lcd(false, true);
-            return false;
+            goto cleanup;
         }
     }
 
-
-    char path[PATH_MAX_LEN];
-    if (build_screenshot_path_from_flash(use_num, path, sizeof(path)) != 0) {
+    if (build_screenshot_path_from_flash(use_num, path, PATH_MAX_LEN) != 0) {
         printf("E build_screenshot_path_from_flash failed\n");
-        f_unmount(pSD->pcName);
-        if (!hold_sd_busy) start_lcd(false, true);
-        return false;
+        goto cleanup;
     }
 
-    FIL fil;
     fr = f_open(&fil, path, FA_CREATE_ALWAYS | FA_WRITE);
     if (fr != FR_OK) {
         printf("E f_open(%s) error: %s (%d)\n", path, FRESULT_str(fr), fr);
-        f_unmount(pSD->pcName);
-        if (!hold_sd_busy) start_lcd(false, true);
-        return false;
+        goto cleanup;
     }
+    fil_open = true;
 
     // ----------------------------
     // PNG signature
@@ -852,17 +877,16 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
     // ----------------------------
     // IHDR chunk (13 bytes)
     // ----------------------------
-    {
-        uint8_t ihdr[13];
-        // width, height
-        be32(&ihdr[0],  LCD_WIDTH);
-        be32(&ihdr[4],  LCD_HEIGHT);
-        ihdr[8]  = 8;  // bit depth
-        ihdr[9]  = 2;  // color type: truecolor RGB
-        ihdr[10] = 0;  // compression
-        ihdr[11] = 0;  // filter
-        ihdr[12] = 0;  // interlace
+    // width, height
+    be32(&ihdr[0],  LCD_WIDTH);
+    be32(&ihdr[4],  LCD_HEIGHT);
+    ihdr[8]  = 8;  // bit depth
+    ihdr[9]  = 2;  // color type: truecolor RGB
+    ihdr[10] = 0;  // compression
+    ihdr[11] = 0;  // filter
+    ihdr[12] = 0;  // interlace
 
+    {
         uint32_t crc = 0;
         fr = write_png_chunk_begin(&fil, "IHDR", 13, &crc);
         if (fr != FR_OK) goto fail;
@@ -873,13 +897,9 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
     }
 
     // ----------------------------
-    // IDAT chunk:
-    // We write a zlib stream containing uncompressed scanlines:
-    // Each scanline = [filter=0][RGBRGB...]
-    // zlib format: 2-byte header + stored blocks + Adler32
+    // IDAT chunk: zlib stream w/ stored blocks
     // ----------------------------
-    const uint32_t row_bytes = 1 + (3 * LCD_WIDTH);       // filter + RGB
-    const uint32_t raw_bytes = row_bytes * LCD_HEIGHT;    // total uncompressed data
+    const uint32_t raw_bytes = row_bytes * LCD_HEIGHT;
     const uint32_t max_block = 65535u;
 
     // number of stored blocks needed
@@ -892,8 +912,7 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
     fr = write_png_chunk_begin(&fil, "IDAT", idat_data_len, &idat_crc);
     if (fr != FR_OK) goto fail;
 
-    // zlib header: CMF/FLG
-    // 0x78 0x01 = deflate, 32K window, fast/none (valid for stored blocks)
+    // zlib header: CMF/FLG (stored blocks friendly)
     {
         uint8_t zhdr[2] = { 0x78, 0x01 };
         fr = write_png_chunk_data(&fil, zhdr, 2, &idat_crc);
@@ -903,9 +922,6 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
     // Adler32 over the *raw* (uncompressed) scanline bytes
     uint32_t adler_a = 1;
     uint32_t adler_b = 0;
-
-    // We generate scanlines on the fly into a small row buffer
-    uint8_t rowbuf[1 + 3 * LCD_WIDTH];
 
     // Stream raw bytes with stored blocks
     uint32_t remaining = raw_bytes;
@@ -964,7 +980,7 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
             fr = write_png_chunk_data(&fil, &rowbuf[row_off], can, &idat_crc);
             if (fr != FR_OK) goto fail;
 
-            raw_pos   += can;
+            raw_pos    += can;
             block_left -= can;
         }
     }
@@ -992,23 +1008,32 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
         if (fr != FR_OK) goto fail;
     }
 
-    fr = f_close(&fil);
-    if (fr != FR_OK) {
-        printf("E f_close error: %s (%d)\n", FRESULT_str(fr), fr);
+    ok = true;
+    goto cleanup;
+
+fail:
+    printf("E screenshot write failed: %s (%d)\n", FRESULT_str(fr), fr);
+
+cleanup:
+    if (fil_open) {
+        FRESULT fr2 = f_close(&fil);
+        if (fr2 != FR_OK) {
+            printf("E f_close error: %s (%d)\n", FRESULT_str(fr2), fr2);
+        }
     }
 
     f_unmount(pSD->pcName);
     if (!hold_sd_busy) start_lcd(false, true);
 
-    printf("I screenshot saved: %s (%dx%d)\n", path, LCD_WIDTH, LCD_HEIGHT);
-    return true;
+    if (ok) {
+        printf("I screenshot saved: %s (%dx%d)\n", path ? path : "(null)", LCD_WIDTH, LCD_HEIGHT);
+    }
 
-fail:
-    printf("E screenshot write failed: %s (%d)\n", FRESULT_str(fr), fr);
-    f_close(&fil);
-    f_unmount(pSD->pcName);
-    if (!hold_sd_busy) start_lcd(false, true);
-    return false;
+    free(rowbuf);
+    free(ihdr);
+    free(path);
+
+    return ok;
 }
 
 /**

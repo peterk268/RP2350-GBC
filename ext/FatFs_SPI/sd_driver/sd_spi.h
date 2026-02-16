@@ -37,6 +37,7 @@ provided to eliminate power-up synchronization problems.
 */
 void sd_spi_send_initializing_sequence(sd_card_t * pSD);
 
+void gpio_write(uint8_t gpio_num, bool value);
 #endif
 
 /* [] END OF FILE */

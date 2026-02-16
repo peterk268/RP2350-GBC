@@ -46,6 +46,7 @@
 #include "dr_mp3.h"
 
 /* Main Modularization */
+#include "prototypes.h"
 #include "global.h"
 #include "leds.h"
 #include "gpu.h"
@@ -106,13 +107,13 @@ int main(void)
     // MARK: - Initialise GPIO
 	config_iox_ports();
 	// Set up sleep interrupt asap.
-	#warning "We'll come back to this at some point... well not really cause now we got power hold"
+	// #warning "We'll come back to this at some point... well not really cause now we got power hold"
 	// setup_switch_sleep();
 	sleep_ms(10);
 
 	watchdog_update();
-	#warning "Hold off on battery monitor"
-#if ENABLE_BAT_MONITORING
+
+	#if ENABLE_BAT_MONITORING
 #if BAT_IMMEDIATE_CHECK
 	// Trigger the battery check immediately
     process_bat_percent();

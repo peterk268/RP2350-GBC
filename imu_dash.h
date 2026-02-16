@@ -1,10 +1,3 @@
-#ifndef GMETER_DASHBOARD_H
-#define GMETER_DASHBOARD_H
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 // ----------------------------------------------------
 // Display defaults (override from your build system if needed)
 // ----------------------------------------------------
@@ -704,9 +697,3 @@ static inline void run_gmeter_dashboard(void) {
         sleep_ms(GMETER_UPDATE_MS);
     }
 }
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif // GMETER_DASHBOARD_H

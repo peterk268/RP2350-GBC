@@ -77,7 +77,7 @@ void in_game_save_game(bool hold_sd_busy) {
     write_cart_ram_file(&gb, hold_sd_busy);
 #endif				
 }
-void in_game_save_game_no_hold() {
+static inline void in_game_save_game_no_hold() {
     in_game_save_game(false);
 }
 void in_game_increase_washout() {

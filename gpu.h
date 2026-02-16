@@ -269,7 +269,6 @@ void render_loop() {
             top_padding_counter = 0;
 #endif
         }
-        #warning "GB Games don't have this issue... so the opposite happens on them"
         // Render scanline
         framebuffer_t *fb = __atomic_load_n(&front_fb, __ATOMIC_ACQUIRE);
 
@@ -887,9 +886,9 @@ void lvgl_test(void) {
 	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
 
 	// Slider
-	lv_obj_t *slider = lv_slider_create(cont);
-	lv_obj_set_width(slider, 120);
-	lv_obj_align(slider, LV_ALIGN_CENTER, 0, 0);
+	// lv_obj_t *slider = lv_slider_create(cont);
+	// lv_obj_set_width(slider, 120);
+	// lv_obj_align(slider, LV_ALIGN_CENTER, 0, 0);
 }
 
 #endif // ENABLE_LCD

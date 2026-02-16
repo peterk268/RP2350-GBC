@@ -920,7 +920,7 @@ static inline int adaptive_seek_step_ms(uint64_t held_ms) {
 
 static inline void mp3_select_relative(int delta,
                                        lv_obj_t *mp3_list_obj,
-                                       char **g_playlist,
+                                       char (*g_playlist)[MP3_MAX_PATH_LEN],
                                        int g_track_count)
 {
     if (g_track_count <= 0) return;

@@ -6,7 +6,7 @@
 // Example: Default value to indicate unset RTC
 // For pokemon silver this is the time since North American release date (Oct 14, 2000)
 // plus a day - 10 minutes
-#warning "Make rtc a flash variable or idk store it in rtc"
+// #warning "Make rtc a flash variable or idk store it in rtc"
 #define RTC_DEFAULT_VALUE 767232000000 + 85800000
 
 // Function to check if the RTC timer was set
@@ -187,7 +187,6 @@ bool mcp7940n_set_time(i2c_inst_t *i2c, rtc_time_t *t) {
     mcp7940n_init(RTC_I2C_PORT);
     return success;
 }
-#warning "Seems like it takes a couple of seconds to set in so keep in mind"
 
 bool mcp7940n_set_time_if_unset(i2c_inst_t *i2c, rtc_time_t *t) {
     bool valid;

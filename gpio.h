@@ -115,6 +115,8 @@ void set_up_select() {
     }
 }
 
+void gpio_write(uint8_t gpio_num, bool value);
+
 void setup_hold_power() {
     printf("Setting up power hold on GPIO %d\n", GPIO_PWR_HOLD);
     gpio_set_function(GPIO_PWR_HOLD, GPIO_FUNC_SIO);

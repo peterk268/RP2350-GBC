@@ -1059,7 +1059,7 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename, bool hold_sd_
     uint32_t ints;
 
 #if ENABLE_PSRAM && !ROM_FLASH
-    rom = (const uint8_t*) malloc(rom_size);
+    rom = (uint8_t*) malloc(rom_size);
     if (!rom) {
         printf("Big block built in allocation failed\n"); 
         f_close(&fil);
@@ -1210,7 +1210,7 @@ uint16_t rom_file_selector_display_page(char filename[MAX_FILES][256],uint16_t n
 	}
 
     /* search *.gb files */
-	#warning "This is a problem for .gba"
+	#warning "This is a problem for .gba .. we should only allow .gb and .gbc"
 	uint16_t num_file=0;
 	fr=f_findfirst(&dj, &fno, "", "*.gb*");
 
@@ -1239,7 +1239,6 @@ uint16_t rom_file_selector_display_page(char filename[MAX_FILES][256],uint16_t n
 
 	/* display *.gb rom files on screen */
 	#if USE_IPS_LCD
-	#warning "Display roms on ips screen"
 	for(uint8_t ifile=0;ifile<num_file;ifile++) {
 		printf("%s\n", filename[ifile]);
 	}
@@ -1373,7 +1372,7 @@ void draw_settings(lv_obj_t *list) {
     lv_obj_t *date_title = lv_label_create(list);
     lv_label_set_text(date_title, "\nDate");
     lv_obj_set_style_text_color(date_title, normal_color, 0);
-    lv_obj_align_to(date_title, line2_text, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
+    lv_obj_align_to(date_title, bat_line2, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
 
     // create label for the formatted date
     lv_obj_t *date_label = lv_label_create(list);

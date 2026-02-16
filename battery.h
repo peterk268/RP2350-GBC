@@ -161,7 +161,6 @@ void process_bat_percent() {
     if (low_power_shutdown && (percent > RECOVERY_THRESHOLD || is_charging(current_mA))) {
         low_power_shutdown = false;
         watchdog_reboot(0, 0, 0); // Safe reset
-        #warning "in the future find a way to allow the game to be resumed"
     }
 
 }
@@ -675,57 +674,57 @@ void shutdown_peripherals(bool keep_i2c) {
     }
 }
 
-#warning "sleep device currently unstable"
-void sleep_device() {
-    // #if ENABLE_SDCARD				
-    // write_cart_ram_file(gbc);
-    // in_game_save_auto_state();
-    // #endif	
+// "sleep device currently unstable, this is deprecated and instead we have light sleep"
+// void sleep_device() {
+//     // #if ENABLE_SDCARD				
+//     // write_cart_ram_file(gbc);
+//     // in_game_save_auto_state();
+//     // #endif	
 
-    // sleep_ms(1);
+//     // sleep_ms(1);
 
-    // Check if we're rebooting and executing specific code
-    if (*REBOOT_FLAG_ADDRESS == 0xDEADBEEF) {
-        *REBOOT_FLAG_ADDRESS = 0; // Clear the flag
-        //and proceed to sleep
-    } else {
-        // Normal execution
-        shutdown_peripherals(false);
-        *REBOOT_FLAG_ADDRESS = 0xDEADBEEF; // Set the flag
-        watchdog_reboot(0, SRAM_END, 0);  // Trigger the reboot
-    }
+//     // Check if we're rebooting and executing specific code
+//     if (*REBOOT_FLAG_ADDRESS == 0xDEADBEEF) {
+//         *REBOOT_FLAG_ADDRESS = 0; // Clear the flag
+//         //and proceed to sleep
+//     } else {
+//         // Normal execution
+//         shutdown_peripherals(false);
+//         *REBOOT_FLAG_ADDRESS = 0xDEADBEEF; // Set the flag
+//         watchdog_reboot(0, SRAM_END, 0);  // Trigger the reboot
+//     }
 
-    // sleep_ms(500);
-    // // Check switch state
-    // if (gpio_read(GPIO_SW_OUT)) {
-    //     watchdog_reboot(0, 0, 0); // Reboot if switch toggled
-    // }
+//     // sleep_ms(500);
+//     // // Check switch state
+//     // if (gpio_read(GPIO_SW_OUT)) {
+//     //     watchdog_reboot(0, 0, 0); // Reboot if switch toggled
+//     // }
 
-    // sleep_us(10);
-    powman_example_init(RTC_DEFAULT_VALUE);
+//     // sleep_us(10);
+//     powman_example_init(RTC_DEFAULT_VALUE);
 
-    powman_enable_gpio_wakeup(0, GPIO_SW_OUT, false, true);
-    // sleep_us(10);
-    powman_example_off();
-}
+//     powman_enable_gpio_wakeup(0, GPIO_SW_OUT, false, true);
+//     // sleep_us(10);
+//     powman_example_off();
+// }
 
-// Function to execute on interrupt
-void gpio_callback(uint gpio, uint32_t events) {
-    if (events & GPIO_IRQ_LEVEL_LOW) {
-        // Handle the falling edge interrupt
-        // printf("GPIO %d went LOW\n", gpio);
-        // Sleep device
-        sleep_device();
-    }
-}
+// // Function to execute on interrupt
+// void gpio_callback(uint gpio, uint32_t events) {
+//     if (events & GPIO_IRQ_LEVEL_LOW) {
+//         // Handle the falling edge interrupt
+//         // printf("GPIO %d went LOW\n", gpio);
+//         // Sleep device
+//         sleep_device();
+//     }
+// }
 
-void setup_switch_sleep() {
-    gpio_init(GPIO_SW_OUT);
-    gpio_set_dir(GPIO_SW_OUT, GPIO_IN);
-    sleep_us(10);
-    // Set up the interrupt
-    gpio_set_irq_enabled_with_callback(GPIO_SW_OUT, GPIO_IRQ_LEVEL_LOW, true, &gpio_callback);
-}
+// void setup_switch_sleep() {
+//     gpio_init(GPIO_SW_OUT);
+//     gpio_set_dir(GPIO_SW_OUT, GPIO_IN);
+//     sleep_us(10);
+//     // Set up the interrupt
+//     gpio_set_irq_enabled_with_callback(GPIO_SW_OUT, GPIO_IRQ_LEVEL_LOW, true, &gpio_callback);
+// }
 
 void shutdown_screen(uint32_t duration_ms) {
     watchdog_update();

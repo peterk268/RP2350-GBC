@@ -27,7 +27,7 @@
 #include "rtc.h"
 
 void spi_dma_isr();
-#warning "SD SPI Speed not good :P"
+
 static spi_t spis[]={
     {
         .hw_inst=SD_SPI,

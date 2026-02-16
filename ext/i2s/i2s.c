@@ -9,7 +9,7 @@
 #define GPIO_I2S_LRCLK       22
 #define GPIO_I2S_DIN         23
 
-#warning "lr needs to be righ tafter btclk"
+// #warning "lr needs to be righ tafter btclk"
 /**
  * return the default i2s context used to store information about the setup
  */

@@ -139,7 +139,7 @@ static bool          show_now_playing    = true;
 static bool          g_shuffle_needs_rebuild = false;
 static int current_index = 0;
 
-uint32_t g_byte_offset = 0;
+static uint32_t g_byte_offset = 0;
 
 static bool g_buttons_locked   = false;   // START+SELECT toggle
 static bool select_was_combo   = false;   // tracks if SELECT was used in a combo
@@ -1048,8 +1048,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
     memset(&stream->tags, 0, sizeof(stream->tags));
 
-    drmp3 mp3;
-    if (!drmp3_init(&mp3,
+    drmp3 *mp3 = (drmp3 *)calloc(1, sizeof(drmp3));
+    if (!mp3) { result = PLAY_RESULT_NEXT; goto CLEANUP_FILE; }
+
+    if (!drmp3_init(mp3,
                     mp3_stream_read,
                     NULL,   // no seek callback
                     NULL,   // no tell
@@ -1069,10 +1071,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
         draw_now_playing(mp3_list_obj);
     }
 
-    printf("MP3: %d Hz, %d ch\n", mp3.sampleRate, mp3.channels);
-    i2s_set_sample_freq(&i2s_config, mp3.sampleRate, false);
+    printf("MP3: %d Hz, %d ch\n", mp3->sampleRate, mp3->channels);
+    i2s_set_sample_freq(&i2s_config, mp3->sampleRate, false);
 
-    uint8_t channels = mp3.channels;
+    uint8_t channels = mp3->channels;
     uint32_t sample_count = PCM_FRAME_COUNT * channels;
 
     // Triple PCM buffers + silence buffer for pause (all in PSRAM)
@@ -1101,11 +1103,11 @@ static play_result_t mp3_play_single_track(const char *filepath,
     // if (resume_position_ms > 0) {
     //     printf("Seeking to resume position %u ms...\n", resume_position_ms);
 
-    //     if (mp3.sampleRate > 0) {
+    //     if (mp3->sampleRate > 0) {
     //         drmp3_uint64 target_frames =
-    //             (drmp3_uint64)resume_position_ms * mp3.sampleRate / 1000;
+    //             (drmp3_uint64)resume_position_ms * mp3->sampleRate / 1000;
 
-    //         if (drmp3_seek_to_pcm_frame(&mp3, target_frames)) {
+    //         if (drmp3_seek_to_pcm_frame(mp3, target_frames)) {
     //             played_frames = (uint64_t)target_frames;
     //         } else {
     //             printf("drmp3_seek_to_pcm_frame failed for resume\n");
@@ -1116,7 +1118,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
 
     // First buffer: decode & start DMA
-    drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, buf_play);
+    drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_play);
     i2s_dma_write(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_play));
 
     // More prefill before second buffer
@@ -1125,7 +1127,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
     }
 
     // Decode second buffer into buf_ready
-    drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, buf_ready);
+    drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_ready);
 
     // Playback state
     // audio_mode = headphones_present ? AUDIO_HP_ONLY : AUDIO_SPK_ONLY;
@@ -1178,7 +1180,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             watchdog_update();
 
             if (!gpio_read(GPIO_SW_OUT)) {
-                mp3_save_shutdown(current_track_index, played_frames, mp3.sampleRate, stream);
+                mp3_save_shutdown(current_track_index, played_frames, mp3->sampleRate, stream);
 
                 release_power();
 
@@ -1198,7 +1200,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // Decode into buf_fill only if we haven’t yet and not paused
             if (!decoded_next_chunk && !paused) {
                 drmp3_uint64 frames =
-                    drmp3_read_pcm_frames_s16(&mp3, PCM_FRAME_COUNT, buf_fill);
+                    drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_fill);
 
                 if (frames > 0)
                     played_frames += frames;
@@ -1219,8 +1221,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
                         stream->rd = stream->wr = stream->count = 0;
                         stream->eof = false;
 
-                        drmp3_uninit(&mp3);
-                        if (!drmp3_init(&mp3, mp3_stream_read,
+                        drmp3_uninit(mp3);
+                        if (!drmp3_init(mp3, mp3_stream_read,
                                         NULL, NULL, drmp3_on_meta, stream, NULL)) {
                             printf("E drmp3_init after repeat\n");
                             result = PLAY_RESULT_NEXT;
@@ -1267,7 +1269,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // occasional battery monitor and rtc + sd refill and mp3 decoding can add up to ~20ms
             // i2s_timeout in us, typically 139ms for 44.1kHz and 128ms for 48kHz.
             static uint64_t last_controls_us = 0;
-            if (i2s_now - last_i2s > (PCM_FRAME_COUNT*1000000ULL / mp3.sampleRate) - 80*1000 || i2s_now - last_controls_us < 10*1000) {
+            if (i2s_now - last_i2s > (PCM_FRAME_COUNT*1000000ULL / mp3->sampleRate) - 80*1000 || i2s_now - last_controls_us < 10*1000) {
                 continue;
             }
             last_controls_us = i2s_now;
@@ -1481,7 +1483,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             int step = adaptive_seek_step_ms(held_ms);
                             printf("Rewind -%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
-                            seek_relative_seconds(stream, &mp3, -step, mp3.sampleRate, &decoded_next_chunk);
+                            seek_relative_seconds(stream, mp3, -step, mp3->sampleRate, &decoded_next_chunk);
                             left_last_seek_us = now_us;
                         }
                     }
@@ -1517,7 +1519,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             int step = adaptive_seek_step_ms(held_ms);
                             printf("Fast-forward +%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
-                            seek_relative_seconds(stream, &mp3, step, mp3.sampleRate, &decoded_next_chunk);
+                            seek_relative_seconds(stream, mp3, step, mp3->sampleRate, &decoded_next_chunk);
                             right_last_seek_us = now_us;
                         }
                     }
@@ -1707,7 +1709,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
         }
         if (low_power_shutdown) {
             shutdown_screen(1500);
-            mp3_save_shutdown(current_track_index, played_frames, mp3.sampleRate, stream);
+            mp3_save_shutdown(current_track_index, played_frames, mp3->sampleRate, stream);
 
             release_power(); // Cut power hold
             sleep_ms(1);
@@ -1735,12 +1737,12 @@ static play_result_t mp3_play_single_track(const char *filepath,
         if (g_mp3_inactive && !prev_inactive) {
             shutdown_lcd(true, false);
             // underclock_cpu(true);
-            // i2s_set_sample_freq(&i2s_config, mp3.sampleRate, false);
+            // i2s_set_sample_freq(&i2s_config, mp3->sampleRate, false);
             prev_inactive = true;
         }
         else if (!g_mp3_inactive && prev_inactive) {
             // underclock_cpu(false);
-            // i2s_set_sample_freq(&i2s_config, mp3.sampleRate, false);
+            // i2s_set_sample_freq(&i2s_config, mp3->sampleRate, false);
             start_lcd(true, false);
             prev_inactive = false;
         }
@@ -1760,7 +1762,11 @@ END_PLAYBACK:
     free(silence_buf);
 
 CLEANUP_MP3:
-    drmp3_uninit(&mp3);
+    if (mp3) {
+        drmp3_uninit(mp3);
+        free(mp3);
+        mp3 = NULL;
+    }
 
 CLEANUP_FILE:
     f_close(&stream->file);
@@ -1899,10 +1905,12 @@ void mp3_apply_now_playing_theme() {
 
 void draw_now_playing(lv_obj_t *parent)
 {
+    if (!parent) return;
+
     lv_obj_clean(parent);
 
-    lv_color_t txt_color       = lv_color_hex(0x202020);
-    lv_color_t highlight_color = lv_color_hex(ACCENT_COLOR);
+    lv_color_t txt_color           = lv_color_hex(0x202020);
+    lv_color_t highlight_color     = lv_color_hex(ACCENT_COLOR);
     lv_color_t txt_highlight_color = lv_color_hex(ACCENT_COLOR);
     int spacing = 6;
 
@@ -1923,81 +1931,31 @@ void draw_now_playing(lv_obj_t *parent)
     lv_obj_set_width(title_label, DISP_HOR_RES - 26);
     lv_label_set_long_mode(title_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_set_style_anim_speed(title_label, 20, 0);
-
-    // heap format: "%s\n"
-    {
-        size_t need = (size_t)snprintf(NULL, 0, "%s\n", display_title) + 1;
-        char *title_with_break = (char *)malloc(need);
-        if (title_with_break) {
-            snprintf(title_with_break, need, "%s\n", display_title);
-            lv_label_set_text(title_label, title_with_break);
-            free(title_with_break);
-        } else {
-            // fallback if malloc fails
-            lv_label_set_text(title_label, display_title);
-        }
-    }
-
-    lv_obj_align(title_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
+    lv_label_set_text_fmt(title_label, "%s\n", display_title);
+    lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 13, 13);
 
     // ============================================================
     // TRACK NUMBER   (e.g. "3 / 25")
     // ============================================================
     lv_obj_t *tracknum_label = lv_label_create(parent);
     lv_obj_set_style_text_color(tracknum_label, txt_color, 0);
-
-    {
-        size_t need = (size_t)snprintf(NULL, 0, "%d / %d", current_index + 1, g_track_count) + 1;
-        char *tn = (char *)malloc(need);
-        if (tn) {
-            snprintf(tn, need, "%d / %d", current_index + 1, g_track_count);
-            lv_label_set_text(tracknum_label, tn);
-            free(tn);
-        } else {
-            lv_label_set_text(tracknum_label, "? / ?");
-        }
-    }
-
-    lv_obj_align_to(tracknum_label, title_label, LV_ALIGN_TOP_LEFT, 6, 6);
+    lv_label_set_text_fmt(tracknum_label, "%d / %d", current_index + 1, g_track_count);
+    lv_obj_align_to(tracknum_label, title_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
     // ============================================================
     // ARTIST
     // ============================================================
     lv_obj_t *artist_label = lv_label_create(parent);
     lv_obj_set_style_text_color(artist_label, txt_color, 0);
-
-    {
-        size_t need = (size_t)snprintf(NULL, 0, "Artist: %s", artist) + 1;
-        char *artist_txt = (char *)malloc(need);
-        if (artist_txt) {
-            snprintf(artist_txt, need, "Artist: %s", artist);
-            lv_label_set_text(artist_label, artist_txt);
-            free(artist_txt);
-        } else {
-            lv_label_set_text(artist_label, "Artist: ?");
-        }
-    }
-
-    lv_obj_align_to(artist_label, title_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
+    lv_label_set_text_fmt(artist_label, "Artist: %s", artist);
+    lv_obj_align_to(artist_label, tracknum_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
     // ============================================================
     // ALBUM
     // ============================================================
     lv_obj_t *album_label = lv_label_create(parent);
     lv_obj_set_style_text_color(album_label, txt_color, 0);
-
-    {
-        size_t need = (size_t)snprintf(NULL, 0, "Album: %s\n\n", album) + 1;
-        char *album_txt = (char *)malloc(need);
-        if (album_txt) {
-            snprintf(album_txt, need, "Album: %s\n\n", album);
-            lv_label_set_text(album_label, album_txt);
-            free(album_txt);
-        } else {
-            lv_label_set_text(album_label, "Album: ?");
-        }
-    }
-
+    lv_label_set_text_fmt(album_label, "Album: %s\n\n", album);
     lv_obj_align_to(album_label, artist_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
     // ============================================================
@@ -2006,14 +1964,12 @@ void draw_now_playing(lv_obj_t *parent)
     lv_obj_t *time_label = lv_label_create(parent);
     lv_obj_set_style_text_color(time_label, txt_color, 0);
     lv_label_set_text(time_label, "0:39 / 2:54");
-
     lv_obj_align_to(time_label, album_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
     // ============================================================
     // PROGRESS BAR
     // ============================================================
     lv_obj_t *bar = lv_bar_create(parent);
-
     lv_obj_set_size(bar, DISP_HOR_RES - 26, 8);
     lv_obj_align_to(bar, time_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
@@ -2028,7 +1984,6 @@ void draw_now_playing(lv_obj_t *parent)
     lv_bar_set_range(bar, 0, 100);
     lv_bar_set_value(bar, 35, LV_ANIM_OFF);
 }
-
 
 void play_mp3_stream(const char *start_filename) {
     // Create list
@@ -2115,8 +2070,8 @@ void play_mp3_stream(const char *start_filename) {
     // Load resume info
     memset(&g_resume, 0, sizeof(g_resume));
 
-    FIL rf;
-    UINT br;
+    static FIL rf;
+    static UINT br;
     if (f_open(&rf, RESUME_FILE, FA_READ) == FR_OK) {
         if (f_read(&rf, &g_resume, sizeof(g_resume), &br) == FR_OK &&
             br == sizeof(g_resume) &&
@@ -2138,7 +2093,7 @@ void play_mp3_stream(const char *start_filename) {
     }
 
     // Choose initial track index
-    uint32_t resume_position_ms = 0;
+    static uint32_t resume_position_ms = 0;
 
     // Priority: explicit filename → saved resume → default 0
     if (start_filename && start_filename[0] != '\0') {

@@ -1,5 +1,7 @@
 #define DAC_I2C_ADDR 0b0011000
 
+#define USE_MCLK 1
+
 uint16_t current_volume_level = 0;
 bool is_muted = false;
 bool headphones_present = false;
@@ -159,13 +161,12 @@ bool volume_lut_init(void) {
 
 uint8_t current_page = 0;
 void dac_i2c_page_select(uint8_t page) {
-    if (current_page == page) return; // No need to change page if already set
+    if (current_page == page) return;
 
-    uint8_t page_buffer[2] = {0x00, page ? 0x01 : 0x00};
-    // Write the page select register (stop = true so DAC latches it)
+    uint8_t page_buffer[2] = {0x00, page};
     i2c_write_blocking(DAC_I2C_PORT, DAC_I2C_ADDR, page_buffer, 2, false);
-    sleep_us(50); // let DAC latch
-    current_page = page; // Update current page state
+    sleep_us(50);
+    current_page = page;
 }
 
 void dac_i2c_write(uint8_t page, uint8_t reg, uint8_t data) {
@@ -217,9 +218,52 @@ void set_3d(uint8_t msb_3d, uint8_t lsb_3d) {
     dac_i2c_write(8, 0x41, lsb_3d);
 }
 
+// MCLK-less clocking for TLV320DAC3101:
+// PLL_CLKIN = BCLK, CODEC_CLKIN = PLL_CLK
+// PLL multiplies BCLK by 32 (P=1, R=1, J=32, D=0)
+// Then CODEC_CLKIN = 32*BCLK, and with NDAC*MDAC*DOSR = 2048,
+// Fs = CODEC_CLKIN/2048 = BCLK/64 (tracks automatically for 44.1k/48k/etc).
+
+static void dac3101_clock_from_bclk_autotrack(void)
+{
+    // Muxing: PLL_CLKIN=BCLK (D3-D2=01), CODEC_CLKIN=PLL_CLK (D1-D0=11)
+    // => 0b0000_0111 = 0x07  (see reg 0x04 table)
+    dac_i2c_write(0, 0x04, 0x07);  // :contentReference[oaicite:5]{index=5}
+
+    // Program PLL multipliers first (J, D), then power up PLL (datasheet sequence)
+    // J = 32
+    dac_i2c_write(0, 0x06, 32);    // :contentReference[oaicite:6]{index=6}
+
+    // D = 0 (write reg 0x07 then 0x08 immediately)
+    dac_i2c_write(0, 0x07, 0x00);  // D[13:8]
+    dac_i2c_write(0, 0x08, 0x00);  // D[7:0]  :contentReference[oaicite:7]{index=7}
+
+    // PLL Power up, P=1, R=1
+    // bit7=1 (PLL on)
+    // P=1 => bits6-4 = 001
+    // R=1 => bits3-0 = 0001
+    // => 0b1001_0001 = 0x91
+    dac_i2c_write(0, 0x05, 0x91);  // :contentReference[oaicite:8]{index=8}
+
+    sleep_ms(12); // PLL_CLK typically available ~10ms after powering PLL :contentReference[oaicite:9]{index=9}
+
+    // Now set the clock dividers to match Fs = BCLK/64
+    // NDAC = 8 (powered)  -> 0x80 | 8 = 0x88
+    // MDAC = 2 (powered)  -> 0x80 | 2 = 0x82
+    // DOSR = 128          -> 0x00, 0x80
+    dac_i2c_write(0, 0x0B, 0x88);  // :contentReference[oaicite:10]{index=10}
+    dac_i2c_write(0, 0x0C, 0x82);  // :contentReference[oaicite:11]{index=11}
+    dac_i2c_write(0, 0x0D, 0x00);
+    dac_i2c_write(0, 0x0E, 0x80);  // :contentReference[oaicite:12]{index=12}
+}
+
 void setup_dac() {
     dac_i2c_write(0, 0x01, 0x01); // Soft-reset the DAC
     sleep_ms(20); // Wait for reset to complete
+
+#if !USE_MCLK
+    dac3101_clock_from_bclk_autotrack();
+#endif
 
     dac_i2c_write(0, 0x0b, 0x81); // nDAC_VAL
     dac_i2c_write(0, 0x0c, 0x82); // mDAC_VAL
@@ -275,4 +319,29 @@ void check_dac() {
 
     dac_i2c_read(0, 0x1B, &data, 1);
     printf("\nDAC Status Register: 0x%02X (binary: 0b\n", data);
+}
+
+bool dac_advanced_block = true; // true = 25, false = 7
+static inline void dac_select_processing_block(uint8_t block)
+{
+    // Optional: stop audible artifacts
+    bool was_muted = is_muted;
+    if (!was_muted) mute_dac();
+
+    // Optional: small settle so mute takes effect
+    sleep_us(500);
+
+    // Select processing block
+    dac_i2c_write(0, 0x3C, block);
+
+    // Give the DSP time to latch (a few hundred us is usually enough)
+    sleep_us(500);
+
+    if (!was_muted) unmute_dac();
+}
+
+static inline void alternate_eq(void)
+{
+    dac_advanced_block = !dac_advanced_block;
+    dac_select_processing_block(dac_advanced_block ? 0x0B : 0x07);
 }

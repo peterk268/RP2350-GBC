@@ -190,7 +190,7 @@ typedef struct {
 static mp3_resume_t g_resume = {0};
 
 static void mp3_save_resume(int track_index, uint32_t position_ms, bool hold_sd_busy, uint32_t byte_offset) {
-    shutdown_lcd(false, true);
+    shutdown_lcd(false, false);
 
     FIL wf;
     UINT bw;
@@ -210,7 +210,7 @@ static void mp3_save_resume(int track_index, uint32_t position_ms, bool hold_sd_
     }
 
     if (!hold_sd_busy)
-        start_lcd(false, true);
+        start_lcd(false, false);
 }
 
 typedef struct {
@@ -677,7 +677,7 @@ static void shuffle_save_state(bool hold_sd_busy) {
     if (!g_shuffle_order || g_track_count <= 0 || g_shuffle_seed == 0)
         return;
 
-    shutdown_lcd(false, true);
+    shutdown_lcd(false, false);
 
     FIL f;
     UINT bw;
@@ -694,7 +694,7 @@ static void shuffle_save_state(bool hold_sd_busy) {
     }
 
     if (!hold_sd_busy)
-        start_lcd(false, true);
+        start_lcd(false, false);
 }
 
 static bool shuffle_load_state(void) {
@@ -1397,6 +1397,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
                     // SELECT + A → something
                     if (btn_a && (!prev_btn_a || !prev_btn_select)) {
+                        alternate_eq();
                         select_was_combo = true;
                     }
 
@@ -1732,7 +1733,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
         // ================= MP3 Inactivity Handling =================
         if (g_mp3_inactive && !prev_inactive) {
-            shutdown_lcd(true, true);
+            shutdown_lcd(true, false);
             // underclock_cpu(true);
             // i2s_set_sample_freq(&i2s_config, mp3.sampleRate, false);
             prev_inactive = true;
@@ -1740,7 +1741,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
         else if (!g_mp3_inactive && prev_inactive) {
             // underclock_cpu(false);
             // i2s_set_sample_freq(&i2s_config, mp3.sampleRate, false);
-            start_lcd(true, true);
+            start_lcd(true, false);
             prev_inactive = false;
         }
 
@@ -1905,27 +1906,37 @@ void draw_now_playing(lv_obj_t *parent)
     lv_color_t txt_highlight_color = lv_color_hex(ACCENT_COLOR);
     int spacing = 6;
 
+    const char *filename = g_playlist[current_index];
+
+    // NEW: prefer ID3 title if available, else your filename fallback
+    const char *display_title =
+        (g_mp3_tags && g_mp3_tags->title[0]) ? g_mp3_tags->title : basename_from_path(filename);
+
+    const char *artist = (g_mp3_tags && g_mp3_tags->artist[0]) ? g_mp3_tags->artist : "Unknown";
+    const char *album  = (g_mp3_tags && g_mp3_tags->album[0])  ? g_mp3_tags->album  : "Unknown";
+
     // ============================================================
     // TRACK TITLE
     // ============================================================
     lv_obj_t *title_label = lv_label_create(parent);
     lv_obj_set_style_text_color(title_label, txt_highlight_color, 0);
     lv_obj_set_width(title_label, DISP_HOR_RES - 26);
-    lv_label_set_long_mode(title_label, LV_LABEL_LONG_SCROLL_CIRCULAR); // enable scroll
-    lv_obj_set_style_anim_speed(title_label, 20, 0); // adjust speed
+    lv_label_set_long_mode(title_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_set_style_anim_speed(title_label, 20, 0);
 
-    const char *filename = g_playlist[current_index];
-    char title_with_break[256];
-
-    
-    // NEW: prefer ID3 title if available, else your filename fallback
-    const char *display_title =
-        (g_mp3_tags && g_mp3_tags->title[0]) ? g_mp3_tags->title : basename_from_path(filename);
-
-    snprintf(title_with_break, sizeof(title_with_break),
-            "%s\n", display_title);
-
-    lv_label_set_text(title_label, title_with_break);
+    // heap format: "%s\n"
+    {
+        size_t need = (size_t)snprintf(NULL, 0, "%s\n", display_title) + 1;
+        char *title_with_break = (char *)malloc(need);
+        if (title_with_break) {
+            snprintf(title_with_break, need, "%s\n", display_title);
+            lv_label_set_text(title_label, title_with_break);
+            free(title_with_break);
+        } else {
+            // fallback if malloc fails
+            lv_label_set_text(title_label, display_title);
+        }
+    }
 
     lv_obj_align(title_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
@@ -1935,14 +1946,19 @@ void draw_now_playing(lv_obj_t *parent)
     lv_obj_t *tracknum_label = lv_label_create(parent);
     lv_obj_set_style_text_color(tracknum_label, txt_color, 0);
 
-    char tn[32];
-    snprintf(tn, sizeof(tn), "%d / %d", current_index + 1, g_track_count);
-    lv_label_set_text(tracknum_label, tn);
+    {
+        size_t need = (size_t)snprintf(NULL, 0, "%d / %d", current_index + 1, g_track_count) + 1;
+        char *tn = (char *)malloc(need);
+        if (tn) {
+            snprintf(tn, need, "%d / %d", current_index + 1, g_track_count);
+            lv_label_set_text(tracknum_label, tn);
+            free(tn);
+        } else {
+            lv_label_set_text(tracknum_label, "? / ?");
+        }
+    }
 
     lv_obj_align_to(tracknum_label, title_label, LV_ALIGN_TOP_LEFT, 6, 6);
-
-    const char *artist = (g_mp3_tags && g_mp3_tags->artist[0]) ? g_mp3_tags->artist : "Unknown";
-    const char *album  = (g_mp3_tags && g_mp3_tags->album[0])  ? g_mp3_tags->album  : "Unknown";
 
     // ============================================================
     // ARTIST
@@ -1950,9 +1966,17 @@ void draw_now_playing(lv_obj_t *parent)
     lv_obj_t *artist_label = lv_label_create(parent);
     lv_obj_set_style_text_color(artist_label, txt_color, 0);
 
-    char artist_txt[128];
-    snprintf(artist_txt, sizeof(artist_txt), "Artist: %s", artist);
-    lv_label_set_text(artist_label, artist_txt);
+    {
+        size_t need = (size_t)snprintf(NULL, 0, "Artist: %s", artist) + 1;
+        char *artist_txt = (char *)malloc(need);
+        if (artist_txt) {
+            snprintf(artist_txt, need, "Artist: %s", artist);
+            lv_label_set_text(artist_label, artist_txt);
+            free(artist_txt);
+        } else {
+            lv_label_set_text(artist_label, "Artist: ?");
+        }
+    }
 
     lv_obj_align_to(artist_label, title_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
@@ -1962,9 +1986,18 @@ void draw_now_playing(lv_obj_t *parent)
     lv_obj_t *album_label = lv_label_create(parent);
     lv_obj_set_style_text_color(album_label, txt_color, 0);
 
-    char album_txt[160];
-    snprintf(album_txt, sizeof(album_txt), "Album: %s\n\n", album);
-    lv_label_set_text(album_label, album_txt);
+    {
+        size_t need = (size_t)snprintf(NULL, 0, "Album: %s\n\n", album) + 1;
+        char *album_txt = (char *)malloc(need);
+        if (album_txt) {
+            snprintf(album_txt, need, "Album: %s\n\n", album);
+            lv_label_set_text(album_label, album_txt);
+            free(album_txt);
+        } else {
+            lv_label_set_text(album_label, "Album: ?");
+        }
+    }
+
     lv_obj_align_to(album_label, artist_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
     // ============================================================

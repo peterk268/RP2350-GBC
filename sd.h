@@ -156,7 +156,7 @@ void read_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
 
     gb_get_save_size_s(gb, &save_size);
 	if(save_size>0) {
-        shutdown_lcd(false, true);
+        shutdown_lcd(false, false);
 
 		sd_card_t *pSD=sd_get_by_num(0);
 		FRESULT fr=f_mount(&pSD->fatfs,pSD->pcName,1);
@@ -192,11 +192,11 @@ void read_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
 		}
 		f_unmount(pSD->pcName);	
 
-		if (!hold_sd_busy) start_lcd(false, true);
+		if (!hold_sd_busy) start_lcd(false, false);
 		printf("I read_cart_ram_file(%s) COMPLETE (%lu bytes)\n",save_path,save_size);
         free(save_path);
 	} else {
-        if (!hold_sd_busy) start_lcd(false, true);
+        if (!hold_sd_busy) start_lcd(false, false);
     }
 }
 
@@ -209,7 +209,7 @@ void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
 	
     gb_get_save_size_s(gb, &save_size);
 	if(save_size>0) {
-        shutdown_lcd(false, true);
+        shutdown_lcd(false, false);
 
 		sd_card_t *pSD=sd_get_by_num(0);
 		FRESULT fr=f_mount(&pSD->fatfs,pSD->pcName,1);
@@ -245,12 +245,12 @@ void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
 		}
 		f_unmount(pSD->pcName);
         if (!hold_sd_busy)
-            start_lcd(false, true);
+            start_lcd(false, false);
 		printf("I write_cart_ram_file(%s) COMPLETE (%lu bytes)\n",save_path,save_size);
         free(save_path);
 	} else {
         if (!hold_sd_busy)
-            start_lcd(false, true);
+            start_lcd(false, false);
     }
 }
 
@@ -351,7 +351,7 @@ static uint32_t crc32_ieee(const void *data, size_t len) {
 void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy, int override_slot) {
     if (!gb) return;
 
-    shutdown_lcd(false, true);
+    shutdown_lcd(false, false);
 
     UINT bw = 0;
     FRESULT fr = FR_OK;
@@ -495,7 +495,7 @@ cleanup:
     }
 
 
-    if (!hold_sd_busy) start_lcd(false, true);
+    if (!hold_sd_busy) start_lcd(false, false);
 }
 
 // ============================================================
@@ -505,7 +505,7 @@ cleanup:
 bool read_cart_save_state(struct gb_s *gb, int override_slot, bool hold_sd_busy) {
     if (!gb) return false;
 
-    shutdown_lcd(false, true);
+    shutdown_lcd(false, false);
 
     UINT br = 0;
     FRESULT fr;
@@ -645,7 +645,7 @@ cleanup:
     if (s) free(s);
     if (save_path) { free(save_path); save_path = NULL; }
 
-    if (!hold_sd_busy) start_lcd(false, true);
+    if (!hold_sd_busy) start_lcd(false, false);
 
     return success && (fr == FR_OK);
 }
@@ -819,13 +819,13 @@ bool write_screenshot_png_from_fb(const framebuffer_t *front_fb,
 {
     if (!front_fb) return false;
 
-    shutdown_lcd(false, true);
+    shutdown_lcd(false, false);
 
     sd_card_t *pSD = sd_get_by_num(0);
     FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
     if (fr != FR_OK) {
         printf("E f_mount error: %s (%d)\n", FRESULT_str(fr), fr);
-        if (!hold_sd_busy) start_lcd(false, true);
+        if (!hold_sd_busy) start_lcd(false, false);
         return false;
     }
 
@@ -1023,7 +1023,7 @@ cleanup:
     }
 
     f_unmount(pSD->pcName);
-    if (!hold_sd_busy) start_lcd(false, true);
+    if (!hold_sd_busy) start_lcd(false, false);
 
     if (ok) {
         printf("I screenshot saved: %s (%dx%d)\n", path ? path : "(null)", LCD_WIDTH, LCD_HEIGHT);
@@ -1047,7 +1047,7 @@ cleanup:
 void __not_in_flash_func(load_cart_rom_file)(const char *filename, bool hold_sd_busy) {
     while(led_ramp_done == false) sleep_ms(1); // Wait for LED fade-in to complete
     
-    shutdown_lcd(false, true);
+    shutdown_lcd(false, false);
 
     // Don't touch again please..
     memset(front_fb->data, 0, sizeof(front_fb->data));
@@ -1205,7 +1205,7 @@ void __not_in_flash_func(load_cart_rom_file)(const char *filename, bool hold_sd_
 	save_rom_settings(filename, 0, 1);
     strncpy(last_filename_raw, filename, FILENAME_MAX_LEN - 1);
 
-    if (!hold_sd_busy) start_lcd(false, true);
+    if (!hold_sd_busy) start_lcd(false, false);
 	watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
 
     printf("I load_cart_rom_file(%s) COMPLETE (%lu bytes written)\n", filename, rom_size);
@@ -1919,7 +1919,7 @@ bool lvgl_set_random_gbc_screenshot_background_from_sd(lv_obj_t *parent,
                                                        lv_opa_t fade_opa,
                                                        bool hold_sd_busy)
 {
-    shutdown_lcd(false, true);
+    shutdown_lcd(false, false);
 
     sd_card_t *pSD = sd_get_by_num(sd_num);
     FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
@@ -1956,7 +1956,7 @@ bool lvgl_set_random_gbc_screenshot_background_from_sd(lv_obj_t *parent,
 
     // Done with SD now
     f_unmount(pSD->pcName);
-    if (!hold_sd_busy) start_lcd(false, true);
+    if (!hold_sd_busy) start_lcd(false, false);
 
     // Replace any previous bg
     lvgl_bg_free_current();
@@ -2006,7 +2006,7 @@ bool lvgl_set_random_gbc_screenshot_background_from_sd(lv_obj_t *parent,
 
     cleanup: 
         f_unmount(pSD->pcName);
-        if (!hold_sd_busy) start_lcd(false, true);
+        if (!hold_sd_busy) start_lcd(false, false);
         return false;
 }
 
@@ -2351,7 +2351,7 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
                           bool auto_load_state,
                           bool hold_sd_busy) {
 
-    shutdown_lcd(false, true);
+    shutdown_lcd(false, false);
 
     system_settings_t s = {
         .magic = SYSTEM_MAGIC,
@@ -2388,7 +2388,7 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
 
     f_unmount(pSD->pcName);
     if (!hold_sd_busy)
-        start_lcd(false, true);
+        start_lcd(false, false);
 }
 
 static inline bool system_settings_equal(const system_settings_t *a, const system_settings_t *b) {

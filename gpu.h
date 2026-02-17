@@ -312,6 +312,33 @@ static inline void core1_doorbell_setup() {
     doorbell_setup = true;
 }
 
+static inline void core1_doorbell_free(void) {
+    if (!doorbell_setup) return;
+    if (g_core1_db == 0xFF) { // never successfully claimed
+        doorbell_setup = false;
+        return;
+    }
+
+    uint irq = multicore_doorbell_irq_num(g_core1_db);
+
+    // stop ISR first
+    irq_set_enabled(irq, false);
+
+    // clear any latched state for this core
+    multicore_doorbell_clear_current_core(g_core1_db);
+
+    // optional cleanup (fine to omit if you prefer)
+    irq_remove_handler(irq, core1_doorbell_isr);
+    // if your SDK doesn't have irq_remove_handler():
+    // irq_set_exclusive_handler(irq, NULL);
+
+    // "free" the doorbell claim (the SDK name is unclaim)
+    multicore_doorbell_unclaim(g_core1_db, (1u << NUM_CORES) - 1u);
+
+    g_core1_db = 0xFF;
+    doorbell_setup = false;
+}
+
 // MARK: - MAIN CORE1 LOOP
 _Noreturn
 void main_core1(void) {

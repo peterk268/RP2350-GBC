@@ -961,8 +961,13 @@ void shutdown_lcd(bool button_leds_off, bool shutdown_core1) {
 
     scanvideo_timing_enable(false);
 
-    if (shutdown_core1)
+    if (shutdown_core1) {
+        uint32_t ints = save_and_disable_interrupts();
+        core1_doorbell_free();
+        multicore_fifo_drain();
         multicore_reset_core1();
+        restore_interrupts(ints);
+    }
 }
 
 void start_lcd(bool button_leds_restore, bool start_core1) {

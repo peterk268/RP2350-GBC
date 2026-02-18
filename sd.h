@@ -1,4 +1,5 @@
 #if ENABLE_SDCARD
+#include <ctype.h>
 /**
  * Load a save file from the SD card
  */
@@ -36,7 +37,10 @@ void set_sd_busy(bool is_sd_busy) {
    
     // Wake core1 from parked state regardless so it can observe the new state immediately
 #if ENABLE_DOORBELL
-    multicore_doorbell_set_other_core(g_core1_db);
+    // Doorbell can be unclaimed during deep sleep transitions.
+    if (doorbell_setup && g_core1_db != 0xFF) {
+        multicore_doorbell_set_other_core(g_core1_db);
+    }
 #endif
     // Sometimes just one send event isn't enought to wake core1 from wfe.. zzz
     __sev(); __sev();
@@ -204,54 +208,88 @@ void read_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
  * Write a save file to the SD card
  */
 void write_cart_ram_file(struct gb_s *gb, bool hold_sd_busy) {
-	size_t save_size;
-	UINT bw;
-	
+	size_t save_size = 0;
+	UINT bw = 0;
+	FRESULT fr = FR_INT_ERR;
+	sd_card_t *pSD = NULL;
+	FIL fil;
+	bool file_opened = false;
+	char *save_path = NULL;
+	bool success = false;
+
     gb_get_save_size_s(gb, &save_size);
-	if(save_size>0) {
-        shutdown_lcd(false, false);
-
-		sd_card_t *pSD=sd_get_by_num(0);
-		FRESULT fr=f_mount(&pSD->fatfs,pSD->pcName,1);
-		if (FR_OK!=fr) {
-			printf("E f_mount error: %s (%d)\n",FRESULT_str(fr),fr);
-			return;
-		}
-
-		char *save_path = (char *)malloc(PATH_MAX_LEN);
-        if (!save_path) {
-            printf("E malloc save_path failed\n");
-            return; // or handle error
-        }
-
-        int rc = build_save_path_from_flash(SAVE_BATTERY, save_path, PATH_MAX_LEN, -1);
-        if (rc != 0) {
-            printf("E build_save_path_from_flash(SAVE_BATTERY) failed\n");
-            free(save_path);
-            return;
-        }
-
-		FIL fil;
-		fr=f_open(&fil,save_path,FA_CREATE_ALWAYS | FA_WRITE);
-		if (fr==FR_OK) {
-			f_write(&fil,ram,save_size,&bw);
-		} else {
-			printf("E f_open(%s) error: %s (%d)\n",save_path,FRESULT_str(fr),fr);
-		}
-		
-		fr=f_close(&fil);
-		if(fr!=FR_OK) {
-			printf("E f_close error: %s (%d)\n", FRESULT_str(fr), fr);
-		}
-		f_unmount(pSD->pcName);
-        if (!hold_sd_busy)
-            start_lcd(false, false);
-		printf("I write_cart_ram_file(%s) COMPLETE (%lu bytes)\n",save_path,save_size);
-        free(save_path);
-	} else {
-        if (!hold_sd_busy)
-            start_lcd(false, false);
+	if (save_size == 0) {
+        if (!hold_sd_busy) start_lcd(false, false);
+        return;
     }
+
+    shutdown_lcd(false, false);
+
+	pSD = sd_get_by_num(0);
+	fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+	if (FR_OK != fr) {
+		printf("E f_mount error: %s (%d)\n", FRESULT_str(fr), fr);
+		goto cleanup;
+	}
+
+	save_path = (char *)malloc(PATH_MAX_LEN);
+    if (!save_path) {
+        printf("E malloc save_path failed\n");
+        goto cleanup;
+    }
+
+    if (build_save_path_from_flash(SAVE_BATTERY, save_path, PATH_MAX_LEN, -1) != 0) {
+        printf("E build_save_path_from_flash(SAVE_BATTERY) failed\n");
+        goto cleanup;
+    }
+
+	fr = f_open(&fil, save_path, FA_CREATE_ALWAYS | FA_WRITE);
+	if (fr != FR_OK) {
+		printf("E f_open(%s) error: %s (%d)\n", save_path, FRESULT_str(fr), fr);
+		goto cleanup;
+	}
+	file_opened = true;
+
+	size_t written = 0;
+	while (written < save_size) {
+		UINT chunk = (UINT)((save_size - written) > 4096 ? 4096 : (save_size - written));
+		fr = f_write(&fil, (const uint8_t *)ram + written, chunk, &bw);
+		if (fr != FR_OK || bw != chunk) {
+			break;
+		}
+		written += bw;
+		watchdog_update();
+	}
+	if (fr != FR_OK || written != save_size) {
+		printf("E f_write(%s) error: %s (%d), bw=%u\n",
+               save_path, FRESULT_str(fr), fr, (unsigned)bw);
+		goto cleanup;
+	}
+
+	success = true;
+	printf("I write_cart_ram_file(%s) COMPLETE (%lu bytes)\n", save_path, save_size);
+
+cleanup:
+	if (file_opened) {
+		FRESULT fr2 = f_close(&fil);
+		if (fr2 != FR_OK) {
+			printf("E f_close error: %s (%d)\n", FRESULT_str(fr2), fr2);
+		}
+	}
+
+	if (pSD) {
+		f_unmount(pSD->pcName);
+	}
+
+    if (save_path) {
+        free(save_path);
+    }
+
+    if (!hold_sd_busy) {
+        start_lcd(false, false);
+    }
+
+    (void)success;
 }
 
 // ============================================================
@@ -459,8 +497,17 @@ void write_cart_save_state(struct gb_s *gb, bool hold_sd_busy, int override_slot
     }
 
     // Write payload
-    fr = f_write(&fil, s, sizeof(*s), &bw);
-    if (fr != FR_OK || bw != sizeof(*s)) {
+    size_t written = 0;
+    while (written < sizeof(*s)) {
+        UINT chunk = (UINT)(((sizeof(*s) - written) > 4096) ? 4096 : (sizeof(*s) - written));
+        fr = f_write(&fil, ((const uint8_t *)s) + written, chunk, &bw);
+        if (fr != FR_OK || bw != chunk) {
+            break;
+        }
+        written += bw;
+        watchdog_update();
+    }
+    if (fr != FR_OK || written != sizeof(*s)) {
         printf("E f_write(state) error: %s (%d), bw=%u\n", FRESULT_str(fr), fr, (unsigned)bw);
         goto cleanup;
     }
@@ -508,12 +555,13 @@ bool read_cart_save_state(struct gb_s *gb, int override_slot, bool hold_sd_busy)
     shutdown_lcd(false, false);
 
     UINT br = 0;
-    FRESULT fr;
+    FRESULT fr = FR_INT_ERR;
     FIL fil;
     save_state_header_t hdr;
     char *save_path = NULL;
     gb_save_state_t *s = NULL;
-    sd_card_t *pSD;
+    sd_card_t *pSD = NULL;
+    bool file_opened = false;
     bool success = false;
 
     save_path = (char *)malloc(PATH_MAX_LEN);
@@ -539,6 +587,7 @@ bool read_cart_save_state(struct gb_s *gb, int override_slot, bool hold_sd_busy)
         printf("I no save state (%s): %s (%d)\n", save_path, FRESULT_str(fr), fr);
         goto cleanup;
     }
+    file_opened = true;
 
     fr = f_read(&fil, &hdr, sizeof(hdr), &br);
     if (fr != FR_OK || br != sizeof(hdr)) {
@@ -569,8 +618,17 @@ bool read_cart_save_state(struct gb_s *gb, int override_slot, bool hold_sd_busy)
         goto cleanup;
     }
 
-    fr = f_read(&fil, s, sizeof(*s), &br);
-    if (fr != FR_OK || br != sizeof(*s)) {
+    size_t read_total = 0;
+    while (read_total < sizeof(*s)) {
+        UINT chunk = (UINT)(((sizeof(*s) - read_total) > 4096) ? 4096 : (sizeof(*s) - read_total));
+        fr = f_read(&fil, ((uint8_t *)s) + read_total, chunk, &br);
+        if (fr != FR_OK || br != chunk) {
+            break;
+        }
+        read_total += br;
+        watchdog_update();
+    }
+    if (fr != FR_OK || read_total != sizeof(*s)) {
         printf("E f_read(state) error: %s (%d), br=%u\n", FRESULT_str(fr), fr, (unsigned)br);
         goto cleanup;
     }
@@ -637,9 +695,9 @@ bool read_cart_save_state(struct gb_s *gb, int override_slot, bool hold_sd_busy)
            save_path, (unsigned)sizeof(*s));
 
 cleanup:
-    // close/unmount only if they were opened/mounted; keep it simple:
-    // If f_open failed, f_close is not valid. Track a bool if you want to be strict.
-    f_close(&fil);                // optional: guard with a "file_opened" bool
+    if (file_opened) {
+        f_close(&fil);
+    }
     if (pSD) f_unmount(pSD->pcName);
 
     if (s) free(s);
@@ -647,7 +705,7 @@ cleanup:
 
     if (!hold_sd_busy) start_lcd(false, false);
 
-    return success && (fr == FR_OK);
+    return success;
 }
 
 // ------------------------------------------------------------
@@ -2368,10 +2426,14 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
 
     sd_card_t *pSD = sd_get_by_num(0);
     FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
-    if (fr != FR_OK) return;
+    if (fr != FR_OK) {
+        if (!hold_sd_busy) start_lcd(false, false);
+        return;
+    }
 
     if (!ensure_settings_dir()) {
         f_unmount(pSD->pcName);
+        if (!hold_sd_busy) start_lcd(false, false);
         return;
     }
 

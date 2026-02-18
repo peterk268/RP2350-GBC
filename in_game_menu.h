@@ -248,7 +248,7 @@ static void ig_get_lcd_brightness_text(char *out, size_t out_sz) {
     // 16 perceptual steps (brightness_levels[16])
     int idx = find_level_index_le(lcd_led_duty_cycle, brightness_levels, 16);
 
-    char bar[32];
+    static char bar[32];
     make_slider_bar_steps(bar, sizeof(bar), idx, 16, 10);
 
     // Show level (1..16) + raw duty for debugging/clarity
@@ -259,7 +259,7 @@ static void ig_get_btn_brightness_text(char *out, size_t out_sz) {
     // 6 discrete steps (button_brightness_levels[6])
     int idx = find_level_index_le(button_led_duty_cycle, button_brightness_levels, 6);
 
-    char bar[32];
+    static char bar[32];
     make_slider_bar_steps(bar, sizeof(bar), idx, 6, 10);
 
     snprintf(out, out_sz, "%s L%d/6", bar, idx + 1);
@@ -271,7 +271,7 @@ static void ig_get_washout_text(char *out, size_t out_sz) {
     if (idx < 0) idx = 0;
     if (idx > 15) idx = 15;
 
-    char bar[32];
+    static char bar[32];
     make_slider_bar_steps(bar, sizeof(bar), idx, 16, 10);
 
     // Show both step and raw value
@@ -332,7 +332,7 @@ static void ig_get_palette_text(char *out, size_t out_sz) {
     }
     uint8_t palette_num = manual_palette_selected + 1;
     // Build colored swatches using LVGL recolor tags: #RRGGBB text#
-    uint16_t cols[MAX_PALETTE_SWATCH];
+    static uint16_t cols[MAX_PALETTE_SWATCH];
     uint8_t n = collect_unique_rgb565(*palette, cols, MAX_PALETTE_SWATCH);
 
     // Example output: "3 #ffcc00 |##00aaff |##000000 |#"
@@ -427,61 +427,44 @@ static void ig_toggle_battery_save(void) {
 // In-game list draw (9 visible items, paging)
 // ================================================================
 static void draw_in_game_options_list(lv_obj_t *list,
-                                     const ig_menu_item_t *items,
-                                     int item_count,
-                                     int ig_selected,
-                                     int ig_page_start)
+                                      const ig_menu_item_t *items,
+                                      int item_count,
+                                      int ig_selected,
+                                      int ig_page_start)
 {
     lv_obj_clean(list);
 
     for (int i = 0; i < IG_VISIBLE_ITEMS && (i + ig_page_start) < item_count; i++) {
         int idx = i + ig_page_start;
 
-        // Build row text: "Label    <value>"
-        char *value = (char *)malloc(64);
-        if (!value) return; // out of heap; bail (or you can continue)
-        value[0] = '\0';
-
-        if (items[idx].get_value_text) items[idx].get_value_text(value, 64);
-
-        // Build row text on heap (size exactly as needed)
         const char *label = items[idx].label ? items[idx].label : "";
 
-        size_t need = 0;
-        if (value[0]) {
-            need = (size_t)snprintf(NULL, 0, "%s  %s", label, value) + 1;
-        } else {
-            need = (size_t)snprintf(NULL, 0, "%s", label) + 1;
-        }
+        static char value[64];
+        value[0] = '\0';
+        if (items[idx].get_value_text) items[idx].get_value_text(value, sizeof(value));
 
-        char *row = (char *)malloc(need);
-        if (!row) {
-            free(value);
-            return; // out of heap; bail (or you can continue)
-        }
-
-        if (value[0]) snprintf(row, need, "%s  %s", label, value);
-        else          snprintf(row, need, "%s", label);
-
-        lv_obj_t *row_obj = lv_list_add_text(list, row);
+        lv_obj_t *row_obj = lv_list_add_text(list, ""); // create label
         lv_obj_set_style_text_font(row_obj, LV_FONT_DEFAULT, 0);
-        lv_obj_set_style_text_color(row_obj, items[idx].action == IG_ACT_SLEEP ? lv_color_hex(0xFF0000) : lv_color_black(), 0);
         lv_obj_set_style_bg_color(row_obj, lv_color_hex(0xFFFFFF), 0);
+
+        // Format directly into LVGL-managed memory
+        if (value[0]) lv_label_set_text_fmt(row_obj, "%s  %s", label, value);
+        else          lv_label_set_text_fmt(row_obj, "%s", label);
+
+        // Colors
+        bool is_sleep = (items[idx].action == IG_ACT_SLEEP);
+        lv_obj_set_style_text_color(row_obj, is_sleep ? lv_color_hex(0xFF0000) : lv_color_black(), 0);
 
         if (idx == ig_selected) {
             lv_obj_set_style_bg_color(row_obj, lv_color_hex(0x33CC66), LV_PART_MAIN);
-            lv_obj_set_style_text_color(row_obj, items[idx].action == IG_ACT_SLEEP ? lv_color_hex(0xFF0000) : lv_color_black(), 0);
             lv_label_set_long_mode(row_obj, LV_LABEL_LONG_SCROLL_CIRCULAR);
             lv_obj_set_style_anim_speed(row_obj, 20, 0);
         } else {
             lv_obj_set_width(row_obj, DISP_HOR_RES - 30);
             lv_label_set_long_mode(row_obj, LV_LABEL_LONG_CLIP);
         }
-        lv_label_set_recolor(row_obj, true);
 
-        // LVGL copies the string for list text labels, so we can free immediately.
-        free(row);
-        free(value);
+        lv_label_set_recolor(row_obj, true);
     }
 }
 
@@ -498,8 +481,8 @@ static void ig_update_hints(const ig_menu_item_t *it, lv_obj_t *hint_left, lv_ob
         default:             lv_label_set_text(hint_left,  ""); break;
     }
 }
-uint8_t ig_selected = 0;
-uint8_t ig_page_start = 0;
+static uint8_t ig_selected = 0;
+static uint8_t ig_page_start = 0;
 
 static ig_menu_item_t *menu_items = NULL;
 static uint8_t menu_count = 0;
@@ -819,7 +802,9 @@ void in_game_menu() {
         // this allows us to keep the is lcd on check to prevent back to back shut down lcds
         // wake and start peripherals will turn it back on
         // this is a volatile area to be kept with care and thought of everything going on because there's a lot.
-        shutdown_lcd(true, true);
+        // First pass: keep UI dark + SD-safe, but defer hard core1 reset to sleep_and_shutdown_peripherals().
+        // No longer needed due to modularization and better state management in shutdown lcd calls
+        // shutdown_lcd(true, true);
 
 #if ENABLE_SDCARD
         in_game_save_auto_state(true);

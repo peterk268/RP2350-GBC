@@ -947,17 +947,25 @@ bool lcd_is_on() {
 // shutdowns until I can figure out the root cause.
 // SHOULD ALWAYS BE THE FIRST STEP BEFORE DOING A SD READ/WRITE AND THE LAST STEP AFTER DOING A SD READ/WRITE to avoid resource contention.
 void shutdown_lcd(bool button_leds_off, bool shutdown_core1) {
-    if (!lcd_is_on()) return;
+    bool was_on = lcd_is_on();
 
-    // Shut off display and LEDs
-    gpio_write(IOX_LCD_nRST, 0);
+    // Keep core1 parked while SD is active even if LCD is already off.
     set_sd_busy(true);
-    if (button_leds_off) {
+
+    if (was_on) {
+        gpio_write(IOX_LCD_nRST, 0);
+    }
+    if (button_leds_off && button_led_duty_cycle > 0) {
         saved_button_brightness = button_led_duty_cycle;
         decrease_button_brightness(MAX_BRIGHTNESS);
     }
 
-    wait_for_core1_parked(10 * 1000);
+    if (was_on) {
+        bool parked = wait_for_core1_parked(50 * 1000);
+        if (!parked) {
+            printf("W core1 park timeout in shutdown_lcd\n");
+        }
+    }
 
     scanvideo_timing_enable(false);
 

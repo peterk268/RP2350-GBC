@@ -2000,6 +2000,35 @@ void draw_now_playing(lv_obj_t *parent)
     lv_bar_set_value(bar, 35, LV_ANIM_OFF);
 }
 
+static void mp3_show_message(lv_obj_t *list,
+                             lv_obj_t *hint_left,
+                             lv_obj_t *hint_right,
+                             const char *msg)
+{
+    if (!list || !msg) return;
+
+    char one_row[1][MP3_MAX_PATH_LEN];
+    snprintf(one_row[0], MP3_MAX_PATH_LEN, "%s", msg);
+    draw_track_list(list, one_row, 1, 0, 0);
+
+    if (hint_left)  update_mp3_bottom_bar_left(hint_left, msg);
+    if (hint_right) update_mp3_bottom_bar_shuffle_repeat(hint_right, REPEAT_OFF, false, false);
+
+    lv_tick_inc(1);
+    lv_timer_handler();
+}
+
+static void mp3_message_idle_loop(void)
+{
+    release_power();
+    watchdog_disable();
+
+    while (1) {
+        __wfi();
+        tight_loop_contents();
+    }
+}
+
 void play_mp3_stream(const char *start_filename) {
     // Create list
     lv_init();
@@ -2044,28 +2073,27 @@ void play_mp3_stream(const char *start_filename) {
     lv_obj_set_style_border_width(list, 0, 0);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
 
-    // Skeleton tracks until loaded.
-    if (!mp3_playlist_init()) {
-        printf("Playlist init failed\n");
-        g_track_count = 0;
-        return;
-    }
-    for (uint8_t i = 0; i < VISIBLE_ITEMS; i++) {
-        snprintf(g_playlist[i], MP3_MAX_PATH_LEN, "%s", loading_msgs[i]);
-    }
-
-    draw_track_list(list, g_playlist, VISIBLE_ITEMS, 0, 0);
-        
     lv_obj_t *status_label;
     mp3_top_bar = create_top_bar(cont, &status_label);
-
-    // Initial update
     update_status_label(status_label);
 
     // === Bottom hint bar ===
     lv_obj_t *hint_left;
     lv_obj_t *hint_right;
     mp3_bottom_bar = create_mp3_bottom_bar(cont, &hint_left, &hint_right);
+
+    // Skeleton tracks until loaded.
+    if (!mp3_playlist_init()) {
+        printf("Playlist init failed\n");
+        g_track_count = 0;
+        mp3_show_message(list, hint_left, hint_right, "Playlist init failed");
+        mp3_message_idle_loop();
+    }
+    for (uint8_t i = 0; i < VISIBLE_ITEMS; i++) {
+        snprintf(g_playlist[i], MP3_MAX_PATH_LEN, "%s", loading_msgs[i]);
+    }
+
+    draw_track_list(list, g_playlist, VISIBLE_ITEMS, 0, 0);
 
     lv_tick_inc(1);
     lv_timer_handler();
@@ -2074,7 +2102,8 @@ void play_mp3_stream(const char *start_filename) {
     FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
     if (fr != FR_OK) {
         printf("Mount fail %d\n", fr);
-        return;
+        mp3_show_message(list, hint_left, hint_right, "SD mount failed");
+        mp3_message_idle_loop();
     }
 
     watchdog_enable(WATCHDOG_TIMEOUT_MS*2, true); // 4 second timeout, pause-on-debug = true
@@ -2103,8 +2132,9 @@ void play_mp3_stream(const char *start_filename) {
 
     if (g_track_count == 0) {
         printf("No MP3 files found on SD.\n");
+        mp3_show_message(list, hint_left, hint_right, "No MP3 files found on SD :P");
         f_unmount(pSD->pcName);
-        return;
+        mp3_message_idle_loop();
     }
 
     // Choose initial track index

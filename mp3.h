@@ -1171,7 +1171,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
     uint64_t last_interaction_us = time_us_64();
     uint64_t last_nav_us         = last_interaction_us; // UP/DOWN/A (for now-playing auto)
 
-    static bool prev_inactive = false;
+    bool prev_inactive = g_mp3_inactive;
 
     // ================================================================
     // MAIN PLAYBACK LOOP
@@ -1307,6 +1307,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             }
 
             uint64_t now_us = time_us_64();
+            bool woke_from_inactive_this_tick = false;
 
             if (ANY_BUTTON_PRESSED && !g_buttons_locked) {
                 last_interaction_us = now_us;
@@ -1328,7 +1329,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             if (!select_btn) {
                 // SELECT released: if it was NOT part of a combo, treat as repeat tap
                 if (prev_btn_select && !select_was_combo) {
-                    if (!prev_inactive) {
+                    if (!g_mp3_inactive) {
                         g_repeat_mode = (repeat_mode_t)((g_repeat_mode + 1) % 3);
 
                         if (g_repeat_mode == REPEAT_OFF) {
@@ -1419,9 +1420,14 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             // -------------- MP3 Inactivity Detection --------------
             if (g_mp3_inactive && ANY_BUTTON_PRESSED) {
-                // Wake up immediately
+                // Wake LCD immediately, but continue processing this same button press.
                 g_mp3_inactive = false;
                 last_interaction_us = now_us;
+                woke_from_inactive_this_tick = true;
+                if (prev_inactive) {
+                    start_lcd(true, false);
+                    prev_inactive = false;
+                }
             }
 
             // --------- "Now Playing" auto swap (ONLY UP/DOWN/A) ---------
@@ -1440,17 +1446,20 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             // A → Play Selected Track
             if (!prev_btn_a && btn_a) {
-                // only if mp3 is active can we toggle now playing and play the selected track.
-                if (!prev_inactive && !show_now_playing) {
-                    show_now_playing = true;
-                    paused = false;
-                    toggle_speakers_if_paused();
-                    update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
-                    result = PLAY_RESULT_SELECTED;
-                    goto END_PLAYBACK;
-                }
-                if (!prev_inactive && show_now_playing) {
-                    show_now_playing = false;
+                // If A was used to wake from inactive this tick, consume it as wake-only.
+                if (!woke_from_inactive_this_tick) {
+                    // only if mp3 is active can we toggle now playing and play the selected track.
+                    if (!g_mp3_inactive && !show_now_playing) {
+                        show_now_playing = true;
+                        paused = false;
+                        toggle_speakers_if_paused();
+                        update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
+                        result = PLAY_RESULT_SELECTED;
+                        goto END_PLAYBACK;
+                    }
+                    if (!g_mp3_inactive && show_now_playing) {
+                        show_now_playing = false;
+                    }
                 }
             }
 
@@ -1752,6 +1761,12 @@ static play_result_t mp3_play_single_track(const char *filepath,
     }
 
 END_PLAYBACK:
+    // If we exited the loop before hitting inactivity restore, bring LCD back now.
+    if (!g_mp3_inactive && prev_inactive) {
+        start_lcd(true, false);
+        prev_inactive = false;
+    }
+
     // Push a short silence to let the output settle before freeing buffers
     i2s_dma_write(&i2s_config, (const uint16_t *)silence_buf);
     i2s_dma_write(&i2s_config, (const uint16_t *)silence_buf);

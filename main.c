@@ -206,7 +206,9 @@ int main(void)
 	i2s_config = i2s_get_default_config();
 	i2s_config.sample_freq=AUDIO_SAMPLE_RATE;
 	i2s_config.dma_trans_count = gpio_read(IOX_B_B) ^ GBC_MAIN_APP ? PCM_FRAME_COUNT : AUDIO_SAMPLES;
-	i2s_config.mclk_mult = 512;          // 512× is cleaner
+	i2s_config.mclk_enabled = (USE_MCLK != 0);
+	// 256 is cleaner than 512 here due to the clock generation divider with 300MHz sys clock. Just slightly tho.
+	i2s_config.mclk_mult = 256;          // matches codec MCLK path (NDAC=1, MDAC=2, DOSR=128)
 
 	i2s_volume(&i2s_config,0);
 	i2s_init(&i2s_config);

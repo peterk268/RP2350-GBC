@@ -1,6 +1,10 @@
 #define DAC_I2C_ADDR 0b0011000
 
+// Without MCLK, the TLV320DAC3101 can derive its internal clocks from BCLK, but this requires careful PLL configuration. With MCLK, the clocking is more straightforward and flexible. For simplicity and better compatibility.
+// MCLK use is cleaner and more robust, need additional pin tho but that's fine.
+// Without MCLK, headphone detect doesn't work for some reason.
 #define USE_MCLK 1
+#define DAC_BCLK_FS_RATIO 32  // valid values: 32 or 64
 
 uint16_t current_volume_level = 0;
 bool is_muted = false;
@@ -220,9 +224,9 @@ void set_3d(uint8_t msb_3d, uint8_t lsb_3d) {
 
 // MCLK-less clocking for TLV320DAC3101:
 // PLL_CLKIN = BCLK, CODEC_CLKIN = PLL_CLK
-// PLL multiplies BCLK by 32 (P=1, R=1, J=32, D=0)
-// Then CODEC_CLKIN = 32*BCLK, and with NDAC*MDAC*DOSR = 2048,
-// Fs = CODEC_CLKIN/2048 = BCLK/64 (tracks automatically for 44.1k/48k/etc).
+// PLL multiplies BCLK by 32 (P=1, R=1, J=32, D=0).
+// Fs = (32 * BCLK) / (NDAC * MDAC * DOSR).
+// Use DAC_BCLK_FS_RATIO=32 for 16-bit stereo I2S (common), or 64 for 32-bit-slot I2S.
 
 static void dac3101_clock_from_bclk_autotrack(void)
 {
@@ -247,11 +251,23 @@ static void dac3101_clock_from_bclk_autotrack(void)
 
     sleep_ms(12); // PLL_CLK typically available ~10ms after powering PLL :contentReference[oaicite:9]{index=9}
 
-    // Now set the clock dividers to match Fs = BCLK/64
-    // NDAC = 8 (powered)  -> 0x80 | 8 = 0x88
+    // Now set the clock dividers to match Fs = BCLK/DAC_BCLK_FS_RATIO
     // MDAC = 2 (powered)  -> 0x80 | 2 = 0x82
     // DOSR = 128          -> 0x00, 0x80
-    dac_i2c_write(0, 0x0B, 0x88);  // :contentReference[oaicite:10]{index=10}
+    // NDAC depends on selected BCLK ratio:
+    //   ratio 32: NDAC=4  -> 0x84
+    //   ratio 64: NDAC=8  -> 0x88
+#if (DAC_BCLK_FS_RATIO == 32)
+    const uint8_t ndac_reg = 0x84;
+#elif (DAC_BCLK_FS_RATIO == 64)
+    const uint8_t ndac_reg = 0x88;
+#else
+#error "DAC_BCLK_FS_RATIO must be 32 or 64"
+#endif
+
+    // MDAC = 2 (powered)  -> 0x80 | 2 = 0x82
+    // DOSR = 128          -> 0x00, 0x80
+    dac_i2c_write(0, 0x0B, ndac_reg);
     dac_i2c_write(0, 0x0C, 0x82);  // :contentReference[oaicite:11]{index=11}
     dac_i2c_write(0, 0x0D, 0x00);
     dac_i2c_write(0, 0x0E, 0x80);  // :contentReference[oaicite:12]{index=12}
@@ -261,14 +277,15 @@ void setup_dac() {
     dac_i2c_write(0, 0x01, 0x01); // Soft-reset the DAC
     sleep_ms(20); // Wait for reset to complete
 
-#if !USE_MCLK
-    dac3101_clock_from_bclk_autotrack();
-#endif
-
+#if USE_MCLK
     dac_i2c_write(0, 0x0b, 0x81); // nDAC_VAL
     dac_i2c_write(0, 0x0c, 0x82); // mDAC_VAL
     dac_i2c_write(0, 0x0d, 0x00); // DOSR default
     dac_i2c_write(0, 0x0e, 0x80); // DOSR default
+#else
+    dac3101_clock_from_bclk_autotrack();
+#endif
+
     dac_i2c_write(0, 0x1b, 0b00000000); // Interface Control: I2S, 16-bit
 
     dac_i2c_write(0, 0x3c, 0x0b); // DAC Processing Block Selection 25

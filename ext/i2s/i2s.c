@@ -9,27 +9,6 @@
 #define GPIO_I2S_LRCLK       22
 #define GPIO_I2S_DIN         23
 
-static inline void i2s_set_sm_clkdiv_for_hz(PIO pio, uint sm, uint32_t sys_hz, uint32_t target_hz) {
-    if (!target_hz) return;
-
-    // PIO divider is 16.8 fixed-point. Round to nearest for lower frequency error.
-    uint64_t div_x256 = (((uint64_t)sys_hz << 8) + (target_hz / 2u)) / target_hz;
-
-    // Hardware minimum divider is 1.0.
-    if (div_x256 < 0x100ull) div_x256 = 0x100ull;
-
-    uint32_t div_int = (uint32_t)(div_x256 >> 8u);
-    uint32_t div_frac = (uint32_t)(div_x256 & 0xffu);
-
-    // Clamp to representable 16.8 range.
-    if (div_int > 0xffffu) {
-        div_int = 0xffffu;
-        div_frac = 0xffu;
-    }
-
-    pio_sm_set_clkdiv_int_frac(pio, sm, (uint16_t)div_int, (uint8_t)div_frac);
-}
-
 // #warning "lr needs to be righ tafter btclk"
 /**
  * return the default i2s context used to store information about the setup
@@ -75,8 +54,8 @@ void i2s_init(i2s_config_t *i2s_config) {
         uint offset_mclk = pio_add_program(i2s_config->pio, &pio_i2s_mclk_program);
         pio_i2s_MCLK_program_init(i2s_config->pio, i2s_config->sm_mclk, offset_mclk, i2s_config->mclk_pin);
 
-        uint32_t mclk_sm_hz = i2s_config->mclk_mult * i2s_config->sample_freq * 2u; // edges per clock
-        i2s_set_sm_clkdiv_for_hz(i2s_config->pio, i2s_config->sm_mclk, system_clock_frequency, mclk_sm_hz);
+        int mClk = i2s_config->mclk_mult * i2s_config->sample_freq * 2 /* edges per clock */;
+        pio_sm_set_clkdiv_int_frac(i2s_config->pio, i2s_config->sm_mclk, system_clock_frequency / mClk, 0);
 
         pio_sm_set_enabled(i2s_config->pio, i2s_config->sm_mclk, true);
     }
@@ -86,9 +65,9 @@ void i2s_init(i2s_config_t *i2s_config) {
 
     audio_i2s_program_init(i2s_config->pio, i2s_config->sm , offset, i2s_config->data_pin , i2s_config->clock_pin_base);
     
-    /* Audio SM runs at 64*Fs for 16-bit stereo I2S framing. */
-    uint32_t audio_sm_hz = i2s_config->sample_freq * 64u;
-    i2s_set_sm_clkdiv_for_hz(i2s_config->pio, i2s_config->sm, system_clock_frequency, audio_sm_hz);
+    /* Set PIO clock */
+    uint32_t divider = system_clock_frequency * 4 / i2s_config->sample_freq; // avoid arithmetic overflow
+    pio_sm_set_clkdiv_int_frac(i2s_config->pio, i2s_config->sm , divider >> 8u, divider & 0xffu);
 
     pio_sm_set_enabled(i2s_config->pio, i2s_config->sm, false);
 
@@ -192,12 +171,12 @@ void i2s_set_sample_freq(i2s_config_t *i2s_config, uint32_t sample_freq, bool fr
     }
 
     uint32_t system_clock_frequency = clock_get_hz(clk_sys);
-    uint32_t audio_sm_hz = sample_freq * 64u;
-    i2s_set_sm_clkdiv_for_hz(i2s_config->pio, i2s_config->sm, system_clock_frequency, audio_sm_hz);
+    uint32_t divider = system_clock_frequency * 4 / sample_freq;
+    pio_sm_set_clkdiv_int_frac(i2s_config->pio, i2s_config->sm, divider >> 8u, divider & 0xffu);
 
     if (i2s_config->mclk_enabled) {
-        uint32_t mclk_sm_hz = i2s_config->mclk_mult * sample_freq * 2u; // edges per clock
-        i2s_set_sm_clkdiv_for_hz(i2s_config->pio, i2s_config->sm_mclk, system_clock_frequency, mclk_sm_hz);
+        int mClk = i2s_config->mclk_mult * sample_freq * 2 /* edges per clock */;
+        pio_sm_set_clkdiv_int_frac(i2s_config->pio, i2s_config->sm_mclk, clock_get_hz(clk_sys) / mClk, 0);
     }
 
     i2s_config->sample_freq = sample_freq;

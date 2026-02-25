@@ -225,7 +225,14 @@ typedef struct {
 #define SHUFFLE_FILE  "mp3_shuffle.bin"
 
 void toggle_speakers_if_paused() {
-    if (!headphones_present) paused ? spk_off() : spk_on();
+    audio_pause_active = paused;
+
+    if (audio_pause_active) {
+        mute_dac();
+    } else if (!is_muted) {
+        unmute_dac();
+    }
+    if (!headphones_present) audio_pause_active ? spk_off() : spk_on();
 }
 
 void draw_track_list(lv_obj_t *list,

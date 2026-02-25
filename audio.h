@@ -10,6 +10,7 @@ uint16_t current_volume_level = 0;
 bool is_muted = false;
 bool headphones_present = false;
 bool prev_headphones_present = false;
+bool audio_pause_active = false;
 static uint8_t *vol_lut = NULL;
 void set_volume(uint8_t l_volume, uint8_t r_volume);
 void dac_i2c_write(uint8_t page, uint8_t reg, uint8_t data);
@@ -120,7 +121,7 @@ void read_volume() {
         if (!headphones_present) power_off_drivers();
         is_muted = true;
     } 
-    else if (current_volume_level >= UNMUTE_THRESH && is_muted) {
+    else if (current_volume_level >= UNMUTE_THRESH && is_muted && !audio_pause_active) {
         power_on_drivers();
         unmute_dac();
         is_muted = false;

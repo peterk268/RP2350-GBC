@@ -207,8 +207,8 @@ int main(void)
 	i2s_config.sample_freq=AUDIO_SAMPLE_RATE;
 	i2s_config.dma_trans_count = gpio_read(IOX_B_B) ^ GBC_MAIN_APP ? PCM_FRAME_COUNT : AUDIO_SAMPLES;
 	i2s_config.mclk_enabled = (USE_MCLK != 0);
-	// Keep MCLK aligned with codec clock tree (NDAC=1, MDAC=2, DOSR=128 -> 256fs).
-	i2s_config.mclk_mult = 512;
+	// Keep MCLK aligned with codec clock tree in setup_dac().
+	i2s_config.mclk_mult = DAC_MCLK_FS_RATIO;
 
 	i2s_volume(&i2s_config,0);
 	i2s_init(&i2s_config);

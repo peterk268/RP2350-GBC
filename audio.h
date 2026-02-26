@@ -4,6 +4,7 @@
 // MCLK use is cleaner and more robust, need additional pin tho but that's fine.
 // Without MCLK, headphone detect doesn't work for some reason.
 #define USE_MCLK 1
+#define DAC_MCLK_FS_RATIO 256 // target MCLK = 256 * Fs
 #define DAC_BCLK_FS_RATIO 32  // valid values: 32 or 64
 
 uint16_t current_volume_level = 0;
@@ -279,10 +280,15 @@ void setup_dac() {
     sleep_ms(20); // Wait for reset to complete
 
 #if USE_MCLK
-    // MCLK-based clocking: match i2s_config.mclk_mult = 256
-    // Fs = MCLK / (NDAC * MDAC * DOSR) = MCLK / (1 * 2 * 128) = MCLK / 256
-    dac_i2c_write(0, 0x0b, 0x81); // nDAC_VAL
-    dac_i2c_write(0, 0x0c, 0x82); // mDAC_VAL
+    // MCLK-based clocking.
+    // Fs = MCLK / (NDAC * MDAC * DOSR)
+    // For 256fs MCLK, use NDAC=1, MDAC=2, DOSR=128.
+#if (DAC_MCLK_FS_RATIO == 256)
+    dac_i2c_write(0, 0x0b, 0x81); // NDAC = 1 (powered)
+    dac_i2c_write(0, 0x0c, 0x82); // MDAC = 2 (powered)
+#else
+#error "Unsupported DAC_MCLK_FS_RATIO. Add matching NDAC/MDAC/DOSR settings."
+#endif
     dac_i2c_write(0, 0x0d, 0x00); // DOSR default
     dac_i2c_write(0, 0x0e, 0x80); // DOSR default
 #else

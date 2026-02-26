@@ -137,8 +137,10 @@ static enum {
 } run_mode = MODE_NORMAL;
 
 // MARK: - Overclock
-// Not stable. Unpredictable and heat is a problem. 300MHz is most I'll go.
+// Not stable. Unpredictable and heat is a problem. 320MHz is most I'll go.
 #define SAFE_OVERCLOCK 1
+// Keep normal clock as an integer multiple of 2*DPI_PCLK (2*20MHz = 40MHz).
+#define SYS_CLOCK_NORMAL_KHZ 320000u
 void overclock_cpu(bool enable) {
     if (enable) {
 #if !SAFE_OVERCLOCK
@@ -152,7 +154,7 @@ void overclock_cpu(bool enable) {
         sleep_ms(10);
     } else {
         // Going down: lower frequency first, then voltage
-        set_sys_clock_khz(300 * 1000, true);
+        set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);
         sleep_ms(10);
 
         vreg_set_voltage(VREG_VOLTAGE_1_15);
@@ -161,7 +163,7 @@ void overclock_cpu(bool enable) {
 }
 
 // Clocking CPU to 180MHz with frame skip on for 30fps gameplay with reduced sound quality.
-// More advanced GBC games will not reach 60fps with this and need 300MHz.
+// More advanced GBC games will not reach 60fps with this and need normal high clock.
 // This does save good power, up to 100mW which equates to ~1.75h more battery life at mid level consumption,
 //  so it's useful in a low power mode for non-demanding games like Pokemon.
 // VREG_VOLTAGE_DEFAULT is 1.1V and gave the best power consumption. Going lower doesn't help.
@@ -179,7 +181,7 @@ void underclock_cpu(bool enable) {
         vreg_set_voltage(VREG_VOLTAGE_1_15);
         sleep_ms(10);
 
-        set_sys_clock_khz(300 * 1000, true);
+        set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);
         sleep_ms(10);
 	}
 }
@@ -246,7 +248,7 @@ void underclock_cpu_for_psram(bool enable) {
         vreg_set_voltage(VREG_VOLTAGE_1_15);
         sleep_ms(10);
 
-        set_sys_clock_khz(300 * 1000, true);
+        set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);
         sleep_ms(10);
 	}
 }

@@ -579,6 +579,17 @@ static drmp3_bool32 mp3_stream_seek(void *pUserData, int offset, drmp3_seek_orig
     return DRMP3_FALSE;
 }
 
+static inline void mp3_zero_pcm_tail(int16_t *pcm,
+                                     drmp3_uint64 frames_decoded,
+                                     uint32_t frame_capacity,
+                                     uint8_t channels) {
+    if (!pcm || frames_decoded >= frame_capacity) return;
+
+    size_t start = (size_t)frames_decoded * channels;
+    size_t total = (size_t)frame_capacity * channels;
+    memset(pcm + start, 0, (total - start) * sizeof(int16_t));
+}
+
 
 // ===================================================================
 // Playlist storage (HEAP-BASED, in PSRAM via malloc)
@@ -1125,7 +1136,11 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
 
     // First buffer: decode & start DMA
-    drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_play);
+    drmp3_uint64 frames_play = drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_play);
+    if (frames_play > 0) {
+        played_frames += frames_play;
+    }
+    mp3_zero_pcm_tail(buf_play, frames_play, PCM_FRAME_COUNT, channels);
     i2s_dma_write(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_play));
 
     // More prefill before second buffer
@@ -1134,7 +1149,11 @@ static play_result_t mp3_play_single_track(const char *filepath,
     }
 
     // Decode second buffer into buf_ready
-    drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_ready);
+    drmp3_uint64 frames_ready = drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_ready);
+    if (frames_ready > 0) {
+        played_frames += frames_ready;
+    }
+    mp3_zero_pcm_tail(buf_ready, frames_ready, PCM_FRAME_COUNT, channels);
 
     // Playback state
     // audio_mode = headphones_present ? AUDIO_HP_ONLY : AUDIO_SPK_ONLY;
@@ -1143,7 +1162,15 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
     printf("Starting MP3 stream...\n");
 
-    bool decoded_next_chunk = false;
+    drmp3_uint64 frames_fill = drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_fill);
+    if (frames_fill > 0) {
+        played_frames += frames_fill;
+    }
+    mp3_zero_pcm_tail(buf_fill, frames_fill, PCM_FRAME_COUNT, channels);
+
+    bool ready_chunk_valid = (frames_ready > 0);
+    bool decoded_next_chunk = (frames_fill > 0);
+    uint32_t replayed_chunk_count = 0;
 
     bool next_track_requested = false;
     bool prev_track_requested = false;
@@ -1204,13 +1231,64 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 mp3_refill(stream);
             }
 
-            // Decode into buf_fill only if we haven’t yet and not paused
+            static uint64_t last_i2s = 0;
+            uint64_t i2s_now = time_us_64();
+
+            // If the fill buffer is decoded while ready is empty, promote it.
+            if (!ready_chunk_valid && decoded_next_chunk) {
+                int16_t *tmp = buf_ready;
+                buf_ready = buf_fill;
+                buf_fill = tmp;
+                ready_chunk_valid = true;
+                decoded_next_chunk = false;
+            }
+
+            const uint16_t *dma_src = (const uint16_t *)silence_buf;
+            bool rotate_audio_buffers = false;
+            bool replay_previous_chunk = false;
+            if (!paused) {
+                if (ready_chunk_valid) {
+                    dma_src = (const uint16_t *)buf_ready;
+                    rotate_audio_buffers = true;
+                } else {
+                    // Decoder fell behind: replay last known-good audio.
+                    dma_src = (const uint16_t *)buf_play;
+                    replay_previous_chunk = true;
+                }
+            }
+
+            if (i2s_dma_write_non_blocking(&i2s_config, dma_src)) {
+                if (rotate_audio_buffers) {
+                    // DMA accepted buf_ready and started playing it.
+                    int16_t *old = buf_play;
+                    buf_play  = buf_ready;   // now playing
+                    buf_ready = buf_fill;    // next ready
+                    buf_fill  = old;         // to be filled
+
+                    ready_chunk_valid = decoded_next_chunk;
+                    decoded_next_chunk = false;  // decode again on next loop
+                }
+                last_i2s = i2s_now;
+
+                if (replay_previous_chunk) {
+                    replayed_chunk_count++;
+                    // Prioritize ring-buffer refill and decode catch-up over UI work on underrun.
+                    for (int i = 0; i < 4 && stream->count < (MP3_STREAM_BUF_SIZE / 2) && !stream->eof; i++) {
+                        mp3_refill(stream);
+                    }
+                    continue;
+                }
+            }
+
+            // Decode into buf_fill only when we actually need another chunk.
             if (!decoded_next_chunk && !paused) {
                 drmp3_uint64 frames =
                     drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_fill);
 
-                if (frames > 0)
+                if (frames > 0) {
                     played_frames += frames;
+                    mp3_zero_pcm_tail(buf_fill, frames, PCM_FRAME_COUNT, channels);
+                }
 
                 if (frames == 0) {
                     if (stream->eof) {
@@ -1243,6 +1321,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             printf("Repeat ONE complete -> Repeat OFF\n");
                         }
 
+                        ready_chunk_valid = false;
                         decoded_next_chunk = false;
                         continue;
                     }
@@ -1250,22 +1329,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 } else {
                     decoded_next_chunk = true;
                 }
-            }
-
-            static uint64_t last_i2s = 0;
-            uint64_t i2s_now = time_us_64();
-            if (i2s_dma_write_non_blocking(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_ready))) {
-                // Only rotate audio buffers when we’re actually queuing AUDIO, not silence.
-                if (!paused) {
-                    // DMA accepted buf_ready and started playing it.
-                    int16_t *old = buf_play;
-                    buf_play  = buf_ready;   // now playing
-                    buf_ready = buf_fill;    // next ready
-                    buf_fill  = old;         // to be filled
-
-                    decoded_next_chunk = false;  // decode again on next loop
-                }
-                last_i2s = i2s_now;
             }
             // i2s_dma_write(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_ready));
 
@@ -1499,7 +1562,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             int step = adaptive_seek_step_ms(held_ms);
                             printf("Rewind -%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
-                            seek_relative_seconds(stream, mp3, -step, mp3->sampleRate, &decoded_next_chunk);
+                            if (seek_relative_seconds(stream, mp3, -step, mp3->sampleRate, &decoded_next_chunk)) {
+                                ready_chunk_valid = false;
+                            }
                             left_last_seek_us = now_us;
                         }
                     }
@@ -1535,7 +1600,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             int step = adaptive_seek_step_ms(held_ms);
                             printf("Fast-forward +%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
-                            seek_relative_seconds(stream, mp3, step, mp3->sampleRate, &decoded_next_chunk);
+                            if (seek_relative_seconds(stream, mp3, step, mp3->sampleRate, &decoded_next_chunk)) {
+                                ready_chunk_valid = false;
+                            }
                             right_last_seek_us = now_us;
                         }
                     }
@@ -1768,6 +1835,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
     }
 
 END_PLAYBACK:
+    if (replayed_chunk_count > 0) {
+        printf("MP3 underrun recovery events: %lu\n", (unsigned long)replayed_chunk_count);
+    }
+
     // If we exited the loop before hitting inactivity restore, bring LCD back now.
     if (!g_mp3_inactive && prev_inactive) {
         start_lcd(true, false);

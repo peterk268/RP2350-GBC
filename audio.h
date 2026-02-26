@@ -279,6 +279,8 @@ void setup_dac() {
     sleep_ms(20); // Wait for reset to complete
 
 #if USE_MCLK
+    // MCLK-based clocking: match i2s_config.mclk_mult = 256
+    // Fs = MCLK / (NDAC * MDAC * DOSR) = MCLK / (1 * 2 * 128) = MCLK / 256
     dac_i2c_write(0, 0x0b, 0x81); // nDAC_VAL
     dac_i2c_write(0, 0x0c, 0x82); // mDAC_VAL
     dac_i2c_write(0, 0x0d, 0x00); // DOSR default

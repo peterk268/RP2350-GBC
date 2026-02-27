@@ -44,6 +44,8 @@
 #define BATTERY_TIMER_INTERVAL_MS 10000
 #define BAT_MONITOR_DEBUG 0
 #define BAT_HAS_PERCENT_ISSUES 0
+// 1: show battery rate as percent per hour in settings screen, 0: show signed current in mA.
+#define SHOW_BAT_RATE_AS_PERCENT_PER_HOUR 1
 
 #define ENABLE_PSRAM 1
 #define ROM_FLASH 0

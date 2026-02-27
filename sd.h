@@ -1435,14 +1435,24 @@ void draw_settings(lv_obj_t *list) {
     lv_label_set_text(bat_title, bat_title_text);
     lv_obj_align(bat_title, LV_ALIGN_TOP_MID, 0, y_offset);
 
-    // Second line: signed current + capacity
+    // Second line: battery rate/current + capacity
     lv_obj_t *bat_line2 = lv_label_create(list);
     lv_obj_set_style_text_color(bat_line2, normal_color, 0);
 
     char line2_text[48];
+#if SHOW_BAT_RATE_AS_PERCENT_PER_HOUR
+    float rate_percent_per_hour = 0.0f;
+    if (full_cap > 0) {
+        rate_percent_per_hour = ((float)current_mA * 100.0f) / (float)full_cap;
+    }
+    snprintf(line2_text, sizeof(line2_text),
+            "%+.1f%%/h  %d/%dmAh",
+            rate_percent_per_hour, remaining_cap, full_cap);
+#else
     snprintf(line2_text, sizeof(line2_text),
             "%+dmA  %d/%dmAh",
             current_mA, remaining_cap, full_cap);
+#endif
 
     lv_label_set_text(bat_line2, line2_text);
     lv_obj_align_to(bat_line2, bat_title, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);

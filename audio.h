@@ -303,7 +303,7 @@ void setup_dac() {
     dac_i2c_write(0, 0x74, 0x00); // VOL/MICDETECT SAR ADC
     dac_i2c_write(0, 0x43, 0x80); // Headset detection enabled
 
-    set_3d(0x20, 0x00); // Enable 3D sound with slight depth
+    set_3d(0x15, 0x00); // Enable 3D sound with slight depth
 
     // --- Power up phase ---
     // Power on DAC and mute

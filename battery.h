@@ -555,6 +555,7 @@ void set_sleep_current_mA(int16_t sleep_current_mA) {
 }
 
 void config_battery_monitor() {
+#if ENABLE_BAT_MONITORING
     printf("Configuring Battery Monitor...\n");
 
     // You must unseal in order to read values:
@@ -578,6 +579,7 @@ void config_battery_monitor() {
     }
 
     bq_seal();
+#endif
 }
 
 // MARK: - Sleep

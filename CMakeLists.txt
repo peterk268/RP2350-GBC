@@ -53,6 +53,8 @@ add_executable(RP2350_GBC
             ext/i2s/i2s.c
 )
 
+pico_set_linker_script(RP2350_GBC ${CMAKE_CURRENT_LIST_DIR}/linker_custom.ld)
+
 add_subdirectory(ext/FatFs_SPI)
 add_subdirectory(ext/lvgl)
 add_subdirectory(ext/sparkfun_pico)
@@ -92,7 +94,8 @@ target_compile_definitions(RP2350_GBC PRIVATE
         PICO_PRINTF_SUPPORT_LONG_LONG=1
         PICO_PRINTF_SUPPORT_PTRDIFF_T=0
         
-        PICO_STACK_SIZE=0x1000
+        PICO_STACK_SIZE=0x2000
+        PICO_CORE1_STACK_SIZE=0x1000
         PICO_USE_STACK_GUARDS=1
         # SCAN VIDEO
         PICO_SCANVIDEO_ENABLE_DEN_PIN=1

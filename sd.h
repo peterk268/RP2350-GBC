@@ -75,8 +75,8 @@ typedef enum {
  * @return 0 on success, non-zero on error
  */
 int build_save_path(const char *rom_filename, save_type_t type, int slot, char *out_path, size_t out_path_size) {
-    char folder[256];
-    char folder_name[256];
+    static char folder[256];
+    static char folder_name[256];
 
     // Copy ROM filename and strip extension
     strncpy(folder_name, rom_filename, sizeof(folder_name));
@@ -84,7 +84,7 @@ int build_save_path(const char *rom_filename, save_type_t type, int slot, char *
     char *dot = strrchr(folder_name, '.');
     if(dot) *dot = 0;
 
-	char safe_name[256];
+	static char safe_name[256];
 	const char *src = folder_name;  // folder_name has extension stripped
 	char *dst = safe_name;
 	while(*src && (dst - safe_name) < sizeof(safe_name)-1) {

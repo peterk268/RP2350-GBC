@@ -22,8 +22,16 @@ specific language governing permissions and limitations under the License.
 //
 #include "spi.h"
 
-static bool irqChannel1 = true;
+static bool irqChannel1 = false;
 static bool irqShared = true;
+
+static inline void clear_dma_irq_request(spi_t *pSPI) {
+    if (irqChannel1) {
+        dma_hw->ints1 = 1u << pSPI->rx_dma;
+    } else {
+        dma_hw->ints0 = 1u << pSPI->rx_dma;
+    }
+}
 
 void spi_irq_handler(spi_t *pSPI) {
     if (irqChannel1) {
@@ -73,8 +81,8 @@ bool spi_transfer(spi_t *pSPI, const uint8_t *tx, uint8_t *rx, size_t length) {
         rx = &dummy;
         channel_config_set_write_increment(&pSPI->rx_dma_cfg, false);
     }
-    // Clear the interrupt request.
-    dma_hw->ints0 = 1u << pSPI->rx_dma;
+    // Clear any stale interrupt request.
+    clear_dma_irq_request(pSPI);
 
     dma_channel_configure(pSPI->tx_dma, &pSPI->tx_dma_cfg,
                           &spi_get_hw(pSPI->hw_inst)->dr,  // write address
@@ -95,12 +103,24 @@ bool spi_transfer(spi_t *pSPI, const uint8_t *tx, uint8_t *rx, size_t length) {
 
     /* Timeout 1 sec */
     uint32_t timeOut = 1000;
-    /* Wait until master completes transfer or time out has occured. */
-    bool rc = sem_acquire_timeout_ms(
-        &pSPI->sem, timeOut);  // Wait for notification from ISR
+    bool rc = true;
+    if (pSPI->dma_use_irq) {
+        // Wait for notification from DMA ISR.
+        rc = sem_acquire_timeout_ms(&pSPI->sem, timeOut);
+    } else {
+        // Fallback path when DMA IRQ line is already owned elsewhere.
+        absolute_time_t timeout_time = make_timeout_time_ms(timeOut);
+        while (dma_channel_is_busy(pSPI->tx_dma) ||
+               dma_channel_is_busy(pSPI->rx_dma)) {
+            if (!(0 < absolute_time_diff_us(get_absolute_time(), timeout_time))) {
+                rc = false;
+                break;
+            }
+            tight_loop_contents();
+        }
+    }
     if (!rc) {
-        // If the timeout is reached the function will return false
-        DBG_PRINTF("Notification wait timed out in %s\n", __FUNCTION__);
+        DBG_PRINTF("DMA completion wait timed out in %s\n", __FUNCTION__);
         return false;
     }
     // Shouldn't be necessary:
@@ -195,21 +215,39 @@ bool my_spi_init(spi_t *pSPI) {
         // Configure the processor to run dma_handler() when DMA IRQ 0/1 is
         // asserted:
         int irq = irqChannel1 ? DMA_IRQ_1 : DMA_IRQ_0;
+        irq_handler_t existing_exclusive = irq_get_exclusive_handler(irq);
+        pSPI->dma_use_irq = true;
+
         if (irqShared) {
-            irq_add_shared_handler(
-                irq, pSPI->dma_isr,
-                PICO_SHARED_IRQ_HANDLER_DEFAULT_ORDER_PRIORITY);
+            if (existing_exclusive && existing_exclusive != pSPI->dma_isr) {
+                DBG_PRINTF("SPI DMA: IRQ%d has exclusive handler, using polling wait\n",
+                           irqChannel1 ? 1 : 0);
+                pSPI->dma_use_irq = false;
+            } else if (!(existing_exclusive == pSPI->dma_isr)) {
+                irq_add_shared_handler(
+                    irq, pSPI->dma_isr,
+                    PICO_SHARED_IRQ_HANDLER_DEFAULT_ORDER_PRIORITY);
+            }
         } else {
-            irq_set_exclusive_handler(irq, pSPI->dma_isr);
+            if (irq_has_shared_handler(irq) ||
+                (existing_exclusive && existing_exclusive != pSPI->dma_isr)) {
+                DBG_PRINTF("SPI DMA: IRQ%d busy, using polling wait\n",
+                           irqChannel1 ? 1 : 0);
+                pSPI->dma_use_irq = false;
+            } else if (!(existing_exclusive == pSPI->dma_isr)) {
+                irq_set_exclusive_handler(irq, pSPI->dma_isr);
+            }
         }
 
-        // Tell the DMA to raise IRQ line 0/1 when the channel finishes a block
-        if (irqChannel1) {
-            dma_channel_set_irq1_enabled(pSPI->rx_dma, true);
-        } else {
-            dma_channel_set_irq0_enabled(pSPI->rx_dma, true);
+        if (pSPI->dma_use_irq) {
+            // Tell DMA to raise IRQ line 0/1 when RX channel finishes a block.
+            if (irqChannel1) {
+                dma_channel_set_irq1_enabled(pSPI->rx_dma, true);
+            } else {
+                dma_channel_set_irq0_enabled(pSPI->rx_dma, true);
+            }
+            irq_set_enabled(irq, true);
         }
-        irq_set_enabled(irq, true);
         LED_INIT();
         pSPI->initialized = true;
         spi_unlock(pSPI);

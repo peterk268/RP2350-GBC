@@ -49,6 +49,7 @@ typedef struct {
     dma_channel_config tx_dma_cfg;
     dma_channel_config rx_dma_cfg;
     irq_handler_t dma_isr;
+    bool dma_use_irq;
     bool initialized;  
     semaphore_t sem;
     mutex_t mutex;    

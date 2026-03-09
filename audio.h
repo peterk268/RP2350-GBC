@@ -19,7 +19,7 @@ void dac_i2c_read(uint8_t page, uint8_t reg, uint8_t *data, size_t length);
 
 #define ADC_MIN_CLIP   4     // below this → treat as 0
 #define ADC_MAX_CLIP   4050   // above this → treat as full scale
-#define DAC_MAX_VOL    100 // 127 is max
+#define DAC_MAX_VOL    90 // 127 is max
 #define MUTE_THRESH     1
 #define UNMUTE_THRESH   12
 #define USE_LINEAR_VOLUME_SCALING 0

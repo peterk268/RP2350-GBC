@@ -23,11 +23,9 @@
 //   380 MHz   |      17     |    -1.00%      |     15    |   +3.08%
 //   400 MHz   |      18     |    -1.58%      |     16    |   +1.72%
 //
-// 360MHz is currently used. Better for 44.1kHz (primary GBC audio rate) than 320MHz.
-// 340MHz would give the best balance across both rates if gaming performance allows.
+// 340MHz is currently used (17x20MHz, DPI-compatible). Best balanced option across both rates.
 //
-// NOTE: integer-locking MUST round to nearest integer, not floor. The divider_x256 formula
-// already rounds, but & 0xFFFF00 truncates — must add 0x80 first to preserve rounding.
+// NOTE: integer-locking MUST round to nearest integer, not floor. See integer-locked code path.
 #define I2S_INTEGER_LOCKED_CLOCKS 1
 
 static inline uint32_t i2s_get_divider_x256_for_hz(uint32_t target_sm_hz) {
@@ -55,12 +53,15 @@ static inline void i2s_configure_clocks(i2s_config_t *i2s_config, uint32_t sampl
         uint32_t mclk_sm_hz = i2s_config->mclk_mult * sample_freq * MCLK_SM_CYCLES_PER_CLOCK;
 
 #if I2S_INTEGER_LOCKED_CLOCKS
-        // +0x80 rounds to nearest integer before masking off the fractional byte.
-        // Without it, floor rounding is used — fine when frac < 0.5 (e.g. 320MHz)
-        // but wrong when frac >= 0.5 (e.g. 360MHz gives div 15 instead of 16 for 44.1kHz,
-        // producing 46875 Hz instead of 43945 Hz — a 6.3% pitch error).
-        uint32_t mclk_div_x256 = (i2s_get_divider_x256_for_hz(mclk_sm_hz) + 0x80u) & 0xFFFF00u;
-        if (mclk_div_x256 < 256u) mclk_div_x256 = 256u;
+        // Compute integer divisor directly with round-to-nearest, then shift to Q8 format.
+        // This avoids the root cause: i2s_get_divider_x256_for_hz() returns a rounded Q8 value,
+        // but masking with & 0xFFFF00 then truncates (floors) the fraction — undoing the rounding
+        // when frac >= 0.5. Computing the integer divisor in one step avoids that entirely.
+        uint32_t sys_hz = clock_get_hz(clk_sys);
+        uint32_t int_div = (sys_hz + mclk_sm_hz / 2u) / mclk_sm_hz; // round(sys_hz / mclk_sm_hz)
+        if (int_div < 1u) int_div = 1u;
+        if (int_div > 0xFFFFu) int_div = 0xFFFFu;
+        uint32_t mclk_div_x256 = int_div << 8;
 #else
         uint32_t mclk_div_x256 = i2s_get_divider_x256_for_hz(mclk_sm_hz);
 #endif

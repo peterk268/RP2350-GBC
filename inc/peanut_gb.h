@@ -109,6 +109,11 @@
 # define PEANUT_FULL_GBC_SUPPORT 1
 #endif
 
+/* Optional hint called in gb_run_frame() every CPU step. */
+#ifndef PEANUT_GB_USE_TIGHT_LOOP_HINT
+# define PEANUT_GB_USE_TIGHT_LOOP_HINT 0
+#endif
+
 /* Only include function prototypes. At least one file must *not* have this
  * defined. */
 // #define PEANUT_GB_HEADER_ONLY
@@ -312,6 +317,22 @@
 #  define PGB_LIKELY(expr) (expr)
 # endif
 #endif /* !defined(PGB_LIKELY) */
+
+#if !defined(PGB_HOT)
+# if defined(__GNUC__) || defined(__clang__)
+#  define PGB_HOT __attribute__((hot))
+# else
+#  define PGB_HOT
+# endif
+#endif
+
+#if !defined(PGB_FORCE_INLINE)
+# if defined(__GNUC__) || defined(__clang__)
+#  define PGB_FORCE_INLINE static inline __attribute__((always_inline))
+# else
+#  define PGB_FORCE_INLINE static inline
+# endif
+#endif
 
 #if PEANUT_GB_USE_INTRINSICS
 /* If using MSVC, only enable intrinsics for x86 platforms*/
@@ -735,6 +756,8 @@ struct gb_s
 		uint8_t BGPaletteID;
 		uint8_t OAMPaletteInc;
 		uint8_t BGPaletteInc;
+		uint64_t paletteDirtyMask;
+		uint32_t paletteEpoch;
 		uint8_t dmaActive;
 		uint8_t dmaMode;
 		uint8_t dmaSize;
@@ -780,6 +803,11 @@ struct gb_s
 
 		/* Implementation defined data. Set to NULL if not required. */
 		void *priv;
+
+		/* Optional direct-memory fast path.
+		 * If set, ROM/RAM reads in hot CPU paths bypass callback calls. */
+		const uint8_t *rom;
+		uint8_t *cart_ram;
 	} direct;
 };
 
@@ -818,11 +846,41 @@ struct gb_s
 #define IO_STAT_MODE_LCD_DRAW		3
 #define IO_STAT_MODE_VBLANK_OR_TRANSFER_MASK 0x1
 
+PGB_FORCE_INLINE uint8_t __gb_rom_read_fast(struct gb_s *gb, uint_fast32_t addr)
+{
+	const uint8_t *rom = gb->direct.rom;
+	if(PGB_LIKELY(rom != NULL))
+		return rom[addr];
+
+	return gb->gb_rom_read(gb, addr);
+}
+
+PGB_FORCE_INLINE uint8_t __gb_cart_ram_read_fast(struct gb_s *gb, uint_fast32_t addr)
+{
+	uint8_t *cart_ram = gb->direct.cart_ram;
+	if(PGB_LIKELY(cart_ram != NULL))
+		return cart_ram[addr];
+
+	return gb->gb_cart_ram_read(gb, addr);
+}
+
+PGB_FORCE_INLINE void __gb_cart_ram_write_fast(struct gb_s *gb, uint_fast32_t addr, uint8_t val)
+{
+	uint8_t *cart_ram = gb->direct.cart_ram;
+	if(PGB_LIKELY(cart_ram != NULL))
+	{
+		cart_ram[addr] = val;
+		return;
+	}
+
+	gb->gb_cart_ram_write(gb, addr, val);
+}
+
 /**
  * Internal function used to read bytes.
  * addr is host platform endian.
  */
-uint8_t __gb_read(struct gb_s *gb, uint16_t addr)
+PGB_HOT uint8_t __gb_read(struct gb_s *gb, uint16_t addr)
 {
 	switch(PEANUT_GB_GET_MSN16(addr))
 	{
@@ -838,17 +896,17 @@ uint8_t __gb_read(struct gb_s *gb, uint16_t addr)
 	case 0x1:
 	case 0x2:
 	case 0x3:
-		return gb->gb_rom_read(gb, addr);
+		return __gb_rom_read_fast(gb, addr);
 
 	case 0x4:
 	case 0x5:
 	case 0x6:
 	case 0x7:
 		if(gb->mbc == 1 && gb->cart_mode_select)
-			return gb->gb_rom_read(gb,
+			return __gb_rom_read_fast(gb,
 					       addr + ((gb->selected_rom_bank & 0x1F) - 1) * ROM_BANK_SIZE);
 		else
-			return gb->gb_rom_read(gb, addr + (gb->selected_rom_bank - 1) * ROM_BANK_SIZE);
+			return __gb_rom_read_fast(gb, addr + (gb->selected_rom_bank - 1) * ROM_BANK_SIZE);
 
 	case 0x8:
 	case 0x9:
@@ -869,16 +927,16 @@ uint8_t __gb_read(struct gb_s *gb, uint16_t addr)
 			{
 				/* Only 9 bits are available in address. */
 				addr &= 0x1FF;
-				return gb->gb_cart_ram_read(gb, addr);
+				return __gb_cart_ram_read_fast(gb, addr);
 			}
 			else if((gb->cart_mode_select || gb->mbc != 1) &&
 					gb->cart_ram_bank < gb->num_ram_banks)
 			{
-				return gb->gb_cart_ram_read(gb, addr - CART_RAM_ADDR +
+				return __gb_cart_ram_read_fast(gb, addr - CART_RAM_ADDR +
 							    (gb->cart_ram_bank * CRAM_BANK_SIZE));
 			}
 			else
-				return gb->gb_cart_ram_read(gb, addr - CART_RAM_ADDR);
+				return __gb_cart_ram_read_fast(gb, addr - CART_RAM_ADDR);
 		}
 
 		return 0xFF;
@@ -984,10 +1042,101 @@ uint8_t __gb_read(struct gb_s *gb, uint16_t addr)
 	PGB_UNREACHABLE();
 }
 
+/* Fast path for instruction and immediate fetches from PC.
+ * Most fetches are from ROM, so avoid full bus decode in that case. */
+PGB_FORCE_INLINE uint8_t __gb_read_pc(struct gb_s *gb)
+{
+	const uint16_t addr = gb->cpu_reg.pc.reg++;
+
+	if(PGB_LIKELY(addr < VRAM_ADDR))
+	{
+		if(addr < ROM_N_ADDR)
+		{
+			if(gb->hram_io[IO_BOOT] == 0 && addr < 0x0100)
+				return gb->gb_bootrom_read(gb, addr);
+			return __gb_rom_read_fast(gb, addr);
+		}
+
+		if(gb->mbc == 1 && gb->cart_mode_select)
+			return __gb_rom_read_fast(gb,
+				addr + ((gb->selected_rom_bank & 0x1F) - 1) * ROM_BANK_SIZE);
+
+		return __gb_rom_read_fast(gb, addr + (gb->selected_rom_bank - 1) * ROM_BANK_SIZE);
+	}
+
+	if(PGB_LIKELY(addr >= WRAM_0_ADDR && addr < ECHO_ADDR))
+	{
+#if PEANUT_FULL_GBC_SUPPORT
+		if(gb->cgb.cgbMode && addr >= WRAM_1_ADDR)
+			return gb->wram[addr - gb->cgb.wramBankOffset];
+#endif
+		return gb->wram[addr - WRAM_0_ADDR];
+	}
+
+	if(PGB_LIKELY(addr >= ECHO_ADDR && addr < OAM_ADDR))
+	{
+#if PEANUT_FULL_GBC_SUPPORT
+		if(addr >= 0xF000)
+			return gb->wram[(addr - 0x2000) - gb->cgb.wramBankOffset];
+#endif
+		return gb->wram[addr - ECHO_ADDR];
+	}
+
+	if(PGB_LIKELY(addr >= HRAM_ADDR))
+		return gb->hram_io[addr - IO_ADDR];
+
+	return __gb_read(gb, addr);
+}
+
+/* Fast path for non-incrementing PC reads (e.g., upper byte of JP/CALL). */
+PGB_FORCE_INLINE uint8_t __gb_peek_pc(struct gb_s *gb)
+{
+	const uint16_t addr = gb->cpu_reg.pc.reg;
+
+	if(PGB_LIKELY(addr < VRAM_ADDR))
+	{
+		if(addr < ROM_N_ADDR)
+		{
+			if(gb->hram_io[IO_BOOT] == 0 && addr < 0x0100)
+				return gb->gb_bootrom_read(gb, addr);
+			return __gb_rom_read_fast(gb, addr);
+		}
+
+		if(gb->mbc == 1 && gb->cart_mode_select)
+			return __gb_rom_read_fast(gb,
+				addr + ((gb->selected_rom_bank & 0x1F) - 1) * ROM_BANK_SIZE);
+
+		return __gb_rom_read_fast(gb, addr + (gb->selected_rom_bank - 1) * ROM_BANK_SIZE);
+	}
+
+	if(PGB_LIKELY(addr >= WRAM_0_ADDR && addr < ECHO_ADDR))
+	{
+#if PEANUT_FULL_GBC_SUPPORT
+		if(gb->cgb.cgbMode && addr >= WRAM_1_ADDR)
+			return gb->wram[addr - gb->cgb.wramBankOffset];
+#endif
+		return gb->wram[addr - WRAM_0_ADDR];
+	}
+
+	if(PGB_LIKELY(addr >= ECHO_ADDR && addr < OAM_ADDR))
+	{
+#if PEANUT_FULL_GBC_SUPPORT
+		if(addr >= 0xF000)
+			return gb->wram[(addr - 0x2000) - gb->cgb.wramBankOffset];
+#endif
+		return gb->wram[addr - ECHO_ADDR];
+	}
+
+	if(PGB_LIKELY(addr >= HRAM_ADDR))
+		return gb->hram_io[addr - IO_ADDR];
+
+	return __gb_read(gb, addr);
+}
+
 /**
  * Internal function used to write bytes.
  */
-void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
+PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 {
 	switch(PEANUT_GB_GET_MSN16(addr))
 	{
@@ -1117,7 +1266,7 @@ void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 				val &= 0x0F;
 				/* Upper nibble is set to high. */
 				val |= 0xF0;
-				gb->gb_cart_ram_write(gb, addr, val);
+				__gb_cart_ram_write_fast(gb, addr, val);
 			}
 			/* If cart has RAM, use this. If MBC1, only the first
 			 * RAM bank can be written to if the advanced banking
@@ -1125,11 +1274,11 @@ void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 			else if(((gb->mbc == 1 && gb->cart_mode_select) || gb->mbc != 1) &&
 					gb->cart_ram_bank < gb->num_ram_banks)
 			{
-				gb->gb_cart_ram_write(gb,
+				__gb_cart_ram_write_fast(gb,
 					addr - CART_RAM_ADDR + (gb->cart_ram_bank * CRAM_BANK_SIZE), val);
 			}
 			else if(gb->num_ram_banks)
-				gb->gb_cart_ram_write(gb, addr - CART_RAM_ADDR, val);
+				__gb_cart_ram_write_fast(gb, addr - CART_RAM_ADDR, val);
 		}
 
 		return;
@@ -1388,12 +1537,22 @@ void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 			{  // Only transfer if dma is not active (=1) otherwise treat it as a termination
 				if(gb->cgb.cgbMode && (!gb->cgb.dmaMode))
 				{
-					for (int i = 0; i < (gb->cgb.dmaSize << 4); i++)
+					const int dma_len = (gb->cgb.dmaSize << 4);
+					const uint16_t dma_src = (gb->cgb.dmaSource & 0xFFF0);
+					const uint16_t dma_dst = ((gb->cgb.dmaDest & 0x1FF0) | 0x8000);
+					if(PGB_LIKELY((uint32_t)dma_dst + (uint32_t)dma_len <= CART_RAM_ADDR))
 					{
-						__gb_write(gb, ((gb->cgb.dmaDest & 0x1FF0) | 0x8000) + i, __gb_read(gb, (gb->cgb.dmaSource & 0xFFF0) + i));
+						uint8_t *dst = &gb->vram[dma_dst - gb->cgb.vramBankOffset];
+						for (int i = 0; i < dma_len; i++)
+							dst[i] = __gb_read(gb, dma_src + i);
 					}
-					gb->cgb.dmaSource += (gb->cgb.dmaSize << 4);
-					gb->cgb.dmaDest += (gb->cgb.dmaSize << 4);
+					else
+					{
+						for (int i = 0; i < dma_len; i++)
+							__gb_write(gb, dma_dst + i, __gb_read(gb, dma_src + i));
+					}
+					gb->cgb.dmaSource += dma_len;
+					gb->cgb.dmaDest += dma_len;
 					gb->cgb.dmaSize = 0;
 				}
 			}
@@ -1414,8 +1573,13 @@ void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 		/* CGB BG Palette*/
 		case 0x69:
 			gb->cgb.BGPalette[(gb->cgb.BGPaletteID & 0x3F)] = val;
-			fixPaletteTemp = (gb->cgb.BGPalette[(gb->cgb.BGPaletteID & 0x3E) + 1] << 8) + (gb->cgb.BGPalette[(gb->cgb.BGPaletteID & 0x3E)]);
-			gb->cgb.fixPalette[((gb->cgb.BGPaletteID & 0x3E) >> 1)] = ((fixPaletteTemp & 0x7C00) >> 10) | (fixPaletteTemp & 0x03E0) | ((fixPaletteTemp & 0x001F) << 10);  // swap Red and Blue
+			{
+				const uint8_t pal_idx = ((gb->cgb.BGPaletteID & 0x3E) >> 1);
+				fixPaletteTemp = (gb->cgb.BGPalette[(gb->cgb.BGPaletteID & 0x3E) + 1] << 8) + (gb->cgb.BGPalette[(gb->cgb.BGPaletteID & 0x3E)]);
+				gb->cgb.fixPalette[pal_idx] = ((fixPaletteTemp & 0x7C00) >> 10) | (fixPaletteTemp & 0x03E0) | ((fixPaletteTemp & 0x001F) << 10);  // swap Red and Blue
+				gb->cgb.paletteDirtyMask |= (1ull << pal_idx);
+			}
+			gb->cgb.paletteEpoch++;
 			if(gb->cgb.BGPaletteInc) gb->cgb.BGPaletteID = (++gb->cgb.BGPaletteID) & 0x3F;
 			return;
 
@@ -1428,8 +1592,13 @@ void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 		/* CGB OAM Palette*/
 		case 0x6B:
 			gb->cgb.OAMPalette[(gb->cgb.OAMPaletteID & 0x3F)] = val;
-			fixPaletteTemp = (gb->cgb.OAMPalette[(gb->cgb.OAMPaletteID & 0x3E) + 1] << 8) + (gb->cgb.OAMPalette[(gb->cgb.OAMPaletteID & 0x3E)]);
-			gb->cgb.fixPalette[0x20 + ((gb->cgb.OAMPaletteID & 0x3E) >> 1)] = ((fixPaletteTemp & 0x7C00) >> 10) | (fixPaletteTemp & 0x03E0) | ((fixPaletteTemp & 0x001F) << 10);  // swap Red and Blue
+			{
+				const uint8_t pal_idx = 0x20 + ((gb->cgb.OAMPaletteID & 0x3E) >> 1);
+				fixPaletteTemp = (gb->cgb.OAMPalette[(gb->cgb.OAMPaletteID & 0x3E) + 1] << 8) + (gb->cgb.OAMPalette[(gb->cgb.OAMPaletteID & 0x3E)]);
+				gb->cgb.fixPalette[pal_idx] = ((fixPaletteTemp & 0x7C00) >> 10) | (fixPaletteTemp & 0x03E0) | ((fixPaletteTemp & 0x001F) << 10);  // swap Red and Blue
+				gb->cgb.paletteDirtyMask |= (1ull << pal_idx);
+			}
+			gb->cgb.paletteEpoch++;
 			if(gb->cgb.OAMPaletteInc) gb->cgb.OAMPaletteID = (++gb->cgb.OAMPaletteID) & 0x3F;
 			return;
 
@@ -1452,10 +1621,10 @@ void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 	return;
 }
 
-uint8_t __gb_execute_cb(struct gb_s *gb)
+PGB_HOT uint8_t __gb_execute_cb(struct gb_s *gb)
 {
 	uint8_t inst_cycles;
-	uint8_t cbop = __gb_read(gb, gb->cpu_reg.pc.reg++);
+	uint8_t cbop = __gb_read_pc(gb);
 	uint8_t r = (cbop & 0x7);
 	uint8_t b = (cbop >> 3) & 0x7;
 	uint8_t d = (cbop >> 3) & 0x1;
@@ -1658,18 +1827,25 @@ static int compare_sprites(const struct sprite_data *const sd1, const struct spr
 }
 #endif
 
-void __gb_draw_line(struct gb_s *gb)
+PGB_HOT void __gb_draw_line(struct gb_s *gb)
 {
     // Latch LCDC and scroll/window registers once per scanline
     uint8_t lcdc_now      = gb->hram_io[IO_LCDC];
+    uint8_t ly            = gb->hram_io[IO_LY];
+#if PEANUT_FULL_GBC_SUPPORT
+    const uint8_t cgb_mode = gb->cgb.cgbMode;
+#endif
     bool bg_enable        = (lcdc_now & LCDC_BG_ENABLE) != 0;
     bool window_enable    = (lcdc_now & LCDC_WINDOW_ENABLE) != 0;
     uint8_t scx           = gb->hram_io[IO_SCX];
     uint8_t scy           = gb->hram_io[IO_SCY];
     uint8_t wx            = gb->hram_io[IO_WX];
     uint8_t wy            = gb->hram_io[IO_WY]; // IMPORTANT: use IO_WY
-
-    uint8_t pixels[160] = {0};
+    uint8_t pixels[160];
+#if PEANUT_FULL_GBC_SUPPORT
+    if (!cgb_mode)
+#endif
+        memset(pixels, 0, sizeof(pixels));
 
     // If LCD not initialised by front-end, don't render anything.
     if (gb->display.lcd_draw_line == NULL)
@@ -1680,14 +1856,14 @@ void __gb_draw_line(struct gb_s *gb)
         return;
 
 #if PEANUT_FULL_GBC_SUPPORT
-    uint8_t pixelsPrio[160] = {0};  // do these pixels have priority over OAM?
+    uint8_t pixelsPrio[160];  // cgb_mode path fully writes this before OAM uses it
 #endif
 
     // Interlace: if we're skipping this line, do NOT advance window_clear here.
     if (gb->direct.interlace)
     {
-        if ((!gb->display.interlace_count && (gb->hram_io[IO_LY] & 1) == 0) ||
-            ( gb->display.interlace_count && (gb->hram_io[IO_LY] & 1) == 1))
+        if ((!gb->display.interlace_count && (ly & 1) == 0) ||
+            ( gb->display.interlace_count && (ly & 1) == 1))
         {
             // No window_clear bookkeeping on skipped lines — real HW only advances
             // the window line when it actually draws.
@@ -1699,7 +1875,7 @@ void __gb_draw_line(struct gb_s *gb)
     // Background draw (latched SCX/SCY and LCDC)
     // -------------------------
 #if PEANUT_FULL_GBC_SUPPORT
-    if (gb->cgb.cgbMode || bg_enable)
+    if (cgb_mode || bg_enable)
 #else
     if (bg_enable)
 #endif
@@ -1708,7 +1884,7 @@ void __gb_draw_line(struct gb_s *gb)
         uint16_t bg_map, tile;
 
         // Calculate current background line to draw.
-        bg_y = gb->hram_io[IO_LY] + scy;
+        bg_y = ly + scy;
 
         // Select BG map using the latched LCDC
         bg_map = ((lcdc_now & LCDC_BG_MAP) ? VRAM_BMAP_2 : VRAM_BMAP_1)
@@ -1735,7 +1911,7 @@ void __gb_draw_line(struct gb_s *gb)
             tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
 
 #if PEANUT_FULL_GBC_SUPPORT
-        if (gb->cgb.cgbMode)
+        if (cgb_mode)
         {
             if (idxAtt & 0x08) tile += 0x2000; // VRAM bank 2
             if (idxAtt & 0x40) tile += 2 * (7 - py);
@@ -1746,7 +1922,7 @@ void __gb_draw_line(struct gb_s *gb)
         }
 
 		// fetch first tile row (must match HFLIP expectations)
-		if (gb->cgb.cgbMode && (idxAtt & 0x20)) {  // HFlip
+		if (cgb_mode && (idxAtt & 0x20)) {  // HFlip
 			t1 = gb->vram[tile] << px;
 			t2 = gb->vram[tile + 1] << px;
 		} else {
@@ -1771,7 +1947,7 @@ void __gb_draw_line(struct gb_s *gb)
                 else
                     tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
 
-                if (gb->cgb.cgbMode)
+                if (cgb_mode)
                 {
                     if (idxAtt & 0x08) tile += 0x2000; // VRAM bank 2
                     if (idxAtt & 0x40) tile += 2 * (7 - py);
@@ -1785,7 +1961,7 @@ void __gb_draw_line(struct gb_s *gb)
             }
 
             // copy background
-            if (gb->cgb.cgbMode && (idxAtt & 0x20))
+            if (cgb_mode && (idxAtt & 0x20))
             {  // Horizontal Flip
                 c = (((t1 & 0x80) >> 1) | (t2 & 0x80)) >> 6;
                 pixels[disp_x] = ((idxAtt & 0x07) << 2) + c;
@@ -1796,7 +1972,7 @@ void __gb_draw_line(struct gb_s *gb)
             else
             {
                 c = (t1 & 0x1) | ((t2 & 0x1) << 1);
-                if (gb->cgb.cgbMode)
+                if (cgb_mode)
                 {
                     pixels[disp_x] = ((idxAtt & 0x07) << 2) + c;
                     pixelsPrio[disp_x] = (idxAtt >> 7);
@@ -1851,11 +2027,10 @@ void __gb_draw_line(struct gb_s *gb)
     // -------------------------
     // Window draw (use latched WX/WY and advance window_clear only if any pixels drawn)
     // -------------------------
-    if (window_enable && gb->hram_io[IO_LY] >= wy && wx <= 166)
+    if (window_enable && ly >= wy && wx <= 166)
     {
         uint16_t win_line, tile;
         uint8_t disp_x, win_x, py, px, idx, t1, t2, end;
-        bool window_did_draw_any = false;
 
         // Window Map Address from latched LCDC
         win_line = (lcdc_now & LCDC_WINDOW_MAP) ? VRAM_BMAP_2 : VRAM_BMAP_1;
@@ -1878,7 +2053,7 @@ void __gb_draw_line(struct gb_s *gb)
             tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
 
 #if PEANUT_FULL_GBC_SUPPORT
-        if (gb->cgb.cgbMode)
+        if (cgb_mode)
         {
             if (idxAtt & 0x08) tile += 0x2000; // VRAM bank 2
             if (idxAtt & 0x40) tile += 2 * (7 - py);
@@ -1889,7 +2064,7 @@ void __gb_draw_line(struct gb_s *gb)
         }
 
         // fetch first tile
-        if (gb->cgb.cgbMode && (idxAtt & 0x20))
+        if (cgb_mode && (idxAtt & 0x20))
         {  // Horizontal Flip
             t1 = gb->vram[tile] << px;
             t2 = gb->vram[tile + 1] << px;
@@ -1927,7 +2102,7 @@ void __gb_draw_line(struct gb_s *gb)
                     tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
 
 #if PEANUT_FULL_GBC_SUPPORT
-                if (gb->cgb.cgbMode)
+                if (cgb_mode)
                 {
                     if (idxAtt & 0x08) tile += 0x2000; // VRAM bank 2
                     if (idxAtt & 0x40) tile += 2 * (7 - py);
@@ -1952,12 +2127,11 @@ void __gb_draw_line(struct gb_s *gb)
                 pixelsPrio[disp_x] = (idxAtt >> 7);
                 t1 = t1 << 1;
                 t2 = t2 << 1;
-                window_did_draw_any = true;
             }
             else
             {
                 c = (t1 & 0x1) | ((t2 & 0x1) << 1);
-                if (gb->cgb.cgbMode)
+                if (cgb_mode)
                 {
                     pixels[disp_x] = ((idxAtt & 0x07) << 2) + c;
                     pixelsPrio[disp_x] = (idxAtt >> 7);
@@ -1971,7 +2145,6 @@ void __gb_draw_line(struct gb_s *gb)
                 }
                 t1 = t1 >> 1;
                 t2 = t2 >> 1;
-                window_did_draw_any = true;
             }
 #else
             c = (t1 & 0x1) | ((t2 & 0x1) << 1);
@@ -1981,24 +2154,20 @@ void __gb_draw_line(struct gb_s *gb)
 #endif
             t1 = t1 >> 1;
             t2 = t2 >> 1;
-            window_did_draw_any = true;
 #endif
             px++;
         }
 
-        // Only advance window line if at least one window pixel was drawn
-        if (window_did_draw_any)
-        {
-            gb->display.window_clear++;
-            if (gb->display.window_clear > 143) gb->display.window_clear = 143;
-        }
+        gb->display.window_clear++;
+        if (gb->display.window_clear > 143) gb->display.window_clear = 143;
     }
 
     // -------------------------
     // Sprites (unchanged)
     // -------------------------
-    if (gb->hram_io[IO_LCDC] & LCDC_OBJ_ENABLE)
+    if (lcdc_now & LCDC_OBJ_ENABLE)
     {
+        const uint8_t obj_tall = (lcdc_now & LCDC_OBJ_SIZE) ? 1 : 0;
         uint8_t sprite_number;
 #if PEANUT_GB_HIGH_LCD_ACCURACY
         uint8_t number_of_sprites = 0;
@@ -2009,8 +2178,7 @@ void __gb_draw_line(struct gb_s *gb)
             uint8_t OY = gb->oam[4 * sprite_number + 0];
             uint8_t OX = gb->oam[4 * sprite_number + 1];
 
-            if (gb->hram_io[IO_LY] + (gb->hram_io[IO_LCDC] & LCDC_OBJ_SIZE ? 0 : 8) >= OY ||
-                gb->hram_io[IO_LY] + 16 < OY)
+            if (ly + (obj_tall ? 0 : 8) >= OY || ly + 16 < OY)
                 continue;
 
             struct sprite_data current;
@@ -2032,7 +2200,7 @@ void __gb_draw_line(struct gb_s *gb)
             sprites_to_render[place] = current;
         }
 #if PEANUT_FULL_GBC_SUPPORT
-        if (!gb->cgb.cgbMode)
+        if (!cgb_mode)
         {
 #endif
             qsort(&sprites_to_render[0], number_of_sprites,
@@ -2055,12 +2223,11 @@ void __gb_draw_line(struct gb_s *gb)
             uint8_t py, t1, t2, dir, start, end, shift, disp_x;
             uint8_t OY = gb->oam[4 * s + 0];
             uint8_t OX = gb->oam[4 * s + 1];
-            uint8_t OT = gb->oam[4 * s + 2] & (gb->hram_io[IO_LCDC] & LCDC_OBJ_SIZE ? 0xFE : 0xFF);
+            uint8_t OT = gb->oam[4 * s + 2] & (obj_tall ? 0xFE : 0xFF);
             uint8_t OF = gb->oam[4 * s + 3];
 
 #if !PEANUT_GB_HIGH_LCD_ACCURACY
-            if (gb->hram_io[IO_LY] + (gb->hram_io[IO_LCDC] & LCDC_OBJ_SIZE ? 0 : 8) >= OY ||
-                gb->hram_io[IO_LY] + 16 < OY)
+            if (ly + (obj_tall ? 0 : 8) >= OY || ly + 16 < OY)
                 continue;
 #endif
 
@@ -2068,12 +2235,12 @@ void __gb_draw_line(struct gb_s *gb)
                 continue;
 
             // y within sprite
-            py = gb->hram_io[IO_LY] - OY + 16;
+            py = ly - OY + 16;
             if (OF & OBJ_FLIP_Y)
-                py = (gb->hram_io[IO_LCDC] & LCDC_OBJ_SIZE ? 15 : 7) - py;
+                py = (obj_tall ? 15 : 7) - py;
 
 #if PEANUT_FULL_GBC_SUPPORT
-            if (gb->cgb.cgbMode)
+            if (cgb_mode)
             {
                 t1 = gb->vram[((OF & OBJ_BANK) << 10) + VRAM_TILES_1 + OT * 0x10 + 2 * py];
                 t2 = gb->vram[((OF & OBJ_BANK) << 10) + VRAM_TILES_1 + OT * 0x10 + 2 * py + 1];
@@ -2107,9 +2274,9 @@ void __gb_draw_line(struct gb_s *gb)
             {
                 uint8_t c = (t1 & 0x1) | ((t2 & 0x1) << 1);
 #if PEANUT_FULL_GBC_SUPPORT
-                if (gb->cgb.cgbMode)
+                if (cgb_mode)
                 {
-                    uint8_t isBackgroundDisabled = c && !(gb->hram_io[IO_LCDC] & LCDC_BG_ENABLE);
+                    uint8_t isBackgroundDisabled = c && !(lcdc_now & LCDC_BG_ENABLE);
                     uint8_t isPixelPriorityNonConflicting = c &&
                         !(pixelsPrio[disp_x] && (pixels[disp_x] & 0x3)) &&
                         !((OF & OBJ_PRIORITY) && (pixels[disp_x] & 0x3));
@@ -2140,13 +2307,13 @@ void __gb_draw_line(struct gb_s *gb)
     }
 
     // Push the finished scanline
-    gb->display.lcd_draw_line(gb, pixels, gb->hram_io[IO_LY]);
+    gb->display.lcd_draw_line(gb, pixels, ly);
 }
 
 /**
  * Internal function used to step the CPU.
  */
-void __gb_step_cpu(struct gb_s *gb)
+PGB_HOT void __gb_step_cpu(struct gb_s *gb)
 {
 	uint8_t opcode;
 	uint_fast16_t inst_cycles;
@@ -2224,7 +2391,7 @@ void __gb_step_cpu(struct gb_s *gb)
 	}
 
 	/* Obtain opcode */
-	opcode = __gb_read(gb, gb->cpu_reg.pc.reg++);
+	opcode = __gb_read_pc(gb);
 	inst_cycles = op_cycles[opcode];
 
 	/* Execute opcode */
@@ -2234,8 +2401,8 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0x01: /* LD BC, imm */
-		gb->cpu_reg.bc.bytes.c = __gb_read(gb, gb->cpu_reg.pc.reg++);
-		gb->cpu_reg.bc.bytes.b = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		gb->cpu_reg.bc.bytes.c = __gb_read_pc(gb);
+		gb->cpu_reg.bc.bytes.b = __gb_read_pc(gb);
 		break;
 
 	case 0x02: /* LD (BC), A */
@@ -2255,7 +2422,7 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0x06: /* LD B, imm */
-		gb->cpu_reg.bc.bytes.b = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		gb->cpu_reg.bc.bytes.b = __gb_read_pc(gb);
 		break;
 
 	case 0x07: /* RLCA */
@@ -2268,8 +2435,8 @@ void __gb_step_cpu(struct gb_s *gb)
 	{
 		uint8_t h, l;
 		uint16_t temp;
-		l = __gb_read(gb, gb->cpu_reg.pc.reg++);
-		h = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		l = __gb_read_pc(gb);
+		h = __gb_read_pc(gb);
 		temp = PEANUT_GB_U8_TO_U16(h,l);
 		__gb_write(gb, temp++, gb->cpu_reg.sp.bytes.p);
 		__gb_write(gb, temp, gb->cpu_reg.sp.bytes.s);
@@ -2304,7 +2471,7 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0x0E: /* LD C, imm */
-		gb->cpu_reg.bc.bytes.c = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		gb->cpu_reg.bc.bytes.c = __gb_read_pc(gb);
 		break;
 
 	case 0x0F: /* RRCA */
@@ -2325,8 +2492,8 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0x11: /* LD DE, imm */
-		gb->cpu_reg.de.bytes.e = __gb_read(gb, gb->cpu_reg.pc.reg++);
-		gb->cpu_reg.de.bytes.d = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		gb->cpu_reg.de.bytes.e = __gb_read_pc(gb);
+		gb->cpu_reg.de.bytes.d = __gb_read_pc(gb);
 		break;
 
 	case 0x12: /* LD (DE), A */
@@ -2346,7 +2513,7 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0x16: /* LD D, imm */
-		gb->cpu_reg.de.bytes.d = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		gb->cpu_reg.de.bytes.d = __gb_read_pc(gb);
 		break;
 
 	case 0x17: /* RLA */
@@ -2360,7 +2527,7 @@ void __gb_step_cpu(struct gb_s *gb)
 
 	case 0x18: /* JR imm */
 	{
-		int8_t temp = (int8_t) __gb_read(gb, gb->cpu_reg.pc.reg++);
+		int8_t temp = (int8_t) __gb_read_pc(gb);
 		gb->cpu_reg.pc.reg += temp;
 		break;
 	}
@@ -2393,7 +2560,7 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0x1E: /* LD E, imm */
-		gb->cpu_reg.de.bytes.e = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		gb->cpu_reg.de.bytes.e = __gb_read_pc(gb);
 		break;
 
 	case 0x1F: /* RRA */
@@ -2408,7 +2575,7 @@ void __gb_step_cpu(struct gb_s *gb)
 	case 0x20: /* JR NZ, imm */
 		if(!gb->cpu_reg.f.f_bits.z)
 		{
-			int8_t temp = (int8_t) __gb_read(gb, gb->cpu_reg.pc.reg++);
+			int8_t temp = (int8_t) __gb_read_pc(gb);
 			gb->cpu_reg.pc.reg += temp;
 			inst_cycles += 4;
 		}
@@ -2418,8 +2585,8 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0x21: /* LD HL, imm */
-		gb->cpu_reg.hl.bytes.l = __gb_read(gb, gb->cpu_reg.pc.reg++);
-		gb->cpu_reg.hl.bytes.h = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		gb->cpu_reg.hl.bytes.l = __gb_read_pc(gb);
+		gb->cpu_reg.hl.bytes.h = __gb_read_pc(gb);
 		break;
 
 	case 0x22: /* LDI (HL), A */
@@ -2440,7 +2607,7 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0x26: /* LD H, imm */
-		gb->cpu_reg.hl.bytes.h = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		gb->cpu_reg.hl.bytes.h = __gb_read_pc(gb);
 		break;
 
 	case 0x27: /* DAA */
@@ -2478,7 +2645,7 @@ void __gb_step_cpu(struct gb_s *gb)
 	case 0x28: /* JR Z, imm */
 		if(gb->cpu_reg.f.f_bits.z)
 		{
-			int8_t temp = (int8_t) __gb_read(gb, gb->cpu_reg.pc.reg++);
+			int8_t temp = (int8_t) __gb_read_pc(gb);
 			gb->cpu_reg.pc.reg += temp;
 			inst_cycles += 4;
 		}
@@ -2513,7 +2680,7 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0x2E: /* LD L, imm */
-		gb->cpu_reg.hl.bytes.l = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		gb->cpu_reg.hl.bytes.l = __gb_read_pc(gb);
 		break;
 
 	case 0x2F: /* CPL */
@@ -2525,7 +2692,7 @@ void __gb_step_cpu(struct gb_s *gb)
 	case 0x30: /* JR NC, imm */
 		if(!gb->cpu_reg.f.f_bits.c)
 		{
-			int8_t temp = (int8_t) __gb_read(gb, gb->cpu_reg.pc.reg++);
+			int8_t temp = (int8_t) __gb_read_pc(gb);
 			gb->cpu_reg.pc.reg += temp;
 			inst_cycles += 4;
 		}
@@ -2535,8 +2702,8 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0x31: /* LD SP, imm */
-		gb->cpu_reg.sp.bytes.p = __gb_read(gb, gb->cpu_reg.pc.reg++);
-		gb->cpu_reg.sp.bytes.s = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		gb->cpu_reg.sp.bytes.p = __gb_read_pc(gb);
+		gb->cpu_reg.sp.bytes.s = __gb_read_pc(gb);
 		break;
 
 	case 0x32: /* LD (HL), A */
@@ -2565,7 +2732,7 @@ void __gb_step_cpu(struct gb_s *gb)
 	}
 
 	case 0x36: /* LD (HL), imm */
-		__gb_write(gb, gb->cpu_reg.hl.reg, __gb_read(gb, gb->cpu_reg.pc.reg++));
+		__gb_write(gb, gb->cpu_reg.hl.reg, __gb_read_pc(gb));
 		break;
 
 	case 0x37: /* SCF */
@@ -2577,7 +2744,7 @@ void __gb_step_cpu(struct gb_s *gb)
 	case 0x38: /* JR C, imm */
 		if(gb->cpu_reg.f.f_bits.c)
 		{
-			int8_t temp = (int8_t) __gb_read(gb, gb->cpu_reg.pc.reg++);
+			int8_t temp = (int8_t) __gb_read_pc(gb);
 			gb->cpu_reg.pc.reg += temp;
 			inst_cycles += 4;
 		}
@@ -2614,7 +2781,7 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0x3E: /* LD A, imm */
-		gb->cpu_reg.a = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		gb->cpu_reg.a = __gb_read_pc(gb);
 		break;
 
 	case 0x3F: /* CCF */
@@ -3214,8 +3381,8 @@ void __gb_step_cpu(struct gb_s *gb)
 		if(!gb->cpu_reg.f.f_bits.z)
 		{
 			uint8_t p, c;
-			c = __gb_read(gb, gb->cpu_reg.pc.reg++);
-			p = __gb_read(gb, gb->cpu_reg.pc.reg);
+			c = __gb_read_pc(gb);
+			p = __gb_peek_pc(gb);
 			gb->cpu_reg.pc.bytes.c = c;
 			gb->cpu_reg.pc.bytes.p = p;
 			inst_cycles += 4;
@@ -3228,8 +3395,8 @@ void __gb_step_cpu(struct gb_s *gb)
 	case 0xC3: /* JP imm */
 	{
 		uint8_t p, c;
-		c = __gb_read(gb, gb->cpu_reg.pc.reg++);
-		p = __gb_read(gb, gb->cpu_reg.pc.reg);
+		c = __gb_read_pc(gb);
+		p = __gb_peek_pc(gb);
 		gb->cpu_reg.pc.bytes.c = c;
 		gb->cpu_reg.pc.bytes.p = p;
 		break;
@@ -3239,8 +3406,8 @@ void __gb_step_cpu(struct gb_s *gb)
 		if(!gb->cpu_reg.f.f_bits.z)
 		{
 			uint8_t p, c;
-			c = __gb_read(gb, gb->cpu_reg.pc.reg++);
-			p = __gb_read(gb, gb->cpu_reg.pc.reg++);
+			c = __gb_read_pc(gb);
+			p = __gb_read_pc(gb);
 			__gb_write(gb, --gb->cpu_reg.sp.reg, gb->cpu_reg.pc.bytes.p);
 			__gb_write(gb, --gb->cpu_reg.sp.reg, gb->cpu_reg.pc.bytes.c);
 			gb->cpu_reg.pc.bytes.c = c;
@@ -3259,7 +3426,7 @@ void __gb_step_cpu(struct gb_s *gb)
 
 	case 0xC6: /* ADD A, imm */
 	{
-		uint8_t val = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		uint8_t val = __gb_read_pc(gb);
 		PGB_INSTR_ADC_R8(val, 0);
 		break;
 	}
@@ -3290,8 +3457,8 @@ void __gb_step_cpu(struct gb_s *gb)
 		if(gb->cpu_reg.f.f_bits.z)
 		{
 			uint8_t p, c;
-			c = __gb_read(gb, gb->cpu_reg.pc.reg++);
-			p = __gb_read(gb, gb->cpu_reg.pc.reg);
+			c = __gb_read_pc(gb);
+			p = __gb_peek_pc(gb);
 			gb->cpu_reg.pc.bytes.c = c;
 			gb->cpu_reg.pc.bytes.p = p;
 			inst_cycles += 4;
@@ -3309,8 +3476,8 @@ void __gb_step_cpu(struct gb_s *gb)
 		if(gb->cpu_reg.f.f_bits.z)
 		{
 			uint8_t p, c;
-			c = __gb_read(gb, gb->cpu_reg.pc.reg++);
-			p = __gb_read(gb, gb->cpu_reg.pc.reg++);
+			c = __gb_read_pc(gb);
+			p = __gb_read_pc(gb);
 			__gb_write(gb, --gb->cpu_reg.sp.reg, gb->cpu_reg.pc.bytes.p);
 			__gb_write(gb, --gb->cpu_reg.sp.reg, gb->cpu_reg.pc.bytes.c);
 			gb->cpu_reg.pc.bytes.c = c;
@@ -3325,8 +3492,8 @@ void __gb_step_cpu(struct gb_s *gb)
 	case 0xCD: /* CALL imm */
 	{
 		uint8_t p, c;
-		c = __gb_read(gb, gb->cpu_reg.pc.reg++);
-		p = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		c = __gb_read_pc(gb);
+		p = __gb_read_pc(gb);
 		__gb_write(gb, --gb->cpu_reg.sp.reg, gb->cpu_reg.pc.bytes.p);
 		__gb_write(gb, --gb->cpu_reg.sp.reg, gb->cpu_reg.pc.bytes.c);
 		gb->cpu_reg.pc.bytes.c = c;
@@ -3336,7 +3503,7 @@ void __gb_step_cpu(struct gb_s *gb)
 
 	case 0xCE: /* ADC A, imm */
 	{
-		uint8_t val = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		uint8_t val = __gb_read_pc(gb);
 		PGB_INSTR_ADC_R8(val, gb->cpu_reg.f.f_bits.c);
 		break;
 	}
@@ -3366,8 +3533,8 @@ void __gb_step_cpu(struct gb_s *gb)
 		if(!gb->cpu_reg.f.f_bits.c)
 		{
 			uint8_t p, c;
-			c = __gb_read(gb, gb->cpu_reg.pc.reg++);
-			p = __gb_read(gb, gb->cpu_reg.pc.reg);
+			c = __gb_read_pc(gb);
+			p = __gb_peek_pc(gb);
 			gb->cpu_reg.pc.bytes.c = c;
 			gb->cpu_reg.pc.bytes.p = p;
 			inst_cycles += 4;
@@ -3381,8 +3548,8 @@ void __gb_step_cpu(struct gb_s *gb)
 		if(!gb->cpu_reg.f.f_bits.c)
 		{
 			uint8_t p, c;
-			c = __gb_read(gb, gb->cpu_reg.pc.reg++);
-			p = __gb_read(gb, gb->cpu_reg.pc.reg++);
+			c = __gb_read_pc(gb);
+			p = __gb_read_pc(gb);
 			__gb_write(gb, --gb->cpu_reg.sp.reg, gb->cpu_reg.pc.bytes.p);
 			__gb_write(gb, --gb->cpu_reg.sp.reg, gb->cpu_reg.pc.bytes.c);
 			gb->cpu_reg.pc.bytes.c = c;
@@ -3401,7 +3568,7 @@ void __gb_step_cpu(struct gb_s *gb)
 
 	case 0xD6: /* SUB imm */
 	{
-		uint8_t val = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		uint8_t val = __gb_read_pc(gb);
 		uint16_t temp = gb->cpu_reg.a - val;
 		gb->cpu_reg.f.f_bits.z = ((temp & 0xFF) == 0x00);
 		gb->cpu_reg.f.f_bits.n = 1;
@@ -3440,8 +3607,8 @@ void __gb_step_cpu(struct gb_s *gb)
 		if(gb->cpu_reg.f.f_bits.c)
 		{
 			uint8_t p, c;
-			c = __gb_read(gb, gb->cpu_reg.pc.reg++);
-			p = __gb_read(gb, gb->cpu_reg.pc.reg);
+			c = __gb_read_pc(gb);
+			p = __gb_peek_pc(gb);
 			gb->cpu_reg.pc.bytes.c = c;
 			gb->cpu_reg.pc.bytes.p = p;
 			inst_cycles += 4;
@@ -3455,8 +3622,8 @@ void __gb_step_cpu(struct gb_s *gb)
 		if(gb->cpu_reg.f.f_bits.c)
 		{
 			uint8_t p, c;
-			c = __gb_read(gb, gb->cpu_reg.pc.reg++);
-			p = __gb_read(gb, gb->cpu_reg.pc.reg++);
+			c = __gb_read_pc(gb);
+			p = __gb_read_pc(gb);
 			__gb_write(gb, --gb->cpu_reg.sp.reg, gb->cpu_reg.pc.bytes.p);
 			__gb_write(gb, --gb->cpu_reg.sp.reg, gb->cpu_reg.pc.bytes.c);
 			gb->cpu_reg.pc.bytes.c = c;
@@ -3470,7 +3637,7 @@ void __gb_step_cpu(struct gb_s *gb)
 
 	case 0xDE: /* SBC A, imm */
 	{
-		uint8_t val = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		uint8_t val = __gb_read_pc(gb);
 		PGB_INSTR_SBC_R8(val, gb->cpu_reg.f.f_bits.c);
 		break;
 	}
@@ -3482,7 +3649,7 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0xE0: /* LD (0xFF00+imm), A */
-		__gb_write(gb, 0xFF00 | __gb_read(gb, gb->cpu_reg.pc.reg++),
+		__gb_write(gb, 0xFF00 | __gb_read_pc(gb),
 			   gb->cpu_reg.a);
 		break;
 
@@ -3502,7 +3669,7 @@ void __gb_step_cpu(struct gb_s *gb)
 
 	case 0xE6: /* AND imm */
 	{
-		uint8_t temp = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		uint8_t temp = __gb_read_pc(gb);
 		PGB_INSTR_AND_R8(temp);
 		break;
 	}
@@ -3515,7 +3682,7 @@ void __gb_step_cpu(struct gb_s *gb)
 
 	case 0xE8: /* ADD SP, imm */
 	{
-		int8_t offset = (int8_t) __gb_read(gb, gb->cpu_reg.pc.reg++);
+		int8_t offset = (int8_t) __gb_read_pc(gb);
 		gb->cpu_reg.f.reg = 0;
 		gb->cpu_reg.f.f_bits.h = ((gb->cpu_reg.sp.reg & 0xF) + (offset & 0xF) > 0xF) ? 1 : 0;
 		gb->cpu_reg.f.f_bits.c = ((gb->cpu_reg.sp.reg & 0xFF) + (offset & 0xFF) > 0xFF);
@@ -3531,15 +3698,15 @@ void __gb_step_cpu(struct gb_s *gb)
 	{
 		uint8_t h, l;
 		uint16_t addr;
-		l = __gb_read(gb, gb->cpu_reg.pc.reg++);
-		h = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		l = __gb_read_pc(gb);
+		h = __gb_read_pc(gb);
 		addr = PEANUT_GB_U8_TO_U16(h, l);
 		__gb_write(gb, addr, gb->cpu_reg.a);
 		break;
 	}
 
 	case 0xEE: /* XOR imm */
-		PGB_INSTR_XOR_R8(__gb_read(gb, gb->cpu_reg.pc.reg++));
+		PGB_INSTR_XOR_R8(__gb_read_pc(gb));
 		break;
 
 	case 0xEF: /* RST 0x0028 */
@@ -3550,7 +3717,7 @@ void __gb_step_cpu(struct gb_s *gb)
 
 	case 0xF0: /* LD A, (0xFF00+imm) */
 		gb->cpu_reg.a =
-			__gb_read(gb, 0xFF00 | __gb_read(gb, gb->cpu_reg.pc.reg++));
+			__gb_read(gb, 0xFF00 | __gb_read_pc(gb));
 		break;
 
 	case 0xF1: /* POP AF */
@@ -3580,7 +3747,7 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0xF6: /* OR imm */
-		PGB_INSTR_OR_R8(__gb_read(gb, gb->cpu_reg.pc.reg++));
+		PGB_INSTR_OR_R8(__gb_read_pc(gb));
 		break;
 
 	case 0xF7: /* PUSH AF */
@@ -3592,7 +3759,7 @@ void __gb_step_cpu(struct gb_s *gb)
 	case 0xF8: /* LD HL, SP+/-imm */
 	{
 		/* Taken from SameBoy, which is released under MIT Licence. */
-		int8_t offset = (int8_t) __gb_read(gb, gb->cpu_reg.pc.reg++);
+		int8_t offset = (int8_t) __gb_read_pc(gb);
 		gb->cpu_reg.hl.reg = gb->cpu_reg.sp.reg + offset;
 		gb->cpu_reg.f.reg = 0;
 		gb->cpu_reg.f.f_bits.h = ((gb->cpu_reg.sp.reg & 0xF) + (offset & 0xF) > 0xF) ? 1 : 0;
@@ -3608,8 +3775,8 @@ void __gb_step_cpu(struct gb_s *gb)
 	{
 		uint8_t h, l;
 		uint16_t addr;
-		l = __gb_read(gb, gb->cpu_reg.pc.reg++);
-		h = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		l = __gb_read_pc(gb);
+		h = __gb_read_pc(gb);
 		addr = PEANUT_GB_U8_TO_U16(h, l);
 		gb->cpu_reg.a = __gb_read(gb, addr);
 		break;
@@ -3621,7 +3788,7 @@ void __gb_step_cpu(struct gb_s *gb)
 
 	case 0xFE: /* CP imm */
 	{
-		uint8_t val = __gb_read(gb, gb->cpu_reg.pc.reg++);
+		uint8_t val = __gb_read_pc(gb);
 		PGB_INSTR_CP_R8(val);
 		break;
 	}
@@ -3870,10 +4037,18 @@ void __gb_step_cpu(struct gb_s *gb)
 				//DMA GBC
 				if(gb->cgb.cgbMode && !gb->cgb.dmaActive && gb->cgb.dmaMode)
 				{
-					for (uint8_t i = 0; i < 0x10; i++)
+					const uint16_t dma_src = (gb->cgb.dmaSource & 0xFFF0);
+					const uint16_t dma_dst = ((gb->cgb.dmaDest & 0x1FF0) | 0x8000);
+					if(PGB_LIKELY((uint32_t)dma_dst + 0x10u <= CART_RAM_ADDR))
 					{
-						__gb_write(gb, ((gb->cgb.dmaDest & 0x1FF0) | 0x8000) + i,
-								   __gb_read(gb, (gb->cgb.dmaSource & 0xFFF0) + i));
+						uint8_t *dst = &gb->vram[dma_dst - gb->cgb.vramBankOffset];
+						for (uint8_t i = 0; i < 0x10; i++)
+							dst[i] = __gb_read(gb, dma_src + i);
+					}
+					else
+					{
+						for (uint8_t i = 0; i < 0x10; i++)
+							__gb_write(gb, dma_dst + i, __gb_read(gb, dma_src + i));
 					}
 					gb->cgb.dmaSource += 0x10;
 					gb->cgb.dmaDest += 0x10;
@@ -3920,13 +4095,15 @@ void __gb_step_cpu(struct gb_s *gb)
 	/* If halted, loop until an interrupt occurs. */
 }
 
-void gb_run_frame(struct gb_s *gb)
+PGB_HOT void gb_run_frame(struct gb_s *gb)
 {
 	gb->gb_frame = false;
 
 	while(!gb->gb_frame) {
 		__gb_step_cpu(gb);
+#if PEANUT_GB_USE_TIGHT_LOOP_HINT
 		tight_loop_contents();
+#endif
 	}
 }
 
@@ -4121,6 +4298,8 @@ void gb_reset(struct gb_s *gb)
 	gb->cgb.BGPaletteID = 0;
 	gb->cgb.OAMPaletteInc = 0;
 	gb->cgb.BGPaletteInc = 0;
+	gb->cgb.paletteDirtyMask = ~0ull;
+	gb->cgb.paletteEpoch = 0;
 	gb->cgb.dmaActive = 1;  // Not active
 	gb->cgb.dmaMode = 0;
 	gb->cgb.dmaSize = 0;
@@ -4177,6 +4356,8 @@ enum gb_init_error_e gb_init(struct gb_s *gb,
 	gb->gb_cart_ram_write = gb_cart_ram_write;
 	gb->gb_error = gb_error;
 	gb->direct.priv = priv;
+	gb->direct.rom = NULL;
+	gb->direct.cart_ram = NULL;
 
 	/* Initialise serial transfer function to NULL. If the front-end does
 	 * not provide serial support, Peanut-GB will emulate no cable connected
@@ -4287,6 +4468,12 @@ void gb_set_bootrom(struct gb_s *gb,
 		 uint8_t (*gb_bootrom_read)(struct gb_s*, const uint_fast16_t))
 {
 	gb->gb_bootrom_read = gb_bootrom_read;
+}
+
+void gb_set_direct_memory(struct gb_s *gb, const uint8_t *rom, uint8_t *cart_ram)
+{
+	gb->direct.rom = rom;
+	gb->direct.cart_ram = cart_ram;
 }
 
 /**
@@ -4472,6 +4659,14 @@ void gb_set_rtc(struct gb_s *gb, const struct tm * const time);
  */
 void gb_set_bootrom(struct gb_s *gb,
 	uint8_t (*gb_bootrom_read)(struct gb_s*, const uint_fast16_t));
+
+/**
+ * Optional fast path: provide direct ROM/cart-RAM pointers to bypass callback
+ * calls in hot read/write paths.
+ *
+ * Pass NULL to disable either pointer path.
+ */
+void gb_set_direct_memory(struct gb_s *gb, const uint8_t *rom, uint8_t *cart_ram);
 
 /* Undefine CPU Flag helper functions. */
 #undef PEANUT_GB_CPUFLAG_MASK_CARRY

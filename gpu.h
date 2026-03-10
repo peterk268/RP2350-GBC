@@ -52,6 +52,18 @@ static void frame_update_logic();
 static void scanline_update_logic();
 static void render_scanline(struct scanvideo_scanline_buffer *dest, const uint16_t *fb);
 uint16_t shift_components(uint16_t pixel);
+#if PEANUT_FULL_GBC_SUPPORT
+static inline void refresh_cgb_palette_cache(struct gb_s *gb);
+#endif
+extern uint8_t wash_out_level; // defined later in this file
+
+// Cached conversion of CGB 15-bit palette entries to output RGB565.
+#if PEANUT_FULL_GBC_SUPPORT
+static uint16_t cgb_palette_rgb565_cache[0x40];
+static uint8_t cgb_palette_wash_cache = 0xFF;
+static uint32_t cgb_palette_epoch_cache = UINT32_MAX;
+static bool cgb_palette_cache_valid = false;
+#endif
 
 static uint16_t *black_fb = NULL;
 bool black_fb_init(void) {
@@ -511,20 +523,51 @@ void lcd_draw_line(struct gb_s *gb, const uint8_t pixels[LCD_WIDTH],
 #if PEANUT_FULL_GBC_SUPPORT
     if (gb->cgb.cgbMode) {
         if (manual_palette_selected == -1) {
-            for (unsigned int x = 0; x < LCD_WIDTH; x++)
-                dst[x] = shift_components(gb->cgb.fixPalette[pixels[x]]);
+            refresh_cgb_palette_cache(gb);
+            const uint8_t *src = pixels;
+            uint16_t *out = dst;
+            for (unsigned int x = 0; x < LCD_WIDTH; x += 8) {
+                out[0] = cgb_palette_rgb565_cache[src[0] & 0x3F];
+                out[1] = cgb_palette_rgb565_cache[src[1] & 0x3F];
+                out[2] = cgb_palette_rgb565_cache[src[2] & 0x3F];
+                out[3] = cgb_palette_rgb565_cache[src[3] & 0x3F];
+                out[4] = cgb_palette_rgb565_cache[src[4] & 0x3F];
+                out[5] = cgb_palette_rgb565_cache[src[5] & 0x3F];
+                out[6] = cgb_palette_rgb565_cache[src[6] & 0x3F];
+                out[7] = cgb_palette_rgb565_cache[src[7] & 0x3F];
+                src += 8;
+                out += 8;
+            }
         } else {
             // Force 4-color manual palette regardless of CGB palette number / OAM mark
+            const uint8_t *src = pixels;
+            uint16_t *out = dst;
             for (unsigned x = 0; x < LCD_WIDTH; x++) {
-                uint8_t row = (pixels[x] & 0x20) ? 1 : 2;  // sprite->1, bg->2 (pick whatever you want)
-                dst[x] = (*palette)[row][pixels[x] & LCD_COLOUR];
+                uint8_t p = *src++;
+                uint8_t row = (p & 0x20) ? 1 : 2;  // sprite->1, bg->2 (pick whatever you want)
+                *out++ = (*palette)[row][p & LCD_COLOUR];
             }
         }
     } else
 #endif
     {
-        for (unsigned int x = 0; x < LCD_WIDTH; x++)
-            dst[x] = (*palette)[(pixels[x] & LCD_PALETTE_ALL) >> 4][pixels[x] & 3];
+        const uint16_t (*pal)[4] = *palette;
+        const uint8_t *src = pixels;
+        uint16_t *out = dst;
+        for (unsigned int x = 0; x < LCD_WIDTH; x += 8) {
+            uint8_t p0 = src[0], p1 = src[1], p2 = src[2], p3 = src[3];
+            uint8_t p4 = src[4], p5 = src[5], p6 = src[6], p7 = src[7];
+            out[0] = pal[(p0 & LCD_PALETTE_ALL) >> 4][p0 & LCD_COLOUR];
+            out[1] = pal[(p1 & LCD_PALETTE_ALL) >> 4][p1 & LCD_COLOUR];
+            out[2] = pal[(p2 & LCD_PALETTE_ALL) >> 4][p2 & LCD_COLOUR];
+            out[3] = pal[(p3 & LCD_PALETTE_ALL) >> 4][p3 & LCD_COLOUR];
+            out[4] = pal[(p4 & LCD_PALETTE_ALL) >> 4][p4 & LCD_COLOUR];
+            out[5] = pal[(p5 & LCD_PALETTE_ALL) >> 4][p5 & LCD_COLOUR];
+            out[6] = pal[(p6 & LCD_PALETTE_ALL) >> 4][p6 & LCD_COLOUR];
+            out[7] = pal[(p7 & LCD_PALETTE_ALL) >> 4][p7 & LCD_COLOUR];
+            src += 8;
+            out += 8;
+        }
     }
 
     // End of frame: publish this buffer as READY
@@ -729,6 +772,40 @@ uint16_t shift_components(uint16_t pixel) {
     // Pack into RGB565
     return ((r8 & 0xF8) << 8) | ((g8 & 0xFC) << 3) | (b8 >> 3);
 }
+
+#if PEANUT_FULL_GBC_SUPPORT
+static inline void refresh_cgb_palette_cache(struct gb_s *gb) {
+    if (!cgb_palette_cache_valid || cgb_palette_wash_cache != wash_out_level) {
+        for (uint8_t i = 0; i < 0x40; i++) {
+            cgb_palette_rgb565_cache[i] = shift_components(gb->cgb.fixPalette[i]);
+        }
+        gb->cgb.paletteDirtyMask = 0;
+        cgb_palette_wash_cache = wash_out_level;
+        cgb_palette_epoch_cache = gb->cgb.paletteEpoch;
+        cgb_palette_cache_valid = true;
+        return;
+    }
+
+    if (cgb_palette_epoch_cache == gb->cgb.paletteEpoch) {
+        return;
+    }
+
+    uint64_t dirty = gb->cgb.paletteDirtyMask;
+    if (dirty == 0) {
+        cgb_palette_epoch_cache = gb->cgb.paletteEpoch;
+        return;
+    }
+
+    while (dirty) {
+        uint8_t i = (uint8_t)__builtin_ctzll(dirty);
+        cgb_palette_rgb565_cache[i] = shift_components(gb->cgb.fixPalette[i]);
+        dirty &= (dirty - 1);
+    }
+
+    gb->cgb.paletteDirtyMask = 0;
+    cgb_palette_epoch_cache = gb->cgb.paletteEpoch;
+}
+#endif
 
 // MARK: RGB TO BGR
 uint16_t make_pixel_bgr(uint8_t r, uint8_t g, uint8_t b) {

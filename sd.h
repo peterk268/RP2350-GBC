@@ -681,6 +681,8 @@ bool read_cart_save_state(struct gb_s *gb, int override_slot, bool hold_sd_busy)
     gb->cgb.BGPaletteID     = s->cgb.BGPaletteID;
     gb->cgb.OAMPaletteInc   = s->cgb.OAMPaletteInc;
     gb->cgb.BGPaletteInc    = s->cgb.BGPaletteInc;
+    gb->cgb.paletteDirtyMask = ~0ull;
+    gb->cgb.paletteEpoch++;
 
     gb->cgb.dmaActive       = s->cgb.dmaActive;
     gb->cgb.dmaMode         = s->cgb.dmaMode;

@@ -47,11 +47,13 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(RP2350_GBC 
-            main.c 
-            ext/minigb_apu/minigb_apu.c 
-            ext/i2s/i2s.c
+set(RP2350_GBC_APP_SOURCES
+    main.c
+    ext/minigb_apu/minigb_apu.c
+    ext/i2s/i2s.c
 )
+
+add_executable(RP2350_GBC ${RP2350_GBC_APP_SOURCES})
 
 pico_set_linker_script(RP2350_GBC ${CMAKE_CURRENT_LIST_DIR}/linker_custom.ld)
 
@@ -83,6 +85,16 @@ target_link_libraries(RP2350_GBC
         pico_binary_info
         pico_scanvideo_dpi
         sparkfun_pico)
+
+option(ENABLE_APP_LTO "Enable app-only link-time optimization in Release builds" OFF)
+if(ENABLE_APP_LTO)
+    set_source_files_properties(${RP2350_GBC_APP_SOURCES} PROPERTIES
+        COMPILE_OPTIONS "$<$<CONFIG:Release>:-flto>"
+    )
+    target_link_options(RP2350_GBC PRIVATE
+        $<$<CONFIG:Release>:-flto>
+    )
+endif()
 
 target_compile_definitions(RP2350_GBC PRIVATE
         PARAM_ASSERTIONS_DISABLE_ALL=1
@@ -127,4 +139,3 @@ function(pico_add_verbose_dis_output TARGET)
 endfunction()
     
 pico_add_extra_outputs(RP2350_GBC)
-

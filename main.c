@@ -272,6 +272,9 @@ while(true)
 		goto out;
 	}
 
+	/* Use direct memory pointers for hot ROM/RAM accesses in the emulator core. */
+	gb_set_direct_memory(&gb, (const uint8_t *)rom, ram);
+
 	// MARK: - Auto Assign Palette
 	if (!palette) {
 		if (!palette_heap_init()) {

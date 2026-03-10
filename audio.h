@@ -12,14 +12,16 @@ bool is_muted = false;
 bool headphones_present = false;
 bool prev_headphones_present = false;
 bool audio_pause_active = false;
-static uint8_t *vol_lut = NULL;
+static uint8_t *vol_lut_spk = NULL;
+static uint8_t *vol_lut_hp  = NULL;
 void set_volume(uint8_t l_volume, uint8_t r_volume);
 void dac_i2c_write(uint8_t page, uint8_t reg, uint8_t data);
 void dac_i2c_read(uint8_t page, uint8_t reg, uint8_t *data, size_t length);
 
 #define ADC_MIN_CLIP   4     // below this → treat as 0
 #define ADC_MAX_CLIP   4050   // above this → treat as full scale
-#define DAC_MAX_VOL    90 // 127 is max
+#define DAC_MAX_VOL_SPK 80 // 127 is max
+#define DAC_MAX_VOL_HP  80 //100 // 127 is max
 #define MUTE_THRESH     1
 #define UNMUTE_THRESH   12
 #define USE_LINEAR_VOLUME_SCALING 0
@@ -98,6 +100,7 @@ void read_volume() {
 #else
         // uint8_t idx = (uint8_t)(adc_val >> 4); // 12-bit -> 8-bit
         uint8_t idx = (uint8_t)((adc_val * (VOL_LUT_SIZE - 1)) / ADC_MAX_CLIP);
+        uint8_t *vol_lut = headphones_present ? vol_lut_hp : vol_lut_spk;
         uint8_t dac_vol = vol_lut[idx];
 #endif
 
@@ -140,26 +143,30 @@ void read_volume() {
     prev_headphones_present = headphones_present;
 }
 
+static void build_lut(uint8_t *lut, uint8_t max_vol) {
+    for (int i = 0; i < VOL_LUT_SIZE; i++) {
+        float x = (float)i / (float)(VOL_LUT_SIZE - 1);
+        float y = powf(x, RAMPED_AUDIO_EXPONENT) * (float)max_vol;
+        int v = (int)(y + 0.5f);
+        if (v < 0) v = 0;
+        if (v > max_vol) v = max_vol;
+        lut[i] = (uint8_t)v;
+    }
+}
+
 bool volume_lut_init(void) {
-    if (vol_lut) {
+    if (vol_lut_spk && vol_lut_hp) {
         return true; // already initialized
     }
 
-    vol_lut = (uint8_t *)malloc(VOL_LUT_SIZE * sizeof(uint8_t));
-    if (!vol_lut) {
+    vol_lut_spk = (uint8_t *)malloc(VOL_LUT_SIZE * sizeof(uint8_t));
+    vol_lut_hp  = (uint8_t *)malloc(VOL_LUT_SIZE * sizeof(uint8_t));
+    if (!vol_lut_spk || !vol_lut_hp) {
         return false; // allocation failed
     }
 
-    for (int i = 0; i < VOL_LUT_SIZE; i++) {
-        float x = (float)i / (float)(VOL_LUT_SIZE - 1);
-        float y = powf(x, RAMPED_AUDIO_EXPONENT) * (float)DAC_MAX_VOL;
-
-        int v = (int)(y + 0.5f); // round
-        if (v < 0) v = 0;
-        if (v > DAC_MAX_VOL) v = DAC_MAX_VOL;
-
-        vol_lut[i] = (uint8_t)v;
-    }
+    build_lut(vol_lut_spk, DAC_MAX_VOL_SPK);
+    build_lut(vol_lut_hp,  DAC_MAX_VOL_HP);
 
     return true;
 }
@@ -325,8 +332,7 @@ void setup_dac() {
     // Unmute drivers and dacs after power up ramp
     unmute_drivers();
 
-    // set gain
-    set_gain(0x7F); // set to max amp gain
+    set_gain(0x7F); // max analog gain - volume ceiling controlled via DAC digital volume
     unmute_dac(); // Unmute DAC
 }
 

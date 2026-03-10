@@ -139,8 +139,10 @@ static enum {
 // MARK: - Overclock
 // Not stable. Unpredictable and heat is a problem. 320MHz is most I'll go.
 #define SAFE_OVERCLOCK 1
-// Keep normal clock as an integer multiple of 2*DPI_PCLK (2*20MHz = 40MHz).
-#define SYS_CLOCK_NORMAL_KHZ 320000u
+// Keep normal clock as an integer multiple of DPI_PCLK (20MHz) so the DPI PIO pixel clock divider is integer.
+// 340MHz = 17×20MHz: best audio balance (+0.39% at 44.1kHz, -1.18% at 48kHz) while still giving
+// ~6% more throughput vs 320MHz for demanding GBC games (e.g. Shantae).
+#define SYS_CLOCK_NORMAL_KHZ 340000u
 void overclock_cpu(bool enable) {
     if (enable) {
 #if !SAFE_OVERCLOCK
@@ -152,13 +154,19 @@ void overclock_cpu(bool enable) {
 
         set_sys_clock_khz((SAFE_OVERCLOCK ? 360 : 520) * 1000, true);
         sleep_ms(10);
+#if ENABLE_PSRAM
+        sfe_psram_update_timing();
+#endif
     } else {
-        // Going down: lower frequency first, then voltage
+        // "Disable overclock" path — returns to normal 360MHz operating clock.
+        // Raise voltage first (1.25V), then frequency, for stability.
+        vreg_set_voltage(VREG_VOLTAGE_1_25);
+        sleep_ms(10);
         set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);
         sleep_ms(10);
-
-        vreg_set_voltage(VREG_VOLTAGE_1_15);
-        sleep_ms(10);
+#if ENABLE_PSRAM
+        sfe_psram_update_timing();
+#endif
     }
 }
 
@@ -176,13 +184,19 @@ void underclock_cpu(bool enable) {
 
 		vreg_set_voltage(VREG_VOLTAGE_DEFAULT);
 		sleep_ms(10);
+#if ENABLE_PSRAM
+        sfe_psram_update_timing();
+#endif
 	} else {
         // Going up: up voltage then frequency
-        vreg_set_voltage(VREG_VOLTAGE_1_15);
+        vreg_set_voltage(VREG_VOLTAGE_1_25);
         sleep_ms(10);
 
         set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);
         sleep_ms(10);
+#if ENABLE_PSRAM
+        sfe_psram_update_timing();
+#endif
 	}
 }
 
@@ -224,6 +238,9 @@ void hyper_underclock_cpu(bool enable) {
 
 		vreg_set_voltage(VREG_VOLTAGE_1_00);
 		sleep_ms(10);
+#if ENABLE_PSRAM
+        sfe_psram_update_timing();
+#endif
 #endif
 	} else {
         // Going up: up voltage then frequency
@@ -232,6 +249,9 @@ void hyper_underclock_cpu(bool enable) {
 
         set_sys_clock_khz(180 * 1000, true);
         sleep_ms(10);
+#if ENABLE_PSRAM
+        sfe_psram_update_timing();
+#endif
 	}
 }
 
@@ -243,13 +263,19 @@ void underclock_cpu_for_psram(bool enable) {
 
 		vreg_set_voltage(VREG_VOLTAGE_DEFAULT);
 		sleep_ms(10);
+#if ENABLE_PSRAM
+        sfe_psram_update_timing();
+#endif
 	} else {
         // Going up: up voltage then frequency
-        vreg_set_voltage(VREG_VOLTAGE_1_15);
+        vreg_set_voltage(VREG_VOLTAGE_1_25);
         sleep_ms(10);
 
         set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);
         sleep_ms(10);
+#if ENABLE_PSRAM
+        sfe_psram_update_timing();
+#endif
 	}
 }
 

@@ -14,9 +14,20 @@
 // NEED INTEGER LOCKED CLOCKS OR ELSE HELLA JITTER WILL COME FROM FRACTIONAL DIV
 // Fractional DIV - "It acts as a sigma-delta modulator, switching between two integer divisors to achieve a desired, non-integer average frequency"
 // Won't be super accurate but it is best to not have the jitter and get artefacts in audio. Integer-locked clocks will at least be stable, even if they are not the exact target frequency.
-// Currently getting +1.23% for 44.1KHz and +0.16% at 48KHz at 320MHz sys clock which is the closest I get in this range that I need.
-// 300MHz sys clock gives +2.2% for 44.1KHz and +1.73% for 48KHz which is worse.
-// 320MHz is needed because DPI PCLK needs multiple of 2 of sys clock for pclk freq (20MHz).
+//
+// Integer-locked accuracy (MCLK=256x, sys_clock must be integer multiple of DPI_PCLK=20MHz):
+//   sys_clock | 44.1kHz div | 44.1kHz error | 48kHz div | 48kHz error
+//   320 MHz   |      14     |    +1.23%      |     13    |   +0.16%
+//   340 MHz   |      15     |    +0.39%      |     14    |   -1.18%   <- best balanced
+//   360 MHz   |      16     |    -0.35%      |     15    |   -2.34%
+//   380 MHz   |      17     |    -1.00%      |     15    |   +3.08%
+//   400 MHz   |      18     |    -1.58%      |     16    |   +1.72%
+//
+// 360MHz is currently used. Better for 44.1kHz (primary GBC audio rate) than 320MHz.
+// 340MHz would give the best balance across both rates if gaming performance allows.
+//
+// NOTE: integer-locking MUST round to nearest integer, not floor. The divider_x256 formula
+// already rounds, but & 0xFFFF00 truncates — must add 0x80 first to preserve rounding.
 #define I2S_INTEGER_LOCKED_CLOCKS 1
 
 static inline uint32_t i2s_get_divider_x256_for_hz(uint32_t target_sm_hz) {
@@ -44,7 +55,11 @@ static inline void i2s_configure_clocks(i2s_config_t *i2s_config, uint32_t sampl
         uint32_t mclk_sm_hz = i2s_config->mclk_mult * sample_freq * MCLK_SM_CYCLES_PER_CLOCK;
 
 #if I2S_INTEGER_LOCKED_CLOCKS
-        uint32_t mclk_div_x256 = i2s_get_divider_x256_for_hz(mclk_sm_hz) & 0xFFFF00u;
+        // +0x80 rounds to nearest integer before masking off the fractional byte.
+        // Without it, floor rounding is used — fine when frac < 0.5 (e.g. 320MHz)
+        // but wrong when frac >= 0.5 (e.g. 360MHz gives div 15 instead of 16 for 44.1kHz,
+        // producing 46875 Hz instead of 43945 Hz — a 6.3% pitch error).
+        uint32_t mclk_div_x256 = (i2s_get_divider_x256_for_hz(mclk_sm_hz) + 0x80u) & 0xFFFF00u;
         if (mclk_div_x256 < 256u) mclk_div_x256 = 256u;
 #else
         uint32_t mclk_div_x256 = i2s_get_divider_x256_for_hz(mclk_sm_hz);

@@ -1,0 +1,45 @@
+---
+# Clang-Tidy Configuration
+# For more info: https://clang.llvm.org/extra/clang-tidy/checks/list.html
+
+Checks: >
+  -*,
+  bugprone-*,
+  misc-*,
+  performance-*,
+  readability-*,
+  -readability-braces-around-statements,
+  -readability-implicit-bool-conversion,
+  -readability-named-parameter,
+  -readability-inconsistent-declaration-parameter-name,
+  -readability-function-cognitive-complexity,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -readability-avoid-nested-conditional-operator,
+  -bugprone-reserved-identifier,
+  -bugprone-branch-clone,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -misc-include-cleaner,
+  -readability-redundant-declaration
+
+# Turn all enabled checks into errors
+# WarningsAsErrors: "*"
+
+CheckOptions:
+  - key: readability-identifier-naming.FunctionCase
+    value: lower_case
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.ParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.StructCase
+    value: lower_case
+  - key: readability-identifier-naming.EnumCase
+    value: lower_case
+  - key: readability-identifier-naming.EnumConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.MacroDefinitionCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.TypedefCase
+    value: lower_case

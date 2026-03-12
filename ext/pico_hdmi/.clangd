@@ -1,0 +1,5 @@
+CompileFlags:
+  CompilationDatabase: .
+  Add:
+    - --target=arm-none-eabi
+    - -Iinclude

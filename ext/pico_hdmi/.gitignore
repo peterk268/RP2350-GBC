@@ -1,0 +1,95 @@
+# Build artifacts
+build/
+build_*/
+.claude/
+
+# Temporary capture files
+*.pbm
+*.png
+data.txt
+screenlog.*
+tmp/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+*.swp
+*.swo
+*~
+*.wav
+*.png
+*.flac
+*.bin
+
+.obsidian
+.cache/
+
+# =============================================================================
+# KiCad
+# =============================================================================
+
+# Backup files
+*-backups/
+*.bak
+*.bck
+*-bak
+*-save.kicad_pcb
+*-save.kicad_sch
+*.kicad_pcb-bak
+*.kicad_sch-bak
+
+# Cache and temporary files
+*-cache.lib
+*.cache
+fp-info-cache
+sym-lib-table.backup
+
+# Lock files
+*.lck
+*.lock
+~*.lck
+
+# Project local settings (user-specific)
+*.kicad_prl
+
+# Auto-saved files
+*.000
+*.bak
+
+# Gerber job files (generated)
+*-job.gbrjob
+hardware/neopico-hd/**gerbers**
+
+# Drill files backup
+*.drl.bak
+
+# Reports (optional - uncomment if you don't want these in git)
+# *.rpt
+# *.csv
+# *.txt
+
+# 3D models cache
+*.wrl.cache
+*.step.cache
+
+# Fabrication outputs (optional - uncomment if generated locally)
+# gerbers/
+# fabrication/
+# *-gerbers/
+# Prevent large media files in reference/
+reference/*.wav
+reference/*.flac
+reference/*.mp3
+venv/
+
+# Compilation database
+compile_commands.json
+
+# hstx_lab dependencies
+src/misc/hstx_lab/lib/
+.gemini/
+gha-creds-*.json
+**/gemini-*.yml
+**/gemini-*.toml

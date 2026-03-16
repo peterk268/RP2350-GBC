@@ -61,6 +61,8 @@
 #define MP3_INACTIVE_TIMEOUT_US    (9000000ULL)   // 9 seconds
 #define MP3_NOW_PLAYING_TIMEOUT_US (7000000ULL)   // 2 seconds on now playing
 
+#define MP3_PROGRESS_BAR_RANGE     (DISP_HOR_RES - 26)  // 1 step per pixel — matches the bar's actual pixel width
+
 #define BLUE_COLA
 // #define GREEN
 // #define GOLD
@@ -1045,8 +1047,8 @@ static void mp3_update_progress(uint32_t current_ms, uint32_t total_ms) {
         lv_label_set_text(g_now_playing_time_label, combined);
     }
     if (g_now_playing_bar && total_ms > 0) {
-        int32_t pct = (int32_t)((uint64_t)current_ms * 100 / total_ms);
-        if (pct > 100) pct = 100;
+        int32_t pct = (int32_t)((uint64_t)current_ms * MP3_PROGRESS_BAR_RANGE / total_ms);
+        if (pct > MP3_PROGRESS_BAR_RANGE) pct = MP3_PROGRESS_BAR_RANGE;
         lv_bar_set_value(g_now_playing_bar, pct, LV_ANIM_OFF);
     }
 }
@@ -2267,7 +2269,7 @@ void draw_now_playing(lv_obj_t *parent)
     lv_obj_set_style_bg_color(bar, highlight_color, LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
 
-    lv_bar_set_range(bar, 0, 100);
+    lv_bar_set_range(bar, 0, MP3_PROGRESS_BAR_RANGE);
     g_now_playing_bar = bar;
     lv_bar_set_value(bar, 0, LV_ANIM_OFF);
 }

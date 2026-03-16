@@ -85,6 +85,15 @@ static lv_obj_t *mp3_hint_right_obj   = NULL;
 static lv_obj_t *mp3_status_label_obj = NULL;
 static lv_obj_t *mp3_top_bar          = NULL;
 static lv_obj_t *mp3_bottom_bar       = NULL;
+
+// === Now-Playing progress widgets (updated each playback loop) ===
+static lv_obj_t *g_now_playing_time_label  = NULL;
+static lv_obj_t *g_now_playing_bar         = NULL;
+static uint32_t  g_total_duration_ms       = 0;
+// Seek-correction for played_frames-based current time tracking.
+// After a seek: base = played_frames at seek time, offset = new logical ms.
+static uint64_t  g_time_display_base_frames = 0;
+static int64_t   g_time_display_offset_ms   = 0;
 // ===================================================================
 // Audio output mode (headphones / speaker / both)
 // ===================================================================
@@ -884,21 +893,34 @@ static bool seek_relative_seconds(
     drmp3 *mp3,
     int seconds,
     int sample_rate,
-    bool *decoded_next_chunk
+    bool *decoded_next_chunk,
+    uint32_t *seeked_byte_pos,   // out: byte position seeked to (before drmp3_init)
+    uint64_t played_frames_ref   // current played_frames for time calculation
 ){
     if (!stream) return false;
 
-    DWORD pos = f_tell(&stream->file);
+    DWORD fsize = f_size(&stream->file);
 
-    // Rough byte estimate: sample_rate * 2 bytes/sample * seconds
-    int64_t delta_bytes = (int64_t)sample_rate * 2 * seconds;
-    int64_t new_pos = (int64_t)pos + delta_bytes;
-
+    // Compute target byte from known current display time + seek delta.
+    // Using f_tell as a base is wrong because drmp3's internal buffer keeps
+    // f_tell far ahead of actual playback; g_time_display_* tracks real position.
+    int64_t new_pos;
+    if (g_total_duration_ms > 0 && fsize > 0) {
+        int64_t cur_ms = (int64_t)((played_frames_ref - g_time_display_base_frames) * 1000 / sample_rate)
+                         + g_time_display_offset_ms;
+        int64_t target_ms = cur_ms + (int64_t)seconds * 1000;
+        if (target_ms < 0) target_ms = 0;
+        if (target_ms > (int64_t)g_total_duration_ms) target_ms = (int64_t)g_total_duration_ms;
+        new_pos = (int64_t)fsize * target_ms / (int64_t)g_total_duration_ms;
+    } else {
+        // Fallback: use f_tell when duration unknown
+        new_pos = (int64_t)f_tell(&stream->file) + (int64_t)16000 * seconds;
+    }
     if (new_pos < 0) new_pos = 0;
-    if (new_pos > (int64_t)f_size(&stream->file))
-        new_pos = f_size(&stream->file);
+    if (new_pos > (int64_t)fsize) new_pos = (int64_t)fsize;
 
     f_lseek(&stream->file, (DWORD)new_pos);
+    if (seeked_byte_pos) *seeked_byte_pos = (uint32_t)new_pos;
 
     // Reset ring buffer
     stream->rd = 0;
@@ -1004,6 +1026,32 @@ void mp3_save_shutdown(int current_track_index, uint64_t played_frames, drmp3_ui
     save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
 }
 // ===================================================================
+// Now-playing progress helpers (must precede mp3_play_single_track)
+// ===================================================================
+static void format_time_ms(char *buf, size_t bufsz, uint32_t ms) {
+    uint32_t s = ms / 1000;
+    uint32_t m = s / 60;
+    s %= 60;
+    snprintf(buf, bufsz, "%u:%02u", m, s);
+}
+
+static void mp3_update_progress(uint32_t current_ms, uint32_t total_ms) {
+    if (!show_now_playing) return;
+    if (g_now_playing_time_label) {
+        char cur[8], tot[8], combined[18];
+        format_time_ms(cur, sizeof(cur), current_ms);
+        format_time_ms(tot, sizeof(tot), total_ms);
+        snprintf(combined, sizeof(combined), "%s / %s", cur, tot);
+        lv_label_set_text(g_now_playing_time_label, combined);
+    }
+    if (g_now_playing_bar && total_ms > 0) {
+        int32_t pct = (int32_t)((uint64_t)current_ms * 100 / total_ms);
+        if (pct > 100) pct = 100;
+        lv_bar_set_value(g_now_playing_bar, pct, LV_ANIM_OFF);
+    }
+}
+
+// ===================================================================
 // Single-track player: returns what the playlist should do next
 // ===================================================================
 typedef enum {
@@ -1019,6 +1067,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                            int current_track_index) {
 
     uint64_t played_frames = 0;
+    g_total_duration_ms = 0;
+    g_time_display_base_frames = 0;
+    g_time_display_offset_ms   = 0;
 
     FRESULT fr;
     play_result_t result = PLAY_RESULT_STOP;
@@ -1136,6 +1187,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
 
     // First buffer: decode & start DMA
+    // Capture position before ANY decoding so we can measure bytes-per-frame
+    // after all three pre-loop decodes (drmp3_init may pre-cache frames internally,
+    // so the first decode can consume 0 ring-buffer bytes; wait until the third).
+    uint32_t pos_before_first_decode = mp3_get_resume_offset(stream);
     drmp3_uint64 frames_play = drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_play);
     if (frames_play > 0) {
         played_frames += frames_play;
@@ -1167,6 +1222,102 @@ static play_result_t mp3_play_single_track(const char *filepath,
         played_frames += frames_fill;
     }
     mp3_zero_pcm_tail(buf_fill, frames_fill, PCM_FRAME_COUNT, channels);
+
+    // Estimate total track duration.
+    // Unified path: always read from the actual audio start in the file
+    // (skipping ID3v2 tag if present). Works identically for fresh start
+    // and resume — no divergent code paths that give different results.
+    {
+        static const uint16_t br_mpeg1d[16] = {0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0};
+        static const uint16_t br_mpeg2d[16] = {0, 8,16,24,32,40,48,56, 64, 80, 96,112,128,144,160,0};
+
+        // Parse ID3v2 tag size so we know where audio frames begin
+        uint32_t audio_start = 0;
+        {
+            uint8_t id3h[10];
+            UINT id3_br = 0;
+            FSIZE_t sp = f_tell(&stream->file);
+            if (f_lseek(&stream->file, 0) == FR_OK) {
+                f_read(&stream->file, id3h, sizeof(id3h), &id3_br);
+                f_lseek(&stream->file, sp);
+            }
+            if (id3_br >= 10 && id3h[0]=='I' && id3h[1]=='D' && id3h[2]=='3') {
+                uint32_t id3_size = ((uint32_t)(id3h[6] & 0x7F) << 21)
+                                  | ((uint32_t)(id3h[7] & 0x7F) << 14)
+                                  | ((uint32_t)(id3h[8] & 0x7F) <<  7)
+                                  |  (uint32_t)(id3h[9] & 0x7F);
+                audio_start = 10 + id3_size;
+                if (id3h[5] & 0x10) audio_start += 10; // ID3v2 footer present
+            }
+        }
+
+        // Read 512 bytes from the start of audio data
+        uint8_t hdr[512];
+        UINT hdr_br = 0;
+        {
+            FSIZE_t sp = f_tell(&stream->file);
+            if (f_lseek(&stream->file, audio_start) == FR_OK) {
+                f_read(&stream->file, hdr, sizeof(hdr), &hdr_br);
+                f_lseek(&stream->file, sp);
+            }
+        }
+
+        // Scan for first valid MP3 sync word, then Xing/VBRI/CBR
+        for (uint32_t i = 0; i + 3 < hdr_br; i++) {
+            if (hdr[i] != 0xFF || (hdr[i+1] & 0xE0) != 0xE0) continue;
+            int mpeg_ver = (hdr[i+1] >> 3) & 3;
+            int layer    = (hdr[i+1] >> 1) & 3;
+            int br_idx   = (hdr[i+2] >> 4) & 0xF;
+            int ch_mode  = (hdr[i+3] >> 6) & 3;
+            if (layer != 1 || br_idx == 0 || br_idx == 15) continue;
+            int br_kbps = (mpeg_ver == 3) ? br_mpeg1d[br_idx] : br_mpeg2d[br_idx];
+            if (br_kbps <= 0) continue;
+
+            uint32_t side_sz = (mpeg_ver == 3) ? ((ch_mode == 3) ? 17u : 32u)
+                                               : ((ch_mode == 3) ?  9u : 17u);
+            uint32_t xoff = i + 4 + side_sz;
+
+            if (xoff + 11 < hdr_br) {
+                bool is_xing = (hdr[xoff]=='X' && hdr[xoff+1]=='i' && hdr[xoff+2]=='n' && hdr[xoff+3]=='g') ||
+                               (hdr[xoff]=='I' && hdr[xoff+1]=='n' && hdr[xoff+2]=='f' && hdr[xoff+3]=='o');
+                bool is_vbri = (hdr[xoff]=='V' && hdr[xoff+1]=='B' && hdr[xoff+2]=='R' && hdr[xoff+3]=='I');
+                if (is_xing && (hdr[xoff+7] & 0x01)) {
+                    uint32_t tf = ((uint32_t)hdr[xoff+8]  << 24) | ((uint32_t)hdr[xoff+9]  << 16)
+                                | ((uint32_t)hdr[xoff+10] <<  8) |  hdr[xoff+11];
+                    uint32_t spf = (mpeg_ver == 3) ? 1152u : 576u;
+                    if (tf > 0 && mp3->sampleRate > 0) {
+                        g_total_duration_ms = (uint32_t)((uint64_t)tf * spf * 1000u / mp3->sampleRate);
+                        printf("MP3 duration (Xing %u frames): %u ms\n", tf, g_total_duration_ms);
+                    }
+                } else if (is_vbri && xoff + 17 < hdr_br) {
+                    uint32_t tf = ((uint32_t)hdr[xoff+14] << 24) | ((uint32_t)hdr[xoff+15] << 16)
+                                | ((uint32_t)hdr[xoff+16] <<  8) |  hdr[xoff+17];
+                    uint32_t spf = (mpeg_ver == 3) ? 1152u : 576u;
+                    if (tf > 0 && mp3->sampleRate > 0) {
+                        g_total_duration_ms = (uint32_t)((uint64_t)tf * spf * 1000u / mp3->sampleRate);
+                        printf("MP3 duration (VBRI %u frames): %u ms\n", tf, g_total_duration_ms);
+                    }
+                }
+            }
+
+            // CBR fallback: audio bytes * 8 / bitrate
+            if (g_total_duration_ms == 0) {
+                uint32_t audio_bytes = (file_size > audio_start) ? (file_size - audio_start) : file_size;
+                g_total_duration_ms = (uint32_t)((uint64_t)audio_bytes * 8u / (uint32_t)br_kbps);
+                printf("MP3 duration (CBR %d kbps): %u ms\n", br_kbps, g_total_duration_ms);
+            }
+            break;
+        }
+
+        // Seed display time from byte offset on resume (same audio_start basis)
+        if (g_byte_offset > 0 && g_total_duration_ms > 0 && file_size > audio_start) {
+            uint32_t audio_bytes   = file_size - audio_start;
+            uint32_t offset_in_audio = (g_byte_offset > audio_start) ? (g_byte_offset - audio_start) : 0;
+            uint32_t resume_ms = (uint32_t)((uint64_t)offset_in_audio * g_total_duration_ms / audio_bytes);
+            g_time_display_base_frames = played_frames;
+            g_time_display_offset_ms   = (int64_t)resume_ms;
+        }
+    }
 
     bool ready_chunk_valid = (frames_ready > 0);
     bool decoded_next_chunk = (frames_fill > 0);
@@ -1323,6 +1474,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
                         ready_chunk_valid = false;
                         decoded_next_chunk = false;
+                        // Reset seek correction: time restarts from 0
+                        g_time_display_base_frames = played_frames;
+                        g_time_display_offset_ms   = 0;
                         continue;
                     }
                     // Not EOF but no frames – try again next cycle
@@ -1562,8 +1716,16 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             int step = adaptive_seek_step_ms(held_ms);
                             printf("Rewind -%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
-                            if (seek_relative_seconds(stream, mp3, -step, mp3->sampleRate, &decoded_next_chunk)) {
+                            uint32_t seeked_pos = 0;
+                            if (seek_relative_seconds(stream, mp3, -step, mp3->sampleRate, &decoded_next_chunk, &seeked_pos, played_frames)) {
                                 ready_chunk_valid = false;
+                                // Derive display time from actual seeked byte position
+                                if (g_total_duration_ms > 0 && file_size > 0) {
+                                    int64_t new_ms = (int64_t)((uint64_t)seeked_pos * g_total_duration_ms / file_size);
+                                    if (new_ms < 0) new_ms = 0;
+                                    g_time_display_base_frames = played_frames;
+                                    g_time_display_offset_ms   = new_ms;
+                                }
                             }
                             left_last_seek_us = now_us;
                         }
@@ -1600,8 +1762,16 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             int step = adaptive_seek_step_ms(held_ms);
                             printf("Fast-forward +%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
-                            if (seek_relative_seconds(stream, mp3, step, mp3->sampleRate, &decoded_next_chunk)) {
+                            uint32_t seeked_pos = 0;
+                            if (seek_relative_seconds(stream, mp3, step, mp3->sampleRate, &decoded_next_chunk, &seeked_pos, played_frames)) {
                                 ready_chunk_valid = false;
+                                // Derive display time from actual seeked byte position
+                                if (g_total_duration_ms > 0 && file_size > 0) {
+                                    int64_t new_ms = (int64_t)((uint64_t)seeked_pos * g_total_duration_ms / file_size);
+                                    if (new_ms < 0) new_ms = 0;
+                                    g_time_display_base_frames = played_frames;
+                                    g_time_display_offset_ms   = new_ms;
+                                }
                             }
                             right_last_seek_us = now_us;
                         }
@@ -1774,6 +1944,20 @@ static play_result_t mp3_play_single_track(const char *filepath,
             lv_tick_inc(inc_ms);
             lv_timer_handler();
             last_lvgl_update = now;
+
+            // Update now-playing time label and progress bar.
+            // Use played_frames with seek correction for smooth ~1-second updates.
+            {
+                uint32_t cur_ms = 0;
+                if (mp3->sampleRate > 0) {
+                    int64_t raw_ms = (int64_t)((played_frames - g_time_display_base_frames) * 1000 / mp3->sampleRate)
+                                     + g_time_display_offset_ms;
+                    if (raw_ms > 0) cur_ms = (uint32_t)raw_ms;
+                    if (g_total_duration_ms > 0 && cur_ms > g_total_duration_ms)
+                        cur_ms = g_total_duration_ms;
+                }
+                mp3_update_progress(cur_ms, g_total_duration_ms);
+            }
         }
         // ==================================================
 
@@ -2056,7 +2240,14 @@ void draw_now_playing(lv_obj_t *parent)
     // ============================================================
     lv_obj_t *time_label = lv_label_create(parent);
     lv_obj_set_style_text_color(time_label, txt_color, 0);
-    lv_label_set_text(time_label, "0:39 / 2:54");
+    g_now_playing_time_label = time_label;
+    {
+        char cur_buf[8], tot_buf[8], combined[18];
+        format_time_ms(cur_buf, sizeof(cur_buf), 0);
+        format_time_ms(tot_buf, sizeof(tot_buf), g_total_duration_ms);
+        snprintf(combined, sizeof(combined), "%s / %s", cur_buf, tot_buf);
+        lv_label_set_text(time_label, combined);
+    }
     lv_obj_align_to(time_label, album_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, spacing);
 
     // ============================================================
@@ -2075,7 +2266,8 @@ void draw_now_playing(lv_obj_t *parent)
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
 
     lv_bar_set_range(bar, 0, 100);
-    lv_bar_set_value(bar, 35, LV_ANIM_OFF);
+    g_now_playing_bar = bar;
+    lv_bar_set_value(bar, 0, LV_ANIM_OFF);
 }
 
 static void mp3_show_message(lv_obj_t *list,

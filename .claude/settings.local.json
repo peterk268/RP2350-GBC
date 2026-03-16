@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cmake .. -DCMAKE_BUILD_TYPE=Release)"
+      "Bash(cmake .. -DCMAKE_BUILD_TYPE=Release)",
+      "Bash(cmake -B build -DCMAKE_BUILD_TYPE=Release)",
+      "Bash(cmake --build build)"
     ]
   }
 }

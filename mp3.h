@@ -35,10 +35,10 @@
 
 // Adaptive seek curve (seconds)
 #define SEEK_STEP_1S          1
-#define SEEK_STEP_2S          2
-#define SEEK_STEP_3S          3
-#define SEEK_STEP_5S          5
-#define SEEK_STEP_10S        10
+#define SEEK_STEP_2S          3
+#define SEEK_STEP_3S          6
+#define SEEK_STEP_5S         10
+#define SEEK_STEP_10S        30
 
 // Hold thresholds
 #define SEEK_STAGE_1_MS     1500

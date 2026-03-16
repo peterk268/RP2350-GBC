@@ -2240,6 +2240,8 @@ void draw_now_playing(lv_obj_t *parent)
     // ============================================================
     lv_obj_t *time_label = lv_label_create(parent);
     lv_obj_set_style_text_color(time_label, lv_color_hex(0x888888), 0);
+    lv_obj_set_width(time_label, DISP_HOR_RES - 26);
+    lv_obj_set_style_text_align(time_label, LV_TEXT_ALIGN_RIGHT, 0);
     g_now_playing_time_label = time_label;
     {
         char cur_buf[8], tot_buf[8], combined[18];

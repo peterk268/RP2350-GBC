@@ -20,8 +20,9 @@ void dac_i2c_read(uint8_t page, uint8_t reg, uint8_t *data, size_t length);
 
 #define ADC_MIN_CLIP   4     // below this → treat as 0
 #define ADC_MAX_CLIP   4050   // above this → treat as full scale
-#define DAC_MAX_VOL_SPK 80 // 127 is max
-#define DAC_MAX_VOL_HP  80 //100 // 127 is max
+#define DAC_MAX_VOL_SPK 80  // 127 is max
+#define DAC_MAX_VOL_HP  80  //100 // 127 is max
+#define ANALOG_GAIN     127 // 127 max
 #define MUTE_THRESH     1
 #define UNMUTE_THRESH   12
 #define USE_LINEAR_VOLUME_SCALING 0
@@ -201,8 +202,8 @@ void set_speaker_gain(uint8_t gain_l, uint8_t gain_r) {
     dac_i2c_write(1, 0x27, 0x80 | (127 - (gain_r & 0x7f)));
 }
 void set_headphone_gain(uint8_t gain_l, uint8_t gain_r) {
-    dac_i2c_write(1, 0x24, 0x80 | ((gain_l & 0x7f) - 127));
-    dac_i2c_write(1, 0x25, 0x80 | ((gain_r & 0x7f) - 127));
+    dac_i2c_write(1, 0x24, 0x80 | (127 - (gain_l & 0x7f)));
+    dac_i2c_write(1, 0x25, 0x80 | (127 - (gain_r & 0x7f)));
 }
 void set_gain(uint8_t gain) {
     set_headphone_gain(gain, gain);
@@ -332,7 +333,7 @@ void setup_dac() {
     // Unmute drivers and dacs after power up ramp
     unmute_drivers();
 
-    set_gain(0x7F); // max analog gain - volume ceiling controlled via DAC digital volume
+    set_gain(ANALOG_GAIN); // max analog gain - volume ceiling controlled via DAC digital volume
     unmute_dac(); // Unmute DAC
 }
 

@@ -143,6 +143,28 @@ static enum {
 // 340MHz = 17×20MHz: best audio balance (+0.39% at 44.1kHz, -1.18% at 48kHz) while still giving
 // ~6% more throughput vs 320MHz for demanding GBC games (e.g. Shantae).
 #define SYS_CLOCK_NORMAL_KHZ 340000u
+// 378MHz = 15×25.2MHz: use this instead of 340MHz when HDMI output is enabled (HSTX hstx_csr_clkdiv=15).
+#define SYS_CLOCK_HDMI_KHZ 378000u
+// Switch between normal DPI clock (340MHz, 1.25V) and HDMI clock (378MHz, 1.30V).
+// 1.30V = VREG_VOLTAGE_MAX (no voltage limit disable needed) — safe per Pimoroni thermal tests (~33C).
+// Device is docked/charging when HDMI is active so the extra draw is fine.
+// After switching to HDMI, call video_output_reconfigure_clock() from Core 1 to update clk_hstx.
+void switch_to_hdmi_clock(bool hdmi) {
+    if (hdmi) {
+        // Going up: raise voltage first, then frequency
+        vreg_set_voltage(VREG_VOLTAGE_1_30);
+        sleep_ms(10);
+        set_sys_clock_khz(SYS_CLOCK_HDMI_KHZ, true);
+    } else {
+        // Going down: lower frequency first, then voltage
+        set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);
+        vreg_set_voltage(VREG_VOLTAGE_1_25);
+    }
+    sleep_ms(10);
+#if ENABLE_PSRAM
+    sfe_psram_update_timing();
+#endif
+}
 void overclock_cpu(bool enable) {
     if (enable) {
 #if !SAFE_OVERCLOCK

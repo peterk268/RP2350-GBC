@@ -54,6 +54,9 @@
 #define NAV_PAGE_HOLD_TIME_MS       200   // tweak to taste
 #define NAV_PAGE_REPEAT_INTERVAL_MS 2000   // how often to page while held
 
+// Set to 1 to skip +/-4 fast-paging after hold; always step by 1
+#define NAV_FAST_PAGE_ENABLED       0
+
 // Maximum playlist size and path length
 #define MP3_MAX_TRACKS            4096
 #define MP3_MAX_PATH_LEN          256
@@ -1820,7 +1823,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             } else {
                                 // Optional auto-repeat paging while held
                                 uint64_t since_last_ms = (now_us - up_last_page_us) / 1000;
-                                if (since_last_ms >= NAV_PAGE_REPEAT_INTERVAL_MS) {
+                                if (NAV_FAST_PAGE_ENABLED && since_last_ms >= NAV_PAGE_REPEAT_INTERVAL_MS) {
                                     mp3_select_relative(-4, mp3_list_obj, g_playlist, g_track_count);
                                     // up_last_page_us = now_us;
                                 } else {
@@ -1868,7 +1871,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             } else {
                                 // Auto-repeat pages while held
                                 uint64_t since_last_ms = (now_us - down_last_page_us) / 1000;
-                                if (since_last_ms >= NAV_PAGE_REPEAT_INTERVAL_MS) {
+                                if (NAV_FAST_PAGE_ENABLED && since_last_ms >= NAV_PAGE_REPEAT_INTERVAL_MS) {
                                     // mp3_select_relative(+VISIBLE_ITEMS,
                                                         // mp3_list_obj, g_playlist, g_track_count);
                                     mp3_select_relative(+4, mp3_list_obj, g_playlist, g_track_count);

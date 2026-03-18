@@ -20,9 +20,9 @@ void dac_i2c_read(uint8_t page, uint8_t reg, uint8_t *data, size_t length);
 
 #define ADC_MIN_CLIP   4     // below this → treat as 0
 #define ADC_MAX_CLIP   4050   // above this → treat as full scale
-#define DAC_MAX_VOL_SPK 80  // 127 is max
-#define DAC_MAX_VOL_HP  80  //100 // 127 is max
-#define ANALOG_GAIN     127 // 127 max
+#define DAC_MAX_VOL_SPK 92  // 127 is max, 92 is unity 0dB
+#define DAC_MAX_VOL_HP  92  //100 // 127 is max
+#define ANALOG_GAIN     115 // 127 max, full pass through.. 110 nice with 92 same max dB as my prev combo of 80 DAC and 127 Analog -- -8.4dB, 115 at -6dB
 #define MUTE_THRESH     1
 #define UNMUTE_THRESH   12
 #define USE_LINEAR_VOLUME_SCALING 0
@@ -31,7 +31,7 @@ void dac_i2c_read(uint8_t page, uint8_t reg, uint8_t *data, size_t length);
 // Human audible reaction time is ~160ms, so we'll stay under this value for headphone detection polling.
 // We'll stay well under for volume polling too for smoother volume changes.
 // Who knows what kind of drugs people will be on to reduce that reaction time.
-#define VOL_POLL_US        20000   // 20ms = 50Hz
+#define VOL_POLL_US        100000  // 100ms = 10Hz
 #define HP_POLL_US         100000  // 100ms = 10Hz
 
 #define VOL_LUT_SIZE 256
@@ -84,7 +84,7 @@ void read_volume() {
     static uint64_t next_hp_us  = 0;
     uint64_t now = time_us_64();
 
-    // Volume reading every 10ms
+    // Volume reading every 100ms
     if ((int64_t)(now - next_vol_us) >= 0) {
         next_vol_us = now + VOL_POLL_US;
 

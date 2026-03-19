@@ -997,6 +997,47 @@ static uint32_t mp3_get_resume_offset(const mp3_stream_t *s) {
     uint32_t off  = (tell >= s->count) ? (tell - s->count) : 0;
     return off;
 }
+// Seek past ID3v2 tag so drmp3_init starts at audio frames immediately.
+// Also parses text metadata into stream->tags using stream->buf as scratch
+// (ring buffer must be empty when called). Returns audio start byte offset.
+static uint32_t mp3_skip_id3v2(FIL *f, mp3_stream_t *stream) {
+    uint8_t hdr[10];
+    UINT br;
+    if (f_lseek(f, 0) != FR_OK) return 0;
+    if (f_read(f, hdr, 10, &br) != FR_OK || br < 10) { f_lseek(f, 0); return 0; }
+    if (hdr[0] != 'I' || hdr[1] != 'D' || hdr[2] != '3') { f_lseek(f, 0); return 0; }
+
+    uint32_t tag_sz = ((uint32_t)(hdr[6] & 0x7F) << 21)
+                    | ((uint32_t)(hdr[7] & 0x7F) << 14)
+                    | ((uint32_t)(hdr[8] & 0x7F) <<  7)
+                    |  (uint32_t)(hdr[9] & 0x7F);
+    uint32_t skip_to = 10 + tag_sz;
+    if (hdr[5] & 0x10) skip_to += 10; // ID3v2 footer
+
+    // Parse text frames (title/artist/album) from the first chunk of the tag.
+    // Use stream->buf as scratch — ring buffer is empty here, no extra malloc needed.
+    // Text frames are always near the front; artwork (APIC) is typically last,
+    // so MP3_STREAM_BUF_SIZE bytes captures all the text we need.
+    if (stream && stream->buf && tag_sz > 0) {
+        uint32_t read_sz = (10 + tag_sz <= MP3_STREAM_BUF_SIZE)
+                         ? (10 + tag_sz) : MP3_STREAM_BUF_SIZE;
+        UINT tag_br = 0;
+        if (f_lseek(f, 0) == FR_OK)
+            f_read(f, stream->buf, read_sz, &tag_br);
+        memset(&stream->tags, 0, sizeof(stream->tags));
+        if (tag_br >= 10)
+            parse_id3v2(stream->buf, tag_br, &stream->tags);
+        // Ring buffer is now dirty with tag data — reset it
+        stream->rd = stream->wr = stream->count = 0;
+        stream->eof = false;
+    }
+
+    f_lseek(f, skip_to);
+    printf("ID3v2 skip: %lu bytes, title='%s'\n", (unsigned long)skip_to,
+           (stream && stream->tags.title[0]) ? stream->tags.title : "(none)");
+    return skip_to;
+}
+
 bool mp3_resume_open(mp3_stream_t *s, uint32_t byte_offset) {
     if (!s) return false;
 
@@ -1057,6 +1098,93 @@ static void mp3_update_progress(uint32_t current_ms, uint32_t total_ms) {
 }
 
 // ===================================================================
+// Track duration estimator (Xing/VBRI/CBR fallback)
+// Sets g_total_duration_ms. Call after drmp3_init.
+// ===================================================================
+static void mp3_estimate_track_duration(mp3_stream_t *stream, drmp3 *mp3, DWORD file_sz) {
+    g_total_duration_ms = 0;
+    if (!stream || !mp3 || file_sz == 0 || mp3->sampleRate == 0) return;
+
+    static const uint16_t br_mpeg1d[16] = {0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0};
+    static const uint16_t br_mpeg2d[16] = {0, 8,16,24,32,40,48,56, 64, 80, 96,112,128,144,160,0};
+
+    // audio_start: skip ID3v2 header if present
+    uint32_t audio_start = 0;
+    {
+        uint8_t id3h[10];
+        UINT id3_br = 0;
+        FSIZE_t sp = f_tell(&stream->file);
+        if (f_lseek(&stream->file, 0) == FR_OK) {
+            f_read(&stream->file, id3h, sizeof(id3h), &id3_br);
+            f_lseek(&stream->file, sp);
+        }
+        if (id3_br >= 10 && id3h[0]=='I' && id3h[1]=='D' && id3h[2]=='3') {
+            uint32_t id3_size = ((uint32_t)(id3h[6] & 0x7F) << 21)
+                              | ((uint32_t)(id3h[7] & 0x7F) << 14)
+                              | ((uint32_t)(id3h[8] & 0x7F) <<  7)
+                              |  (uint32_t)(id3h[9] & 0x7F);
+            audio_start = 10 + id3_size;
+            if (id3h[5] & 0x10) audio_start += 10;
+        }
+    }
+
+    uint8_t hdr[512];
+    UINT hdr_br = 0;
+    {
+        FSIZE_t sp = f_tell(&stream->file);
+        if (f_lseek(&stream->file, audio_start) == FR_OK) {
+            f_read(&stream->file, hdr, sizeof(hdr), &hdr_br);
+            f_lseek(&stream->file, sp);
+        }
+    }
+
+    for (uint32_t i = 0; i + 3 < hdr_br; i++) {
+        if (hdr[i] != 0xFF || (hdr[i+1] & 0xE0) != 0xE0) continue;
+        int mpeg_ver = (hdr[i+1] >> 3) & 3;
+        int layer    = (hdr[i+1] >> 1) & 3;
+        int br_idx   = (hdr[i+2] >> 4) & 0xF;
+        int ch_mode  = (hdr[i+3] >> 6) & 3;
+        if (layer != 1 || br_idx == 0 || br_idx == 15) continue;
+        int br_kbps = (mpeg_ver == 3) ? br_mpeg1d[br_idx] : br_mpeg2d[br_idx];
+        if (br_kbps <= 0) continue;
+
+        uint32_t side_sz = (mpeg_ver == 3) ? ((ch_mode == 3) ? 17u : 32u)
+                                           : ((ch_mode == 3) ?  9u : 17u);
+        uint32_t xoff = i + 4 + side_sz;
+
+        if (xoff + 11 < hdr_br) {
+            bool is_xing = (hdr[xoff]=='X' && hdr[xoff+1]=='i' && hdr[xoff+2]=='n' && hdr[xoff+3]=='g') ||
+                           (hdr[xoff]=='I' && hdr[xoff+1]=='n' && hdr[xoff+2]=='f' && hdr[xoff+3]=='o');
+            bool is_vbri = (hdr[xoff]=='V' && hdr[xoff+1]=='B' && hdr[xoff+2]=='R' && hdr[xoff+3]=='I');
+            if (is_xing && (hdr[xoff+7] & 0x01)) {
+                uint32_t tf = ((uint32_t)hdr[xoff+8]  << 24) | ((uint32_t)hdr[xoff+9]  << 16)
+                            | ((uint32_t)hdr[xoff+10] <<  8) |  hdr[xoff+11];
+                uint32_t spf = (mpeg_ver == 3) ? 1152u : 576u;
+                if (tf > 0) {
+                    g_total_duration_ms = (uint32_t)((uint64_t)tf * spf * 1000u / mp3->sampleRate);
+                    printf("MP3 duration (Xing %u frames): %u ms\n", tf, g_total_duration_ms);
+                }
+            } else if (is_vbri && xoff + 17 < hdr_br) {
+                uint32_t tf = ((uint32_t)hdr[xoff+14] << 24) | ((uint32_t)hdr[xoff+15] << 16)
+                            | ((uint32_t)hdr[xoff+16] <<  8) |  hdr[xoff+17];
+                uint32_t spf = (mpeg_ver == 3) ? 1152u : 576u;
+                if (tf > 0) {
+                    g_total_duration_ms = (uint32_t)((uint64_t)tf * spf * 1000u / mp3->sampleRate);
+                    printf("MP3 duration (VBRI %u frames): %u ms\n", tf, g_total_duration_ms);
+                }
+            }
+        }
+
+        if (g_total_duration_ms == 0) {
+            uint32_t audio_bytes = (file_sz > audio_start) ? (file_sz - audio_start) : file_sz;
+            g_total_duration_ms = (uint32_t)((uint64_t)audio_bytes * 8u / (uint32_t)br_kbps);
+            printf("MP3 duration (CBR %d kbps): %u ms\n", br_kbps, g_total_duration_ms);
+        }
+        break;
+    }
+}
+
+// ===================================================================
 // Single-track player: returns what the playlist should do next
 // ===================================================================
 typedef enum {
@@ -1100,7 +1228,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
         goto CLEANUP_STREAM_ONLY;
     }
 
-    // Seek from power down state
+    // Seek from power down state; otherwise skip past ID3 tag for fast init
     if (g_byte_offset > 0) {
         if (!mp3_resume_open(stream, g_byte_offset)) {
             // if seek fails, fall back to start
@@ -1109,6 +1237,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
             stream->count = 0;
             stream->eof = false;
         }
+    } else {
+        mp3_skip_id3v2(&stream->file, stream); // parses tags + seeks past ID3
     }
 
 
@@ -1119,8 +1249,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
     for (int i = 0; i < 4 && !stream->eof; i++) {
         mp3_refill(stream);
     }
-
-    memset(&stream->tags, 0, sizeof(stream->tags));
+    // Note: stream->tags was already populated by mp3_skip_id3v2 above.
+    // Do NOT memset here — that would wipe the parsed metadata.
 
     drmp3 *mp3 = (drmp3 *)calloc(1, sizeof(drmp3));
     if (!mp3) { result = PLAY_RESULT_NEXT; goto CLEANUP_FILE; }
@@ -1228,95 +1358,29 @@ static play_result_t mp3_play_single_track(const char *filepath,
     }
     mp3_zero_pcm_tail(buf_fill, frames_fill, PCM_FRAME_COUNT, channels);
 
-    // Estimate total track duration.
-    // Unified path: always read from the actual audio start in the file
-    // (skipping ID3v2 tag if present). Works identically for fresh start
-    // and resume — no divergent code paths that give different results.
-    {
-        static const uint16_t br_mpeg1d[16] = {0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0};
-        static const uint16_t br_mpeg2d[16] = {0, 8,16,24,32,40,48,56, 64, 80, 96,112,128,144,160,0};
+    // Estimate total track duration (Xing/VBRI/CBR)
+    mp3_estimate_track_duration(stream, mp3, file_size);
 
-        // Parse ID3v2 tag size so we know where audio frames begin
+    // Seed display time from byte offset on resume
+    if (g_byte_offset > 0 && g_total_duration_ms > 0 && file_size > 0) {
+        // Re-derive audio_start from ID3 header to get correct offset
         uint32_t audio_start = 0;
         {
-            uint8_t id3h[10];
-            UINT id3_br = 0;
+            uint8_t id3h[10]; UINT id3_br = 0;
             FSIZE_t sp = f_tell(&stream->file);
             if (f_lseek(&stream->file, 0) == FR_OK) {
                 f_read(&stream->file, id3h, sizeof(id3h), &id3_br);
                 f_lseek(&stream->file, sp);
             }
             if (id3_br >= 10 && id3h[0]=='I' && id3h[1]=='D' && id3h[2]=='3') {
-                uint32_t id3_size = ((uint32_t)(id3h[6] & 0x7F) << 21)
-                                  | ((uint32_t)(id3h[7] & 0x7F) << 14)
-                                  | ((uint32_t)(id3h[8] & 0x7F) <<  7)
-                                  |  (uint32_t)(id3h[9] & 0x7F);
+                uint32_t id3_size = ((uint32_t)(id3h[6]&0x7F)<<21)|((uint32_t)(id3h[7]&0x7F)<<14)
+                                  | ((uint32_t)(id3h[8]&0x7F)<< 7)| (uint32_t)(id3h[9]&0x7F);
                 audio_start = 10 + id3_size;
-                if (id3h[5] & 0x10) audio_start += 10; // ID3v2 footer present
+                if (id3h[5] & 0x10) audio_start += 10;
             }
         }
-
-        // Read 512 bytes from the start of audio data
-        uint8_t hdr[512];
-        UINT hdr_br = 0;
-        {
-            FSIZE_t sp = f_tell(&stream->file);
-            if (f_lseek(&stream->file, audio_start) == FR_OK) {
-                f_read(&stream->file, hdr, sizeof(hdr), &hdr_br);
-                f_lseek(&stream->file, sp);
-            }
-        }
-
-        // Scan for first valid MP3 sync word, then Xing/VBRI/CBR
-        for (uint32_t i = 0; i + 3 < hdr_br; i++) {
-            if (hdr[i] != 0xFF || (hdr[i+1] & 0xE0) != 0xE0) continue;
-            int mpeg_ver = (hdr[i+1] >> 3) & 3;
-            int layer    = (hdr[i+1] >> 1) & 3;
-            int br_idx   = (hdr[i+2] >> 4) & 0xF;
-            int ch_mode  = (hdr[i+3] >> 6) & 3;
-            if (layer != 1 || br_idx == 0 || br_idx == 15) continue;
-            int br_kbps = (mpeg_ver == 3) ? br_mpeg1d[br_idx] : br_mpeg2d[br_idx];
-            if (br_kbps <= 0) continue;
-
-            uint32_t side_sz = (mpeg_ver == 3) ? ((ch_mode == 3) ? 17u : 32u)
-                                               : ((ch_mode == 3) ?  9u : 17u);
-            uint32_t xoff = i + 4 + side_sz;
-
-            if (xoff + 11 < hdr_br) {
-                bool is_xing = (hdr[xoff]=='X' && hdr[xoff+1]=='i' && hdr[xoff+2]=='n' && hdr[xoff+3]=='g') ||
-                               (hdr[xoff]=='I' && hdr[xoff+1]=='n' && hdr[xoff+2]=='f' && hdr[xoff+3]=='o');
-                bool is_vbri = (hdr[xoff]=='V' && hdr[xoff+1]=='B' && hdr[xoff+2]=='R' && hdr[xoff+3]=='I');
-                if (is_xing && (hdr[xoff+7] & 0x01)) {
-                    uint32_t tf = ((uint32_t)hdr[xoff+8]  << 24) | ((uint32_t)hdr[xoff+9]  << 16)
-                                | ((uint32_t)hdr[xoff+10] <<  8) |  hdr[xoff+11];
-                    uint32_t spf = (mpeg_ver == 3) ? 1152u : 576u;
-                    if (tf > 0 && mp3->sampleRate > 0) {
-                        g_total_duration_ms = (uint32_t)((uint64_t)tf * spf * 1000u / mp3->sampleRate);
-                        printf("MP3 duration (Xing %u frames): %u ms\n", tf, g_total_duration_ms);
-                    }
-                } else if (is_vbri && xoff + 17 < hdr_br) {
-                    uint32_t tf = ((uint32_t)hdr[xoff+14] << 24) | ((uint32_t)hdr[xoff+15] << 16)
-                                | ((uint32_t)hdr[xoff+16] <<  8) |  hdr[xoff+17];
-                    uint32_t spf = (mpeg_ver == 3) ? 1152u : 576u;
-                    if (tf > 0 && mp3->sampleRate > 0) {
-                        g_total_duration_ms = (uint32_t)((uint64_t)tf * spf * 1000u / mp3->sampleRate);
-                        printf("MP3 duration (VBRI %u frames): %u ms\n", tf, g_total_duration_ms);
-                    }
-                }
-            }
-
-            // CBR fallback: audio bytes * 8 / bitrate
-            if (g_total_duration_ms == 0) {
-                uint32_t audio_bytes = (file_size > audio_start) ? (file_size - audio_start) : file_size;
-                g_total_duration_ms = (uint32_t)((uint64_t)audio_bytes * 8u / (uint32_t)br_kbps);
-                printf("MP3 duration (CBR %d kbps): %u ms\n", br_kbps, g_total_duration_ms);
-            }
-            break;
-        }
-
-        // Seed display time from byte offset on resume (same audio_start basis)
-        if (g_byte_offset > 0 && g_total_duration_ms > 0 && file_size > audio_start) {
-            uint32_t audio_bytes   = file_size - audio_start;
+        if (file_size > audio_start) {
+            uint32_t audio_bytes     = file_size - audio_start;
             uint32_t offset_in_audio = (g_byte_offset > audio_start) ? (g_byte_offset - audio_start) : 0;
             uint32_t resume_ms = (uint32_t)((uint64_t)offset_in_audio * g_total_duration_ms / audio_bytes);
             g_time_display_base_frames = played_frames;
@@ -2034,8 +2098,7 @@ END_PLAYBACK:
         prev_inactive = false;
     }
 
-    // Push a short silence to let the output settle before freeing buffers
-    i2s_dma_write(&i2s_config, (const uint16_t *)silence_buf);
+    // Push silence to let the output settle before freeing buffers
     i2s_dma_write(&i2s_config, (const uint16_t *)silence_buf);
 
     free(pcmA);

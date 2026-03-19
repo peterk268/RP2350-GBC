@@ -15,6 +15,7 @@
 // ===============================================================
 
 #include "dr_mp3.h"
+#include "dr_wav.h"
 #include "ff.h"
 #include <string.h>
 #include <stdlib.h>
@@ -593,6 +594,40 @@ static drmp3_bool32 mp3_stream_seek(void *pUserData, int offset, drmp3_seek_orig
     return DRMP3_FALSE;
 }
 
+// ===================================================================
+// WAV direct FatFS I/O callbacks (no ring buffer needed for WAV)
+// ===================================================================
+static size_t wav_fatfs_read(void *pUserData, void *pBufferOut, size_t bytesToRead) {
+    FIL *f = (FIL *)pUserData;
+    UINT br = 0;
+    f_read(f, pBufferOut, (UINT)bytesToRead, &br);
+    return (size_t)br;
+}
+
+static drwav_bool32 wav_fatfs_seek(void *pUserData, int offset, drwav_seek_origin origin) {
+    FIL *f = (FIL *)pUserData;
+    FSIZE_t new_pos;
+    if (origin == DRWAV_SEEK_SET) {
+        new_pos = (FSIZE_t)offset;
+    } else {
+        new_pos = f_tell(f) + (FSIZE_t)offset;
+    }
+    return (f_lseek(f, new_pos) == FR_OK) ? DRWAV_TRUE : DRWAV_FALSE;
+}
+
+static drwav_uint64 wav_fatfs_tell(void *pUserData) {
+    FIL *f = (FIL *)pUserData;
+    return (drwav_uint64)f_tell(f);
+}
+
+static void wav_estimate_track_duration(drwav *wav) {
+    g_total_duration_ms = 0;
+    if (!wav || wav->sampleRate == 0 || wav->totalPCMFrameCount == 0) return;
+    g_total_duration_ms = (uint32_t)((uint64_t)wav->totalPCMFrameCount * 1000 / wav->sampleRate);
+    printf("WAV duration: %u ms (%llu frames @ %u Hz)\n",
+           g_total_duration_ms, (unsigned long long)wav->totalPCMFrameCount, wav->sampleRate);
+}
+
 static inline void mp3_zero_pcm_tail(int16_t *pcm,
                                      drmp3_uint64 frames_decoded,
                                      uint32_t frame_capacity,
@@ -790,6 +825,21 @@ static bool has_mp3_extension(const char *name) {
             tolower_ascii(ext[3]) == '3');
 }
 
+// Check if name ends with ".wav" (case-insensitive)
+static bool has_wav_extension(const char *name) {
+    size_t len = strlen(name);
+    if (len < 4) return false;
+    const char *ext = name + len - 4;
+    return (tolower_ascii(ext[0]) == '.' &&
+            tolower_ascii(ext[1]) == 'w' &&
+            tolower_ascii(ext[2]) == 'a' &&
+            tolower_ascii(ext[3]) == 'v');
+}
+
+static bool has_audio_extension(const char *name) {
+    return has_mp3_extension(name) || has_wav_extension(name);
+}
+
 // Get basename from path ("music/rock.mp3" -> "rock.mp3")
 static const char* basename_from_path(const char *path) {
     const char *slash = strrchr(path, '/');
@@ -847,7 +897,7 @@ static int mp3_scan_dir(const char *dir) {
         if (name[0] == '.')
             continue;
 
-        if (!has_mp3_extension(name))
+        if (!has_audio_extension(name))
             continue;
 
         if (g_track_count >= g_playlist_cap)
@@ -868,7 +918,7 @@ static int mp3_scan_dir(const char *dir) {
     return added;
 }
 
-// Build playlist: try MUSIC_DIR, then fallback to root
+// Build playlist: scan MUSIC_DIR and root, combining all results
 static void mp3_build_playlist(void) {
     if (!mp3_playlist_init()) {
         printf("Playlist init failed\n");
@@ -879,14 +929,9 @@ static void mp3_build_playlist(void) {
     g_track_count = 0;
 
     int from_music = mp3_scan_dir(MUSIC_DIR);
-    if (from_music > 0) {
-        printf("Playlist: %d tracks found in '%s'\n", g_track_count, MUSIC_DIR);
-        return;
-    }
-
-    // Fallback to root
-    mp3_scan_dir("");
-    printf("Playlist: %d tracks found in root\n", g_track_count);
+    int from_root  = mp3_scan_dir("");
+    printf("Playlist: %d from '%s', %d from root, %d total\n",
+           from_music, MUSIC_DIR, from_root, g_track_count);
 }
 
 
@@ -1206,6 +1251,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
     FRESULT fr;
     play_result_t result = PLAY_RESULT_STOP;
+    bool is_wav = has_wav_extension(filepath);
 
     // --- Allocate stream structure + ring buffer in PSRAM ---
     mp3_stream_t *stream = (mp3_stream_t *)calloc(1, sizeof(mp3_stream_t));
@@ -1228,57 +1274,135 @@ static play_result_t mp3_play_single_track(const char *filepath,
         goto CLEANUP_STREAM_ONLY;
     }
 
-    // Seek from power down state; otherwise skip past ID3 tag for fast init
-    if (g_byte_offset > 0) {
-        if (!mp3_resume_open(stream, g_byte_offset)) {
-            // if seek fails, fall back to start
-            f_lseek(&stream->file, 0);
-            stream->rd = stream->wr = 0;
-            stream->count = 0;
-            stream->eof = false;
-        }
-    } else {
-        mp3_skip_id3v2(&stream->file, stream); // parses tags + seeks past ID3
-    }
-
-
     DWORD file_size = f_size(&stream->file);
-    printf("Streaming MP3 file (%lu bytes)...\n", (unsigned long)file_size);
 
-    // Initial small prefill
-    for (int i = 0; i < 4 && !stream->eof; i++) {
-        mp3_refill(stream);
+    // ---- WAV decoder ----
+    drwav *wav = NULL;
+    // ---- MP3 decoder ----
+    drmp3 *mp3 = NULL;
+
+    uint32_t track_sample_rate = 0;
+    uint8_t  track_channels    = 0;
+
+    if (is_wav) {
+        printf("Streaming WAV file (%lu bytes)...\n", (unsigned long)file_size);
+
+        wav = (drwav *)calloc(1, sizeof(drwav));
+        if (!wav) { result = PLAY_RESULT_NEXT; goto CLEANUP_FILE; }
+
+        if (!drwav_init(wav, wav_fatfs_read, wav_fatfs_seek, wav_fatfs_tell, &stream->file, NULL)) {
+            printf("E drwav_init failed for '%s'\n", filepath);
+            free(wav); wav = NULL;
+            result = PLAY_RESULT_NEXT;
+            goto CLEANUP_FILE;
+        }
+
+        track_sample_rate = wav->sampleRate;
+        track_channels    = (uint8_t)wav->channels;
+
+        // Populate tags from filename (WAV rarely carries metadata)
+        if (mp3_tags_ensure_alloc()) {
+            memset(g_mp3_tags, 0, sizeof(*g_mp3_tags));
+            const char *base = basename_from_path(filepath);
+            size_t blen = strlen(base);
+            // Strip ".wav" extension for display
+            size_t copy_len = (blen > 4) ? (blen - 4) : blen;
+            if (copy_len >= sizeof(g_mp3_tags->title)) copy_len = sizeof(g_mp3_tags->title) - 1;
+            memcpy(g_mp3_tags->title, base, copy_len);
+            g_mp3_tags->title[copy_len] = '\0';
+        }
+
+        wav_estimate_track_duration(wav);
+
+        // Resume: seek to approximate byte offset if requested
+        if (g_byte_offset > 0 && track_sample_rate > 0 && g_total_duration_ms > 0) {
+            uint64_t target_frame = (uint64_t)wav->totalPCMFrameCount * g_byte_offset / file_size;
+            if (drwav_seek_to_pcm_frame(wav, target_frame)) {
+                played_frames = target_frame;
+                g_time_display_base_frames = played_frames;
+                g_time_display_offset_ms   = (int64_t)(target_frame * 1000 / track_sample_rate);
+            }
+        }
+
+    } else {
+        printf("Streaming MP3 file (%lu bytes)...\n", (unsigned long)file_size);
+
+        // Seek from power down state; otherwise skip past ID3 tag for fast init
+        if (g_byte_offset > 0) {
+            if (!mp3_resume_open(stream, g_byte_offset)) {
+                f_lseek(&stream->file, 0);
+                stream->rd = stream->wr = 0;
+                stream->count = 0;
+                stream->eof = false;
+            }
+        } else {
+            mp3_skip_id3v2(&stream->file, stream); // parses tags + seeks past ID3
+        }
+
+        // Initial small prefill
+        for (int i = 0; i < 4 && !stream->eof; i++) {
+            mp3_refill(stream);
+        }
+
+        mp3 = (drmp3 *)calloc(1, sizeof(drmp3));
+        if (!mp3) { result = PLAY_RESULT_NEXT; goto CLEANUP_FILE; }
+
+        if (!drmp3_init(mp3,
+                        mp3_stream_read,
+                        NULL,
+                        NULL,
+                        drmp3_on_meta,
+                        stream,
+                        NULL)) {
+            printf("E drmp3_init failed\n");
+            result = PLAY_RESULT_NEXT;
+            goto CLEANUP_FILE;
+        }
+
+        track_sample_rate = mp3->sampleRate;
+        track_channels    = (uint8_t)mp3->channels;
+
+        if (mp3_tags_ensure_alloc()) {
+            *g_mp3_tags = stream->tags;
+        }
+
+        mp3_estimate_track_duration(stream, mp3, file_size);
+
+        // Seed display time from byte offset on resume
+        if (g_byte_offset > 0 && g_total_duration_ms > 0 && file_size > 0) {
+            uint32_t audio_start = 0;
+            {
+                uint8_t id3h[10]; UINT id3_br = 0;
+                FSIZE_t sp = f_tell(&stream->file);
+                if (f_lseek(&stream->file, 0) == FR_OK) {
+                    f_read(&stream->file, id3h, sizeof(id3h), &id3_br);
+                    f_lseek(&stream->file, sp);
+                }
+                if (id3_br >= 10 && id3h[0]=='I' && id3h[1]=='D' && id3h[2]=='3') {
+                    uint32_t id3_size = ((uint32_t)(id3h[6]&0x7F)<<21)|((uint32_t)(id3h[7]&0x7F)<<14)
+                                      | ((uint32_t)(id3h[8]&0x7F)<< 7)| (uint32_t)(id3h[9]&0x7F);
+                    audio_start = 10 + id3_size;
+                    if (id3h[5] & 0x10) audio_start += 10;
+                }
+            }
+            if (file_size > audio_start) {
+                uint32_t audio_bytes     = file_size - audio_start;
+                uint32_t offset_in_audio = (g_byte_offset > audio_start) ? (g_byte_offset - audio_start) : 0;
+                uint32_t resume_ms = (uint32_t)((uint64_t)offset_in_audio * g_total_duration_ms / audio_bytes);
+                g_time_display_base_frames = played_frames;
+                g_time_display_offset_ms   = (int64_t)resume_ms;
+            }
+        }
     }
-    // Note: stream->tags was already populated by mp3_skip_id3v2 above.
-    // Do NOT memset here — that would wipe the parsed metadata.
 
-    drmp3 *mp3 = (drmp3 *)calloc(1, sizeof(drmp3));
-    if (!mp3) { result = PLAY_RESULT_NEXT; goto CLEANUP_FILE; }
-
-    if (!drmp3_init(mp3,
-                    mp3_stream_read,
-                    NULL,   // no seek callback
-                    NULL,   // no tell
-                    drmp3_on_meta,
-                    stream, // pUserData
-                    NULL)) {
-        printf("E drmp3_init failed\n");
-        result = PLAY_RESULT_NEXT;
-        goto CLEANUP_FILE;
-    }
-
-    if (mp3_tags_ensure_alloc()) {
-        *g_mp3_tags = stream->tags;
-    }
-    // to update the tags
     if (show_now_playing) {
         draw_now_playing(mp3_list_obj);
     }
 
-    printf("MP3: %d Hz, %d ch\n", mp3->sampleRate, mp3->channels);
-    i2s_set_sample_freq(&i2s_config, mp3->sampleRate, false);
+    printf("%s: %u Hz, %u ch\n", is_wav ? "WAV" : "MP3", track_sample_rate, track_channels);
+    i2s_set_sample_freq(&i2s_config, track_sample_rate, false);
 
-    uint8_t channels = mp3->channels;
+    uint8_t channels = track_channels;
     uint32_t sample_count = PCM_FRAME_COUNT * channels;
 
     // Triple PCM buffers + silence buffer for pause (all in PSRAM)
@@ -1298,95 +1422,36 @@ static play_result_t mp3_play_single_track(const char *filepath,
     int16_t *buf_ready = pcmB;
     int16_t *buf_fill  = pcmC;
 
-    // Extra prefill before first decode
-    for (int i = 0; i < 4 && !stream->eof; i++) {
-        mp3_refill(stream);
+    // Extra prefill for MP3 ring buffer (WAV reads directly from FatFS)
+    if (!is_wav) {
+        for (int i = 0; i < 4 && !stream->eof; i++) {
+            mp3_refill(stream);
+        }
     }
 
-    // Resume position (if any)
-    // if (resume_position_ms > 0) {
-    //     printf("Seeking to resume position %u ms...\n", resume_position_ms);
+#define DECODE_FRAMES(dst) \
+    (is_wav ? (uint64_t)drwav_read_pcm_frames_s16(wav, PCM_FRAME_COUNT, (dst)) \
+            : (uint64_t)drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, (dst)))
 
-    //     if (mp3->sampleRate > 0) {
-    //         drmp3_uint64 target_frames =
-    //             (drmp3_uint64)resume_position_ms * mp3->sampleRate / 1000;
+    printf("Starting %s stream...\n", is_wav ? "WAV" : "MP3");
 
-    //         if (drmp3_seek_to_pcm_frame(mp3, target_frames)) {
-    //             played_frames = (uint64_t)target_frames;
-    //         } else {
-    //             printf("drmp3_seek_to_pcm_frame failed for resume\n");
-    //             played_frames = 0;
-    //         }
-    //     }
-    // }
-
-
-    // First buffer: decode & start DMA
-    // Capture position before ANY decoding so we can measure bytes-per-frame
-    // after all three pre-loop decodes (drmp3_init may pre-cache frames internally,
-    // so the first decode can consume 0 ring-buffer bytes; wait until the third).
-    uint32_t pos_before_first_decode = mp3_get_resume_offset(stream);
-    drmp3_uint64 frames_play = drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_play);
-    if (frames_play > 0) {
-        played_frames += frames_play;
-    }
+    (void)mp3_get_resume_offset(stream); // position snapshot (MP3 byte tracking)
+    uint64_t frames_play = DECODE_FRAMES(buf_play);
+    if (frames_play > 0) played_frames += frames_play;
     mp3_zero_pcm_tail(buf_play, frames_play, PCM_FRAME_COUNT, channels);
     i2s_dma_write(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_play));
 
-    // More prefill before second buffer
-    for (int i = 0; i < 4 && !stream->eof; i++) {
-        mp3_refill(stream);
+    if (!is_wav) {
+        for (int i = 0; i < 4 && !stream->eof; i++) mp3_refill(stream);
     }
 
-    // Decode second buffer into buf_ready
-    drmp3_uint64 frames_ready = drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_ready);
-    if (frames_ready > 0) {
-        played_frames += frames_ready;
-    }
+    uint64_t frames_ready = DECODE_FRAMES(buf_ready);
+    if (frames_ready > 0) played_frames += frames_ready;
     mp3_zero_pcm_tail(buf_ready, frames_ready, PCM_FRAME_COUNT, channels);
 
-    // Playback state
-    // audio_mode = headphones_present ? AUDIO_HP_ONLY : AUDIO_SPK_ONLY;
-    // apply_audio_mode();
-    // dac_i2c_write(1, 0x21, 0x06);   // 100ms ramp
-
-    printf("Starting MP3 stream...\n");
-
-    drmp3_uint64 frames_fill = drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_fill);
-    if (frames_fill > 0) {
-        played_frames += frames_fill;
-    }
+    uint64_t frames_fill = DECODE_FRAMES(buf_fill);
+    if (frames_fill > 0) played_frames += frames_fill;
     mp3_zero_pcm_tail(buf_fill, frames_fill, PCM_FRAME_COUNT, channels);
-
-    // Estimate total track duration (Xing/VBRI/CBR)
-    mp3_estimate_track_duration(stream, mp3, file_size);
-
-    // Seed display time from byte offset on resume
-    if (g_byte_offset > 0 && g_total_duration_ms > 0 && file_size > 0) {
-        // Re-derive audio_start from ID3 header to get correct offset
-        uint32_t audio_start = 0;
-        {
-            uint8_t id3h[10]; UINT id3_br = 0;
-            FSIZE_t sp = f_tell(&stream->file);
-            if (f_lseek(&stream->file, 0) == FR_OK) {
-                f_read(&stream->file, id3h, sizeof(id3h), &id3_br);
-                f_lseek(&stream->file, sp);
-            }
-            if (id3_br >= 10 && id3h[0]=='I' && id3h[1]=='D' && id3h[2]=='3') {
-                uint32_t id3_size = ((uint32_t)(id3h[6]&0x7F)<<21)|((uint32_t)(id3h[7]&0x7F)<<14)
-                                  | ((uint32_t)(id3h[8]&0x7F)<< 7)| (uint32_t)(id3h[9]&0x7F);
-                audio_start = 10 + id3_size;
-                if (id3h[5] & 0x10) audio_start += 10;
-            }
-        }
-        if (file_size > audio_start) {
-            uint32_t audio_bytes     = file_size - audio_start;
-            uint32_t offset_in_audio = (g_byte_offset > audio_start) ? (g_byte_offset - audio_start) : 0;
-            uint32_t resume_ms = (uint32_t)((uint64_t)offset_in_audio * g_total_duration_ms / audio_bytes);
-            g_time_display_base_frames = played_frames;
-            g_time_display_offset_ms   = (int64_t)resume_ms;
-        }
-    }
 
     bool ready_chunk_valid = (frames_ready > 0);
     bool decoded_next_chunk = (frames_fill > 0);
@@ -1434,7 +1499,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             watchdog_update();
 
             if (!gpio_read(GPIO_SW_OUT)) {
-                mp3_save_shutdown(current_track_index, played_frames, mp3->sampleRate, stream);
+                mp3_save_shutdown(current_track_index, played_frames, track_sample_rate, stream);
 
                 release_power();
 
@@ -1443,12 +1508,13 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 watchdog_reboot(0, 0, 0); // Force reboot
             }
 
-            // SD mini-refills
-            for (int i = 0;
-                 i < 2 && stream->count < (MP3_STREAM_BUF_SIZE * 3 / 4) && !stream->eof;
-                 i++) {
-                // printf("refill\n");
-                mp3_refill(stream);
+            // SD mini-refills (MP3 ring buffer only; WAV reads directly)
+            if (!is_wav) {
+                for (int i = 0;
+                     i < 2 && stream->count < (MP3_STREAM_BUF_SIZE * 3 / 4) && !stream->eof;
+                     i++) {
+                    mp3_refill(stream);
+                }
             }
 
             static uint64_t last_i2s = 0;
@@ -1493,8 +1559,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 if (replay_previous_chunk) {
                     replayed_chunk_count++;
                     // Prioritize ring-buffer refill and decode catch-up over UI work on underrun.
-                    for (int i = 0; i < 4 && stream->count < (MP3_STREAM_BUF_SIZE / 2) && !stream->eof; i++) {
-                        mp3_refill(stream);
+                    if (!is_wav) {
+                        for (int i = 0; i < 4 && stream->count < (MP3_STREAM_BUF_SIZE / 2) && !stream->eof; i++) {
+                            mp3_refill(stream);
+                        }
                     }
                     continue;
                 }
@@ -1502,36 +1570,40 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             // Decode into buf_fill only when we actually need another chunk.
             if (!decoded_next_chunk && !paused) {
-                drmp3_uint64 frames =
-                    drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, buf_fill);
+                uint64_t frames = DECODE_FRAMES(buf_fill);
 
                 if (frames > 0) {
                     played_frames += frames;
                     mp3_zero_pcm_tail(buf_fill, frames, PCM_FRAME_COUNT, channels);
                 }
 
+                bool at_eof = is_wav ? (frames == 0) : (frames == 0 && stream->eof);
+
                 if (frames == 0) {
-                    if (stream->eof) {
+                    if (at_eof) {
                         // Handle repeat logic
                         if (g_repeat_mode == REPEAT_OFF) {
-                            printf("MP3 EOF reached (no repeat) -> next track\n");
+                            printf("EOF reached (no repeat) -> next track\n");
                             next_track_requested = true;
                             result = PLAY_RESULT_NEXT;
                             goto END_PLAYBACK;
                         }
 
                         // Restart same track
-                        printf("MP3 EOF reached -> restarting track (repeat)\n");
-                        f_lseek(&stream->file, 0);
-                        stream->rd = stream->wr = stream->count = 0;
-                        stream->eof = false;
-
-                        drmp3_uninit(mp3);
-                        if (!drmp3_init(mp3, mp3_stream_read,
-                                        NULL, NULL, drmp3_on_meta, stream, NULL)) {
-                            printf("E drmp3_init after repeat\n");
-                            result = PLAY_RESULT_NEXT;
-                            goto END_PLAYBACK;
+                        printf("EOF reached -> restarting track (repeat)\n");
+                        if (is_wav) {
+                            drwav_seek_to_pcm_frame(wav, 0);
+                        } else {
+                            f_lseek(&stream->file, 0);
+                            stream->rd = stream->wr = stream->count = 0;
+                            stream->eof = false;
+                            drmp3_uninit(mp3);
+                            if (!drmp3_init(mp3, mp3_stream_read,
+                                            NULL, NULL, drmp3_on_meta, stream, NULL)) {
+                                printf("E drmp3_init after repeat\n");
+                                result = PLAY_RESULT_NEXT;
+                                goto END_PLAYBACK;
+                            }
                         }
 
                         // REPEAT_ONE: do only one extra loop, then OFF
@@ -1562,7 +1634,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // occasional battery monitor and rtc + sd refill and mp3 decoding can add up to ~20ms
             // i2s_timeout in us, typically 139ms for 44.1kHz and 128ms for 48kHz.
             static uint64_t last_controls_us = 0;
-            if (i2s_now - last_i2s > (PCM_FRAME_COUNT*1000000ULL / mp3->sampleRate) - 80*1000 || i2s_now - last_controls_us < 10*1000) {
+            if (i2s_now - last_i2s > (PCM_FRAME_COUNT*1000000ULL / track_sample_rate) - 80*1000 || i2s_now - last_controls_us < 10*1000) {
                 continue;
             }
             last_controls_us = i2s_now;
@@ -1785,17 +1857,33 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             int step = adaptive_seek_step_ms(held_ms);
                             printf("Rewind -%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
-                            uint32_t seeked_pos = 0;
-                            if (seek_relative_seconds(stream, mp3, -step, mp3->sampleRate, &decoded_next_chunk, &seeked_pos, played_frames)) {
-                                ready_chunk_valid = false;
-                                // Derive display time from actual seeked byte position
-                                if (g_total_duration_ms > 0 && file_size > 0) {
-                                    int64_t new_ms = (int64_t)((uint64_t)seeked_pos * g_total_duration_ms / file_size);
-                                    if (new_ms < 0) new_ms = 0;
+                            bool seek_ok = false;
+                            if (is_wav) {
+                                int64_t cur_ms = (int64_t)((played_frames - g_time_display_base_frames) * 1000 / track_sample_rate) + g_time_display_offset_ms;
+                                int64_t target_ms = cur_ms - (int64_t)step * 1000;
+                                if (target_ms < 0) target_ms = 0;
+                                drwav_uint64 target_frame = (drwav_uint64)((uint64_t)target_ms * track_sample_rate / 1000);
+                                if (drwav_seek_to_pcm_frame(wav, target_frame)) {
+                                    ready_chunk_valid = false;
+                                    decoded_next_chunk = false;
                                     g_time_display_base_frames = played_frames;
-                                    g_time_display_offset_ms   = new_ms;
+                                    g_time_display_offset_ms   = target_ms;
+                                    seek_ok = true;
+                                }
+                            } else {
+                                uint32_t seeked_pos = 0;
+                                if (seek_relative_seconds(stream, mp3, -step, track_sample_rate, &decoded_next_chunk, &seeked_pos, played_frames)) {
+                                    ready_chunk_valid = false;
+                                    if (g_total_duration_ms > 0 && file_size > 0) {
+                                        int64_t new_ms = (int64_t)((uint64_t)seeked_pos * g_total_duration_ms / file_size);
+                                        if (new_ms < 0) new_ms = 0;
+                                        g_time_display_base_frames = played_frames;
+                                        g_time_display_offset_ms   = new_ms;
+                                    }
+                                    seek_ok = true;
                                 }
                             }
+                            (void)seek_ok;
                             left_last_seek_us = now_us;
                         }
                     }
@@ -1831,17 +1919,34 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             int step = adaptive_seek_step_ms(held_ms);
                             printf("Fast-forward +%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
-                            uint32_t seeked_pos = 0;
-                            if (seek_relative_seconds(stream, mp3, step, mp3->sampleRate, &decoded_next_chunk, &seeked_pos, played_frames)) {
-                                ready_chunk_valid = false;
-                                // Derive display time from actual seeked byte position
-                                if (g_total_duration_ms > 0 && file_size > 0) {
-                                    int64_t new_ms = (int64_t)((uint64_t)seeked_pos * g_total_duration_ms / file_size);
-                                    if (new_ms < 0) new_ms = 0;
+                            bool seek_ok = false;
+                            if (is_wav) {
+                                int64_t cur_ms = (int64_t)((played_frames - g_time_display_base_frames) * 1000 / track_sample_rate) + g_time_display_offset_ms;
+                                int64_t target_ms = cur_ms + (int64_t)step * 1000;
+                                if (target_ms < 0) target_ms = 0;
+                                if (g_total_duration_ms > 0 && target_ms > (int64_t)g_total_duration_ms) target_ms = (int64_t)g_total_duration_ms;
+                                drwav_uint64 target_frame = (drwav_uint64)((uint64_t)target_ms * track_sample_rate / 1000);
+                                if (drwav_seek_to_pcm_frame(wav, target_frame)) {
+                                    ready_chunk_valid = false;
+                                    decoded_next_chunk = false;
                                     g_time_display_base_frames = played_frames;
-                                    g_time_display_offset_ms   = new_ms;
+                                    g_time_display_offset_ms   = target_ms;
+                                    seek_ok = true;
+                                }
+                            } else {
+                                uint32_t seeked_pos = 0;
+                                if (seek_relative_seconds(stream, mp3, step, track_sample_rate, &decoded_next_chunk, &seeked_pos, played_frames)) {
+                                    ready_chunk_valid = false;
+                                    if (g_total_duration_ms > 0 && file_size > 0) {
+                                        int64_t new_ms = (int64_t)((uint64_t)seeked_pos * g_total_duration_ms / file_size);
+                                        if (new_ms < 0) new_ms = 0;
+                                        g_time_display_base_frames = played_frames;
+                                        g_time_display_offset_ms   = new_ms;
+                                    }
+                                    seek_ok = true;
                                 }
                             }
+                            (void)seek_ok;
                             right_last_seek_us = now_us;
                         }
                     }
@@ -2018,8 +2123,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // Use played_frames with seek correction for smooth ~1-second updates.
             {
                 uint32_t cur_ms = 0;
-                if (mp3->sampleRate > 0) {
-                    int64_t raw_ms = (int64_t)((played_frames - g_time_display_base_frames) * 1000 / mp3->sampleRate)
+                if (track_sample_rate > 0) {
+                    int64_t raw_ms = (int64_t)((played_frames - g_time_display_base_frames) * 1000 / track_sample_rate)
                                      + g_time_display_offset_ms;
                     if (raw_ms > 0) cur_ms = (uint32_t)raw_ms;
                     if (g_total_duration_ms > 0 && cur_ms > g_total_duration_ms)
@@ -2045,7 +2150,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
         }
         if (low_power_shutdown) {
             shutdown_screen(1500);
-            mp3_save_shutdown(current_track_index, played_frames, mp3->sampleRate, stream);
+            mp3_save_shutdown(current_track_index, played_frames, track_sample_rate, stream);
 
             release_power(); // Cut power hold
             sleep_ms(1);
@@ -2107,6 +2212,11 @@ END_PLAYBACK:
     free(silence_buf);
 
 CLEANUP_MP3:
+    if (wav) {
+        drwav_uninit(wav);
+        free(wav);
+        wav = NULL;
+    }
     if (mp3) {
         drmp3_uninit(mp3);
         free(mp3);

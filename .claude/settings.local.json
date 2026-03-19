@@ -9,7 +9,8 @@
       "Bash(pdftotext /Users/peter/.claude/projects/-Users-peter-Desktop-Embedded-RP2350-GBC-Pico-Pal-GBC-v5-RP2350-GBC/d348bea9-1919-4335-9128-180ba61040d2/tool-results/webfetch-1773761766883-yrwxo0.pdf -)",
       "Bash(python3 -c \":*)",
       "WebFetch(domain:e2e.ti.com)",
-      "Bash(ls -la /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/*.h)"
+      "Bash(ls -la /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/*.h)",
+      "Bash(curl -fsSL \"https://raw.githubusercontent.com/mackron/dr_libs/master/dr_wav.h\" -o \"/Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/inc/dr_wav.h\")"
     ]
   }
 }

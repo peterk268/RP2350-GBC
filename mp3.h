@@ -652,6 +652,42 @@ static drflac_bool32 flac_fatfs_tell(void *pUserData, drflac_int64 *pCursor) {
     return DRFLAC_TRUE;
 }
 
+// Copy at most (dst_max-1) chars from a non-null-terminated vorbis comment value.
+// Finds "KEY=value" format; key comparison is case-insensitive.
+static void flac_vorbis_copy_tag(const char *comment, drflac_uint32 len,
+                                 const char *key, char *dst, size_t dst_max) {
+    size_t klen = strlen(key);
+    if (len <= klen || comment[klen] != '=') return;
+    // Case-insensitive key match
+    for (size_t i = 0; i < klen; i++) {
+        if ((comment[i] | 0x20) != (key[i] | 0x20)) return;
+    }
+    const char *val = comment + klen + 1;
+    drflac_uint32 vlen = len - (drflac_uint32)(klen + 1);
+    if (vlen >= (drflac_uint32)dst_max) vlen = (drflac_uint32)dst_max - 1;
+    memcpy(dst, val, vlen);
+    dst[vlen] = '\0';
+}
+
+static void flac_meta_callback(void *pUserData, drflac_metadata *pMetadata) {
+    (void)pUserData;
+    if (pMetadata->type != DRFLAC_METADATA_BLOCK_TYPE_VORBIS_COMMENT) return;
+    if (!g_mp3_tags) return;
+
+    drflac_vorbis_comment_iterator it;
+    drflac_init_vorbis_comment_iterator(&it,
+        pMetadata->data.vorbis_comment.commentCount,
+        pMetadata->data.vorbis_comment.pComments);
+
+    drflac_uint32 clen;
+    const char *comment;
+    while ((comment = drflac_next_vorbis_comment(&it, &clen)) != NULL) {
+        flac_vorbis_copy_tag(comment, clen, "title",  g_mp3_tags->title,  sizeof(g_mp3_tags->title));
+        flac_vorbis_copy_tag(comment, clen, "artist", g_mp3_tags->artist, sizeof(g_mp3_tags->artist));
+        flac_vorbis_copy_tag(comment, clen, "album",  g_mp3_tags->album,  sizeof(g_mp3_tags->album));
+    }
+}
+
 static void flac_estimate_track_duration(drflac *flac) {
     g_total_duration_ms = 0;
     if (!flac || flac->sampleRate == 0 || flac->totalPCMFrameCount == 0) return;
@@ -1372,7 +1408,13 @@ static play_result_t mp3_play_single_track(const char *filepath,
     } else if (is_flac) {
         printf("Streaming FLAC file (%lu bytes)...\n", (unsigned long)file_size);
 
-        flac = drflac_open(flac_fatfs_read, flac_fatfs_seek, flac_fatfs_tell, &stream->file, NULL);
+        // Alloc + clear tags before open so flac_meta_callback can write into them
+        if (mp3_tags_ensure_alloc()) {
+            memset(g_mp3_tags, 0, sizeof(*g_mp3_tags));
+        }
+
+        flac = drflac_open_with_metadata(flac_fatfs_read, flac_fatfs_seek, flac_fatfs_tell,
+                                         flac_meta_callback, &stream->file, NULL);
         if (!flac) {
             printf("E drflac_open failed for '%s'\n", filepath);
             result = PLAY_RESULT_NEXT;
@@ -1382,12 +1424,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
         track_sample_rate = flac->sampleRate;
         track_channels    = (uint8_t)flac->channels;
 
-        // Populate tags from filename (FLAC vorbis tags not parsed here)
-        if (mp3_tags_ensure_alloc()) {
-            memset(g_mp3_tags, 0, sizeof(*g_mp3_tags));
+        // Fallback: use filename if vorbis TITLE tag was absent
+        if (g_mp3_tags && g_mp3_tags->title[0] == '\0') {
             const char *base = basename_from_path(filepath);
             size_t blen = strlen(base);
-            // Strip ".flac" extension for display
             size_t copy_len = (blen > 5) ? (blen - 5) : blen;
             if (copy_len >= sizeof(g_mp3_tags->title)) copy_len = sizeof(g_mp3_tags->title) - 1;
             memcpy(g_mp3_tags->title, base, copy_len);

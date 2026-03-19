@@ -102,6 +102,7 @@ static lv_obj_t *mp3_bottom_bar       = NULL;
 static lv_obj_t *g_now_playing_time_label  = NULL;
 static lv_obj_t *g_now_playing_bar         = NULL;
 static uint32_t  g_total_duration_ms       = 0;
+static uint32_t  g_mp3_audio_start         = 0;  // byte offset of first audio frame (past ID3)
 // Seek-correction for played_frames-based current time tracking.
 // After a seek: base = played_frames at seek time, offset = new logical ms.
 static uint64_t  g_time_display_base_frames = 0;
@@ -1046,10 +1047,17 @@ static bool seek_relative_seconds(
         int64_t target_ms = cur_ms + (int64_t)seconds * 1000;
         if (target_ms < 0) target_ms = 0;
         if (target_ms > (int64_t)g_total_duration_ms) target_ms = (int64_t)g_total_duration_ms;
-        new_pos = (int64_t)fsize * target_ms / (int64_t)g_total_duration_ms;
+        // Map target_ms into the audio region only (skip the ID3 header)
+        int64_t audio_start = (int64_t)g_mp3_audio_start;
+        int64_t audio_bytes = (int64_t)fsize - audio_start;
+        if (audio_bytes < 0) audio_bytes = 0;
+        new_pos = audio_start + (audio_bytes > 0
+                  ? audio_bytes * target_ms / (int64_t)g_total_duration_ms
+                  : 0);
     } else {
-        // Fallback: use f_tell when duration unknown
+        // Fallback: use f_tell when duration unknown; clamp to audio start
         new_pos = (int64_t)f_tell(&stream->file) + (int64_t)16000 * seconds;
+        if (new_pos < (int64_t)g_mp3_audio_start) new_pos = (int64_t)g_mp3_audio_start;
     }
     if (new_pos < 0) new_pos = 0;
     if (new_pos > (int64_t)fsize) new_pos = (int64_t)fsize;
@@ -1257,6 +1265,7 @@ static void mp3_estimate_track_duration(mp3_stream_t *stream, drmp3 *mp3, DWORD 
             if (id3h[5] & 0x10) audio_start += 10;
         }
     }
+    g_mp3_audio_start = audio_start;
 
     uint8_t hdr[512];
     UINT hdr_br = 0;
@@ -1331,6 +1340,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
     uint64_t played_frames = 0;
     g_total_duration_ms = 0;
+    g_mp3_audio_start   = 0;
     g_time_display_base_frames = 0;
     g_time_display_offset_ms   = 0;
 
@@ -2049,9 +2059,11 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                 uint32_t seeked_pos = 0;
                                 if (seek_relative_seconds(stream, mp3, -step, track_sample_rate, &decoded_next_chunk, &seeked_pos, played_frames)) {
                                     ready_chunk_valid = false;
-                                    if (g_total_duration_ms > 0 && file_size > 0) {
-                                        int64_t new_ms = (int64_t)((uint64_t)seeked_pos * g_total_duration_ms / file_size);
-                                        if (new_ms < 0) new_ms = 0;
+                                    if (g_total_duration_ms > 0 && file_size > g_mp3_audio_start) {
+                                        int64_t audio_bytes = (int64_t)file_size - (int64_t)g_mp3_audio_start;
+                                        int64_t off = (int64_t)seeked_pos - (int64_t)g_mp3_audio_start;
+                                        if (off < 0) off = 0;
+                                        int64_t new_ms = off * (int64_t)g_total_duration_ms / audio_bytes;
                                         g_time_display_base_frames = played_frames;
                                         g_time_display_offset_ms   = new_ms;
                                     }
@@ -2114,9 +2126,11 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                 uint32_t seeked_pos = 0;
                                 if (seek_relative_seconds(stream, mp3, step, track_sample_rate, &decoded_next_chunk, &seeked_pos, played_frames)) {
                                     ready_chunk_valid = false;
-                                    if (g_total_duration_ms > 0 && file_size > 0) {
-                                        int64_t new_ms = (int64_t)((uint64_t)seeked_pos * g_total_duration_ms / file_size);
-                                        if (new_ms < 0) new_ms = 0;
+                                    if (g_total_duration_ms > 0 && file_size > g_mp3_audio_start) {
+                                        int64_t audio_bytes = (int64_t)file_size - (int64_t)g_mp3_audio_start;
+                                        int64_t off = (int64_t)seeked_pos - (int64_t)g_mp3_audio_start;
+                                        if (off < 0) off = 0;
+                                        int64_t new_ms = off * (int64_t)g_total_duration_ms / audio_bytes;
                                         g_time_display_base_frames = played_frames;
                                         g_time_display_offset_ms   = new_ms;
                                     }

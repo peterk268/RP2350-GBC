@@ -32,6 +32,11 @@
 #define MP3_STREAM_BUF_SIZE       (16 * 1024)   // 16 KB ring buffer (in PSRAM via malloc)
 #define MP3_REFILL_CHUNK          (4 * 1024)    // max bytes per SD read
 
+// FLAC dynamic seek cache (built while playing for files without an embedded seektable)
+#define FLAC_SEEK_CACHE_ENTRIES    512           // 512 * 10s = ~85 min coverage at 44100 Hz
+#define FLAC_SEEK_INTERVAL_FRAMES  441000ULL     // one seekpoint every ~10 seconds
+#define FLAC_READ_AHEAD_BYTES      4096          // dr_flac internal buffer size; subtract from f_tell
+
 // Directory used for music; fallback is root ("")
 #define MUSIC_DIR                 "music"
 
@@ -1359,8 +1364,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
     // ---- WAV decoder ----
     drwav  *wav  = NULL;
-    // ---- FLAC decoder ----
-    drflac *flac = NULL;
+    // ---- FLAC decoder + dynamic seek cache ----
+    drflac          *flac            = NULL;
+    drflac_seekpoint *flac_seekcache = NULL;
+    uint32_t         flac_seekcache_count = 0;
     // ---- MP3 decoder ----
     drmp3  *mp3  = NULL;
 
@@ -1437,6 +1444,24 @@ static play_result_t mp3_play_single_track(const char *filepath,
         }
 
         flac_estimate_track_duration(flac);
+
+        // Build a dynamic seek cache for files without an embedded seektable.
+        // dr_flac's pSeekpoints/seekpointCount are NOT separately freed by drflac_close
+        // (they live inside the pFlac allocation when present, or NULL). We can safely inject
+        // our own buffer and restore NULL before close.
+        if (flac->pSeekpoints == NULL || flac->seekpointCount == 0) {
+            flac_seekcache = (drflac_seekpoint *)calloc(FLAC_SEEK_CACHE_ENTRIES, sizeof(drflac_seekpoint));
+            if (flac_seekcache) {
+                // Anchor at frame 0 = start of audio data
+                flac_seekcache[0].firstPCMFrame  = 0;
+                flac_seekcache[0].flacFrameOffset = 0;
+                flac_seekcache[0].pcmFrameCount   = flac->maxBlockSizeInPCMFrames ? flac->maxBlockSizeInPCMFrames : 4096;
+                flac_seekcache_count = 1;
+                flac->pSeekpoints   = flac_seekcache;
+                flac->seekpointCount = flac_seekcache_count;
+                printf("FLAC: no seektable, building dynamic seek cache\n");
+            }
+        }
 
         // Resume: seek to approximate frame offset if requested
         if (g_byte_offset > 0 && track_sample_rate > 0 && g_total_duration_ms > 0 && flac->totalPCMFrameCount > 0) {
@@ -1700,6 +1725,27 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 if (frames > 0) {
                     played_frames += frames;
                     mp3_zero_pcm_tail(buf_fill, frames, PCM_FRAME_COUNT, channels);
+
+                    // Record a seekpoint every ~10 seconds for FLAC files without a seektable.
+                    // f_tell is up to FLAC_READ_AHEAD_BYTES ahead of the actual decode position;
+                    // we subtract that to ensure the stored offset is before the true frame boundary
+                    // so the binary search can always find the frame by scanning forward.
+                    if (is_flac && flac_seekcache && flac_seekcache_count < FLAC_SEEK_CACHE_ENTRIES) {
+                        drflac_uint64 next_sp = flac_seekcache[flac_seekcache_count - 1].firstPCMFrame
+                                                + FLAC_SEEK_INTERVAL_FRAMES;
+                        if (played_frames >= next_sp) {
+                            uint64_t fp = (uint64_t)f_tell(&stream->file);
+                            drflac_uint64 off = (fp > flac->firstFLACFramePosInBytes + FLAC_READ_AHEAD_BYTES)
+                                                ? (drflac_uint64)(fp - flac->firstFLACFramePosInBytes - FLAC_READ_AHEAD_BYTES)
+                                                : 0;
+                            flac_seekcache[flac_seekcache_count].firstPCMFrame  = played_frames;
+                            flac_seekcache[flac_seekcache_count].flacFrameOffset = off;
+                            flac_seekcache[flac_seekcache_count].pcmFrameCount  =
+                                flac->maxBlockSizeInPCMFrames ? flac->maxBlockSizeInPCMFrames : 4096;
+                            flac_seekcache_count++;
+                            flac->seekpointCount = flac_seekcache_count;
+                        }
+                    }
                 }
 
                 bool at_eof = (is_wav || is_flac) ? (frames == 0) : (frames == 0 && stream->eof);
@@ -2349,6 +2395,14 @@ CLEANUP_MP3:
         wav = NULL;
     }
     if (flac) {
+        if (flac_seekcache) {
+            // Restore original NULL state before close; drflac_close frees the pFlac block,
+            // not pSeekpoints separately, but be explicit to avoid any future confusion.
+            flac->pSeekpoints  = NULL;
+            flac->seekpointCount = 0;
+            free(flac_seekcache);
+            flac_seekcache = NULL;
+        }
         drflac_close(flac);
         flac = NULL;
     }

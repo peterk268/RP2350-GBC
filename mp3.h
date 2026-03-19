@@ -16,6 +16,7 @@
 
 #include "dr_mp3.h"
 #include "dr_wav.h"
+#include "dr_flac.h"
 #include "ff.h"
 #include <string.h>
 #include <stdlib.h>
@@ -615,9 +616,10 @@ static drwav_bool32 wav_fatfs_seek(void *pUserData, int offset, drwav_seek_origi
     return (f_lseek(f, new_pos) == FR_OK) ? DRWAV_TRUE : DRWAV_FALSE;
 }
 
-static drwav_uint64 wav_fatfs_tell(void *pUserData) {
+static drwav_bool32 wav_fatfs_tell(void *pUserData, drwav_int64 *pCursor) {
     FIL *f = (FIL *)pUserData;
-    return (drwav_uint64)f_tell(f);
+    *pCursor = (drwav_int64)f_tell(f);
+    return DRWAV_TRUE;
 }
 
 static void wav_estimate_track_duration(drwav *wav) {
@@ -626,6 +628,36 @@ static void wav_estimate_track_duration(drwav *wav) {
     g_total_duration_ms = (uint32_t)((uint64_t)wav->totalPCMFrameCount * 1000 / wav->sampleRate);
     printf("WAV duration: %u ms (%llu frames @ %u Hz)\n",
            g_total_duration_ms, (unsigned long long)wav->totalPCMFrameCount, wav->sampleRate);
+}
+
+// ===================================================================
+// FLAC direct FatFS I/O callbacks
+// ===================================================================
+static size_t flac_fatfs_read(void *pUserData, void *pBufferOut, size_t bytesToRead) {
+    FIL *f = (FIL *)pUserData;
+    UINT br = 0;
+    f_read(f, pBufferOut, (UINT)bytesToRead, &br);
+    return (size_t)br;
+}
+
+static drflac_bool32 flac_fatfs_seek(void *pUserData, int offset, drflac_seek_origin origin) {
+    FIL *f = (FIL *)pUserData;
+    FSIZE_t new_pos = (origin == DRFLAC_SEEK_SET) ? (FSIZE_t)offset : f_tell(f) + (FSIZE_t)offset;
+    return (f_lseek(f, new_pos) == FR_OK) ? DRFLAC_TRUE : DRFLAC_FALSE;
+}
+
+static drflac_bool32 flac_fatfs_tell(void *pUserData, drflac_int64 *pCursor) {
+    FIL *f = (FIL *)pUserData;
+    *pCursor = (drflac_int64)f_tell(f);
+    return DRFLAC_TRUE;
+}
+
+static void flac_estimate_track_duration(drflac *flac) {
+    g_total_duration_ms = 0;
+    if (!flac || flac->sampleRate == 0 || flac->totalPCMFrameCount == 0) return;
+    g_total_duration_ms = (uint32_t)((uint64_t)flac->totalPCMFrameCount * 1000 / flac->sampleRate);
+    printf("FLAC duration: %u ms (%llu frames @ %u Hz)\n",
+           g_total_duration_ms, (unsigned long long)flac->totalPCMFrameCount, flac->sampleRate);
 }
 
 static inline void mp3_zero_pcm_tail(int16_t *pcm,
@@ -836,8 +868,18 @@ static bool has_wav_extension(const char *name) {
             tolower_ascii(ext[3]) == 'v');
 }
 
+// Check if name ends with ".flac" (case-insensitive)
+static bool has_flac_extension(const char *name) {
+    size_t len = strlen(name);
+    if (len < 5) return false;
+    const char *e = name + len - 5;
+    return (e[0]=='.' &&
+            (e[1]=='f'||e[1]=='F') && (e[2]=='l'||e[2]=='L') &&
+            (e[3]=='a'||e[3]=='A') && (e[4]=='c'||e[4]=='C'));
+}
+
 static bool has_audio_extension(const char *name) {
-    return has_mp3_extension(name) || has_wav_extension(name);
+    return has_mp3_extension(name) || has_wav_extension(name) || has_flac_extension(name);
 }
 
 // Get basename from path ("music/rock.mp3" -> "rock.mp3")
@@ -1251,7 +1293,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
     FRESULT fr;
     play_result_t result = PLAY_RESULT_STOP;
-    bool is_wav = has_wav_extension(filepath);
+    bool is_wav  = has_wav_extension(filepath);
+    bool is_flac = has_flac_extension(filepath);
 
     // --- Allocate stream structure + ring buffer in PSRAM ---
     mp3_stream_t *stream = (mp3_stream_t *)calloc(1, sizeof(mp3_stream_t));
@@ -1277,9 +1320,11 @@ static play_result_t mp3_play_single_track(const char *filepath,
     DWORD file_size = f_size(&stream->file);
 
     // ---- WAV decoder ----
-    drwav *wav = NULL;
+    drwav  *wav  = NULL;
+    // ---- FLAC decoder ----
+    drflac *flac = NULL;
     // ---- MP3 decoder ----
-    drmp3 *mp3 = NULL;
+    drmp3  *mp3  = NULL;
 
     uint32_t track_sample_rate = 0;
     uint8_t  track_channels    = 0;
@@ -1318,6 +1363,43 @@ static play_result_t mp3_play_single_track(const char *filepath,
         if (g_byte_offset > 0 && track_sample_rate > 0 && g_total_duration_ms > 0) {
             uint64_t target_frame = (uint64_t)wav->totalPCMFrameCount * g_byte_offset / file_size;
             if (drwav_seek_to_pcm_frame(wav, target_frame)) {
+                played_frames = target_frame;
+                g_time_display_base_frames = played_frames;
+                g_time_display_offset_ms   = (int64_t)(target_frame * 1000 / track_sample_rate);
+            }
+        }
+
+    } else if (is_flac) {
+        printf("Streaming FLAC file (%lu bytes)...\n", (unsigned long)file_size);
+
+        flac = drflac_open(flac_fatfs_read, flac_fatfs_seek, flac_fatfs_tell, &stream->file, NULL);
+        if (!flac) {
+            printf("E drflac_open failed for '%s'\n", filepath);
+            result = PLAY_RESULT_NEXT;
+            goto CLEANUP_FILE;
+        }
+
+        track_sample_rate = flac->sampleRate;
+        track_channels    = (uint8_t)flac->channels;
+
+        // Populate tags from filename (FLAC vorbis tags not parsed here)
+        if (mp3_tags_ensure_alloc()) {
+            memset(g_mp3_tags, 0, sizeof(*g_mp3_tags));
+            const char *base = basename_from_path(filepath);
+            size_t blen = strlen(base);
+            // Strip ".flac" extension for display
+            size_t copy_len = (blen > 5) ? (blen - 5) : blen;
+            if (copy_len >= sizeof(g_mp3_tags->title)) copy_len = sizeof(g_mp3_tags->title) - 1;
+            memcpy(g_mp3_tags->title, base, copy_len);
+            g_mp3_tags->title[copy_len] = '\0';
+        }
+
+        flac_estimate_track_duration(flac);
+
+        // Resume: seek to approximate frame offset if requested
+        if (g_byte_offset > 0 && track_sample_rate > 0 && g_total_duration_ms > 0 && flac->totalPCMFrameCount > 0) {
+            uint64_t target_frame = (uint64_t)flac->totalPCMFrameCount * g_byte_offset / file_size;
+            if (drflac_seek_to_pcm_frame(flac, target_frame)) {
                 played_frames = target_frame;
                 g_time_display_base_frames = played_frames;
                 g_time_display_offset_ms   = (int64_t)(target_frame * 1000 / track_sample_rate);
@@ -1399,7 +1481,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
         draw_now_playing(mp3_list_obj);
     }
 
-    printf("%s: %u Hz, %u ch\n", is_wav ? "WAV" : "MP3", track_sample_rate, track_channels);
+    printf("%s: %u Hz, %u ch\n", is_wav ? "WAV" : is_flac ? "FLAC" : "MP3", track_sample_rate, track_channels);
     i2s_set_sample_freq(&i2s_config, track_sample_rate, false);
 
     uint8_t channels = track_channels;
@@ -1422,18 +1504,19 @@ static play_result_t mp3_play_single_track(const char *filepath,
     int16_t *buf_ready = pcmB;
     int16_t *buf_fill  = pcmC;
 
-    // Extra prefill for MP3 ring buffer (WAV reads directly from FatFS)
-    if (!is_wav) {
+    // Extra prefill for MP3 ring buffer (WAV/FLAC reads directly from FatFS)
+    if (!is_wav && !is_flac) {
         for (int i = 0; i < 4 && !stream->eof; i++) {
             mp3_refill(stream);
         }
     }
 
 #define DECODE_FRAMES(dst) \
-    (is_wav ? (uint64_t)drwav_read_pcm_frames_s16(wav, PCM_FRAME_COUNT, (dst)) \
-            : (uint64_t)drmp3_read_pcm_frames_s16(mp3, PCM_FRAME_COUNT, (dst)))
+    (is_wav  ? (uint64_t)drwav_read_pcm_frames_s16(wav,   PCM_FRAME_COUNT, (dst)) \
+     : is_flac ? (uint64_t)drflac_read_pcm_frames_s16(flac, PCM_FRAME_COUNT, (drflac_int16 *)(dst)) \
+               : (uint64_t)drmp3_read_pcm_frames_s16(mp3,  PCM_FRAME_COUNT, (dst)))
 
-    printf("Starting %s stream...\n", is_wav ? "WAV" : "MP3");
+    printf("Starting %s stream...\n", is_wav ? "WAV" : is_flac ? "FLAC" : "MP3");
 
     (void)mp3_get_resume_offset(stream); // position snapshot (MP3 byte tracking)
     uint64_t frames_play = DECODE_FRAMES(buf_play);
@@ -1441,7 +1524,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
     mp3_zero_pcm_tail(buf_play, frames_play, PCM_FRAME_COUNT, channels);
     i2s_dma_write(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_play));
 
-    if (!is_wav) {
+    if (!is_wav && !is_flac) {
         for (int i = 0; i < 4 && !stream->eof; i++) mp3_refill(stream);
     }
 
@@ -1508,8 +1591,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 watchdog_reboot(0, 0, 0); // Force reboot
             }
 
-            // SD mini-refills (MP3 ring buffer only; WAV reads directly)
-            if (!is_wav) {
+            // SD mini-refills (MP3 ring buffer only; WAV/FLAC reads directly)
+            if (!is_wav && !is_flac) {
                 for (int i = 0;
                      i < 2 && stream->count < (MP3_STREAM_BUF_SIZE * 3 / 4) && !stream->eof;
                      i++) {
@@ -1559,7 +1642,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 if (replay_previous_chunk) {
                     replayed_chunk_count++;
                     // Prioritize ring-buffer refill and decode catch-up over UI work on underrun.
-                    if (!is_wav) {
+                    if (!is_wav && !is_flac) {
                         for (int i = 0; i < 4 && stream->count < (MP3_STREAM_BUF_SIZE / 2) && !stream->eof; i++) {
                             mp3_refill(stream);
                         }
@@ -1577,7 +1660,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                     mp3_zero_pcm_tail(buf_fill, frames, PCM_FRAME_COUNT, channels);
                 }
 
-                bool at_eof = is_wav ? (frames == 0) : (frames == 0 && stream->eof);
+                bool at_eof = (is_wav || is_flac) ? (frames == 0) : (frames == 0 && stream->eof);
 
                 if (frames == 0) {
                     if (at_eof) {
@@ -1593,6 +1676,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
                         printf("EOF reached -> restarting track (repeat)\n");
                         if (is_wav) {
                             drwav_seek_to_pcm_frame(wav, 0);
+                        } else if (is_flac) {
+                            drflac_seek_to_pcm_frame(flac, 0);
                         } else {
                             f_lseek(&stream->file, 0);
                             stream->rd = stream->wr = stream->count = 0;
@@ -1858,12 +1943,14 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             printf("Rewind -%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
                             bool seek_ok = false;
-                            if (is_wav) {
+                            if (is_wav || is_flac) {
                                 int64_t cur_ms = (int64_t)((played_frames - g_time_display_base_frames) * 1000 / track_sample_rate) + g_time_display_offset_ms;
                                 int64_t target_ms = cur_ms - (int64_t)step * 1000;
                                 if (target_ms < 0) target_ms = 0;
-                                drwav_uint64 target_frame = (drwav_uint64)((uint64_t)target_ms * track_sample_rate / 1000);
-                                if (drwav_seek_to_pcm_frame(wav, target_frame)) {
+                                uint64_t target_frame = (uint64_t)target_ms * track_sample_rate / 1000;
+                                bool seeked = is_wav ? drwav_seek_to_pcm_frame(wav, (drwav_uint64)target_frame)
+                                                     : drflac_seek_to_pcm_frame(flac, (drflac_uint64)target_frame);
+                                if (seeked) {
                                     ready_chunk_valid = false;
                                     decoded_next_chunk = false;
                                     g_time_display_base_frames = played_frames;
@@ -1920,13 +2007,15 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             printf("Fast-forward +%ds (held %llums)\n", step, (unsigned long long)held_ms);
 
                             bool seek_ok = false;
-                            if (is_wav) {
+                            if (is_wav || is_flac) {
                                 int64_t cur_ms = (int64_t)((played_frames - g_time_display_base_frames) * 1000 / track_sample_rate) + g_time_display_offset_ms;
                                 int64_t target_ms = cur_ms + (int64_t)step * 1000;
                                 if (target_ms < 0) target_ms = 0;
                                 if (g_total_duration_ms > 0 && target_ms > (int64_t)g_total_duration_ms) target_ms = (int64_t)g_total_duration_ms;
-                                drwav_uint64 target_frame = (drwav_uint64)((uint64_t)target_ms * track_sample_rate / 1000);
-                                if (drwav_seek_to_pcm_frame(wav, target_frame)) {
+                                uint64_t target_frame = (uint64_t)target_ms * track_sample_rate / 1000;
+                                bool seeked = is_wav ? drwav_seek_to_pcm_frame(wav, (drwav_uint64)target_frame)
+                                                     : drflac_seek_to_pcm_frame(flac, (drflac_uint64)target_frame);
+                                if (seeked) {
                                     ready_chunk_valid = false;
                                     decoded_next_chunk = false;
                                     g_time_display_base_frames = played_frames;
@@ -2216,6 +2305,10 @@ CLEANUP_MP3:
         drwav_uninit(wav);
         free(wav);
         wav = NULL;
+    }
+    if (flac) {
+        drflac_close(flac);
+        flac = NULL;
     }
     if (mp3) {
         drmp3_uninit(mp3);

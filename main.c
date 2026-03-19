@@ -46,6 +46,8 @@
 #include "dr_mp3.h"
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
+#define DR_FLAC_IMPLEMENTATION
+#include "dr_flac.h"
 
 /* Main Modularization */
 #include "prototypes.h"

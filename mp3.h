@@ -610,8 +610,10 @@ static drwav_bool32 wav_fatfs_seek(void *pUserData, int offset, drwav_seek_origi
     FSIZE_t new_pos;
     if (origin == DRWAV_SEEK_SET) {
         new_pos = (FSIZE_t)offset;
+    } else if (origin == DRWAV_SEEK_END) {
+        new_pos = f_size(f) + (FSIZE_t)offset;  // offset is typically 0 when dr_wav measures file size
     } else {
-        new_pos = f_tell(f) + (FSIZE_t)offset;
+        new_pos = f_tell(f) + (FSIZE_t)offset;  // SEEK_CUR; unsigned wrap handles negative offsets
     }
     return (f_lseek(f, new_pos) == FR_OK) ? DRWAV_TRUE : DRWAV_FALSE;
 }

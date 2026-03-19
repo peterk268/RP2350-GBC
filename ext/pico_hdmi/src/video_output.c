@@ -457,7 +457,12 @@ void video_output_init(uint16_t width, uint16_t height)
                                 0, // No glitchless mux
                                 CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLK_SYS, sys_freq, MODE_HSTX_CLK_DIV);
 
-    // Claim DMA channels for HSTX (channels 0 and 1)
+    // Abort any in-flight transfers and forcefully take DMA channels 0 and 1.
+    // A previous owner (e.g. pico_scanvideo_dpi) may still hold the claim.
+    dma_channel_abort(DMACH_PING);
+    dma_channel_abort(DMACH_PONG);
+    if (dma_channel_is_claimed(DMACH_PING)) dma_channel_unclaim(DMACH_PING);
+    if (dma_channel_is_claimed(DMACH_PONG)) dma_channel_unclaim(DMACH_PONG);
     dma_channel_claim(DMACH_PING);
     dma_channel_claim(DMACH_PONG);
 

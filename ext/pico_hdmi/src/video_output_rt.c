@@ -136,8 +136,12 @@ static uint32_t current_sample_rate = 48000;
 static volatile const video_mode_t *pending_mode = NULL;
 static volatile bool resync_requested = false;
 
-#define DMACH_PING 0
-#define DMACH_PONG 1
+// DMA channels claimed at video_output_init() time from the pool of free channels.
+// Not hardcoded so we don't stomp on channels already in use (e.g. SD card SPI DMA).
+static uint dmach_ping = 0;
+static uint dmach_pong = 1;
+#define DMACH_PING dmach_ping
+#define DMACH_PONG dmach_pong
 
 // ============================================================================
 // Command Lists (runtime-filled)
@@ -650,9 +654,11 @@ void video_output_init(uint16_t width, uint16_t height)
                                 0, // No glitchless mux
                                 CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLK_SYS, sys_freq, initial_mode->hstx_clk_div);
 
-    // Claim DMA channels for HSTX (channels 0 and 1)
-    dma_channel_claim(DMACH_PING);
-    dma_channel_claim(DMACH_PONG);
+    // Claim two free DMA channels for HSTX ping-pong.
+    // Using dma_claim_unused_channel avoids stomping on channels already
+    // in use by other peripherals (e.g. SD card SPI DMA).
+    dmach_ping = dma_claim_unused_channel(true);
+    dmach_pong = dma_claim_unused_channel(true);
 
     // Update data island queue timing
     hstx_di_queue_set_v_total(initial_mode->v_total_lines);
@@ -728,7 +734,14 @@ void video_output_core1_run(void)
 
     dma_hw->ints0 = (1U << DMACH_PING) | (1U << DMACH_PONG);
     dma_hw->inte0 = (1U << DMACH_PING) | (1U << DMACH_PONG);
-    irq_set_exclusive_handler(DMA_IRQ_0, dma_irq_handler);
+    // Force-install our handler directly into the vector table via VTOR.
+    // irq_set_exclusive_handler() hard_asserts if a different exclusive
+    // handler (e.g. pico_scanvideo_dpi's) is already registered.
+    irq_set_enabled(DMA_IRQ_0, false);
+    {
+        uint32_t *vtable = (uint32_t *)(*(volatile uint32_t *)0xe000ed08u);
+        vtable[16 + DMA_IRQ_0] = (uint32_t)dma_irq_handler;
+    }
     irq_set_priority(DMA_IRQ_0, 0);
     irq_set_enabled(DMA_IRQ_0, true);
 

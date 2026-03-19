@@ -1,22 +1,25 @@
 /* Custom linker script based on memmap_default.ld
  *
- * Key difference: Core0 stack is placed in a dedicated 8KB region carved
- * from the top of main RAM instead of the 4KB SCRATCH_Y bank.
+ * Both cores get dedicated 8KB stack regions carved from the top of main RAM.
+ * SCRATCH_X is fully available for pico_hdmi time-critical DMA ISR code
+ * (which uses .scratch_x.* sections). SCRATCH_Y holds scratch data only.
  *
  * Memory layout:
- *   RAM          0x20000000 - 0x2007DFFF  (504 KB) data + BSS + heap
+ *   RAM          0x20000000 - 0x2007BFFF  (496 KB) data + BSS + heap
+ *   CORE1_STACK  0x2007C000 - 0x2007DFFF  (  8 KB) Core1 stack (grows down)
  *   CORE0_STACK  0x2007E000 - 0x2007FFFF  (  8 KB) Core0 stack (grows down)
- *   SCRATCH_X    0x20080000 - 0x20080FFF  (  4 KB) scratch_x data + Core1 stack
+ *   SCRATCH_X    0x20080000 - 0x20080FFF  (  4 KB) scratch_x data (pico_hdmi ISR)
  *   SCRATCH_Y    0x20081000 - 0x20081FFF  (  4 KB) scratch_y data
  *
  * Core0 stack grows down from 0x20080000 (end of CORE0_STACK).
- * Core1 stack grows down from 0x20081000 (end of SCRATCH_X), same as default.
+ * Core1 stack grows down from 0x2007E000 (end of CORE1_STACK).
  */
 
 MEMORY
 {
     INCLUDE "pico_flash_region.ld"
-    RAM(rwx)         : ORIGIN = 0x20000000, LENGTH = 0x7E000  /* 504 KB */
+    RAM(rwx)         : ORIGIN = 0x20000000, LENGTH = 0x7C000  /* 496 KB */
+    CORE1_STACK(rwx) : ORIGIN = 0x2007C000, LENGTH = 0x2000   /*   8 KB Core1 stack */
     CORE0_STACK(rwx) : ORIGIN = 0x2007E000, LENGTH = 0x2000   /*   8 KB Core0 stack */
     SCRATCH_X(rwx)   : ORIGIN = 0x20080000, LENGTH = 4k
     SCRATCH_Y(rwx)   : ORIGIN = 0x20081000, LENGTH = 4k
@@ -185,8 +188,8 @@ SECTIONS
         KEEP(*(.heap*))
     } > RAM
 
-    /* Heap may grow from __end__ up to ORIGIN(CORE0_STACK) */
-    __HeapLimit = ORIGIN(CORE0_STACK);
+    /* Heap may grow from __end__ up to ORIGIN(CORE1_STACK) */
+    __HeapLimit = ORIGIN(CORE1_STACK);
 
     .scratch_x : {
         __scratch_x_start__ = .;
@@ -204,13 +207,13 @@ SECTIONS
     } > SCRATCH_Y AT > FLASH
     __scratch_y_source__ = LOADADDR(.scratch_y);
 
-    /* Core1 stack: in SCRATCH_X, grows down from top (same as default) */
+    /* Core1 stack: dedicated 8KB region in main RAM, grows down from top */
     .stack1_dummy (NOLOAD):
     {
         *(.stack1*)
-    } > SCRATCH_X
+    } > CORE1_STACK
 
-    /* Core0 stack: in dedicated 8KB CORE0_STACK region, grows down from top */
+    /* Core0 stack: dedicated 8KB region in main RAM, grows down from top */
     .stack_dummy (NOLOAD):
     {
         KEEP(*(.stack*))
@@ -221,8 +224,8 @@ SECTIONS
         PROVIDE(__flash_binary_end = .);
     } > FLASH =0xaa
 
-    __StackLimit    = ORIGIN(CORE0_STACK);
-    __StackOneTop   = ORIGIN(SCRATCH_X) + LENGTH(SCRATCH_X);
+    __StackLimit    = ORIGIN(CORE1_STACK);
+    __StackOneTop   = ORIGIN(CORE1_STACK) + LENGTH(CORE1_STACK);
     __StackTop      = ORIGIN(CORE0_STACK) + LENGTH(CORE0_STACK);
     __StackOneBottom = __StackOneTop - SIZEOF(.stack1_dummy);
     __StackBottom   = __StackTop - SIZEOF(.stack_dummy);

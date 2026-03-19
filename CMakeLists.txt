@@ -60,6 +60,8 @@ pico_set_linker_script(RP2350_GBC ${CMAKE_CURRENT_LIST_DIR}/linker_custom.ld)
 add_subdirectory(ext/FatFs_SPI)
 add_subdirectory(ext/lvgl)
 add_subdirectory(ext/sparkfun_pico)
+set(PICO_HDMI_RUNTIME_MODES ON CACHE BOOL "Use runtime video mode switching" FORCE)
+add_subdirectory(ext/pico_hdmi)
 
 pico_set_program_name(RP2350_GBC "RP2350_GBC")
 pico_set_program_version(RP2350_GBC "0.1")
@@ -78,6 +80,7 @@ target_include_directories(RP2350_GBC BEFORE PRIVATE inc ext/minigb_apu ext/i2s)
 target_link_libraries(RP2350_GBC
         FatFs_SPI
         lvgl
+        pico_hdmi
         pico_stdlib pico_stdio pico_bootrom pico_multicore pico_stdio  pico_multicore
         hardware_clocks hardware_pio hardware_vreg hardware_pio hardware_pwm
         hardware_sync hardware_pll hardware_spi hardware_irq hardware_dma hardware_flash hardware_i2c pico_aon_timer hardware_powman
@@ -107,7 +110,7 @@ target_compile_definitions(RP2350_GBC PRIVATE
         PICO_PRINTF_SUPPORT_PTRDIFF_T=0
         
         PICO_STACK_SIZE=0x2000
-        PICO_CORE1_STACK_SIZE=0x1000
+        PICO_CORE1_STACK_SIZE=0x2000
         PICO_USE_STACK_GUARDS=1
         # SCAN VIDEO
         PICO_SCANVIDEO_ENABLE_DEN_PIN=1

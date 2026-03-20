@@ -2055,7 +2055,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                 if (seeked) {
                                     ready_chunk_valid = false;
                                     decoded_next_chunk = false;
-                                    g_time_display_base_frames = played_frames;
+                                    played_frames              = target_frame;
+                                    g_time_display_base_frames = target_frame;
                                     g_time_display_offset_ms   = target_ms;
                                     seek_ok = true;
                                 }
@@ -2122,7 +2123,8 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                 if (seeked) {
                                     ready_chunk_valid = false;
                                     decoded_next_chunk = false;
-                                    g_time_display_base_frames = played_frames;
+                                    played_frames              = target_frame;
+                                    g_time_display_base_frames = target_frame;
                                     g_time_display_offset_ms   = target_ms;
                                     seek_ok = true;
                                 }

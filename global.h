@@ -136,6 +136,8 @@ static enum {
     MODE_POWERSAVE
 } run_mode = MODE_NORMAL;
 
+static uint8_t powersave_saved_button_brightness = 0;
+
 // MARK: - Overclock
 // Not stable. Unpredictable and heat is a problem. 320MHz is most I'll go.
 #define SAFE_OVERCLOCK 1
@@ -148,6 +150,15 @@ static enum {
 // 300MHz = 15×20MHz: use this when playing 48kHz audio for a perfect integer I2S clock divider.
 // At 340MHz, 48kHz has -1.18% pitch error (div=14); at 300MHz, div=12 gives exact 48kHz.
 #define SYS_CLOCK_48KHZ_KHZ 300000u
+// Underclock speed for battery-saving mode.
+// With extreme battery save (audio disabled), we can go lower since audio quality is no longer a constraint.
+// No we cannot go lower.. Some GBC games will run slow so lets keep 180MHz.
+#if ENABLE_EXTREME_BATTERY_SAVE
+#define POWERSAVE_CLOCK_KHZ 180000u
+#else
+#define POWERSAVE_CLOCK_KHZ 180000u
+#endif
+
 // Switch between normal DPI clock (340MHz, 1.25V) and HDMI clock (378MHz, 1.30V).
 // 1.30V = VREG_VOLTAGE_MAX (no voltage limit disable needed) — safe per Pimoroni thermal tests (~33C).
 // Device is docked/charging when HDMI is active so the extra draw is fine.
@@ -190,15 +201,24 @@ void switch_to_48khz_clock(bool enable_48khz) {
     // Compensate LED PWM clkdiv so backlight frequency stays constant (~1.172 MHz) at both sys clocks.
     // At 300MHz: div=1.0 (hardware minimum). At 340MHz: div=340/300 to match.
     float led_div = enable_48khz ? 1.0f : ((float)SYS_CLOCK_NORMAL_KHZ / (float)SYS_CLOCK_48KHZ_KHZ);
-    pwm_set_clkdiv(pwm_gpio_to_slice_num(24), led_div);  // GPIO_LCD_LED
-    pwm_set_clkdiv(pwm_gpio_to_slice_num(45), led_div);  // GPIO_PWR_LED
-    pwm_set_clkdiv(pwm_gpio_to_slice_num(46), led_div);  // GPIO_BUTTON_LED
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_LCD_LED), led_div);  // GPIO_LCD_LED
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_PWR_LED), led_div);  // GPIO_PWR_LED
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_BUTTON_LED), led_div);  // GPIO_BUTTON_LED
     sleep_ms(10);
 #if ENABLE_PSRAM
     sfe_psram_update_timing();
 #endif
 }
 #endif
+// Compensate LED PWM clkdiv when switching between 340MHz (normal) and POWERSAVE_CLOCK_KHZ.
+// At POWERSAVE_CLOCK_KHZ: div=1.0 (hardware min). At 340MHz: div=ratio to match same PWM freq.
+void reconfigure_led_pwm_for_underclock(bool underclocked) {
+    float led_div = underclocked ? 1.0f : ((float)SYS_CLOCK_NORMAL_KHZ / (float)POWERSAVE_CLOCK_KHZ);
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_LCD_LED),    led_div);
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_PWR_LED),    led_div);
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_BUTTON_LED), led_div);
+}
+
 void overclock_cpu(bool enable) {
     if (enable) {
 #if !SAFE_OVERCLOCK
@@ -226,8 +246,7 @@ void overclock_cpu(bool enable) {
     }
 }
 
-// Clocking CPU to 180MHz with frame skip on for 30fps gameplay with reduced sound quality.
-// More advanced GBC games will not reach 60fps with this and need normal high clock.
+// Clocking CPU down for battery-saving mode (POWERSAVE_CLOCK_KHZ).
 // This does save good power, up to 100mW which equates to ~1.75h more battery life at mid level consumption,
 //  so it's useful in a low power mode for non-demanding games like Pokemon.
 // VREG_VOLTAGE_DEFAULT is 1.1V and gave the best power consumption. Going lower doesn't help.
@@ -235,7 +254,7 @@ void overclock_cpu(bool enable) {
 void underclock_cpu(bool enable) {
 	if (enable) {
 		// Going down: lower frequency first, then voltage
-		set_sys_clock_khz(180 * 1000, true);
+		set_sys_clock_khz(POWERSAVE_CLOCK_KHZ, true);
 		sleep_ms(10);
 
 		vreg_set_voltage(VREG_VOLTAGE_DEFAULT);

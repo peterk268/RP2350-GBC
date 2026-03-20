@@ -355,10 +355,6 @@ while(true)
 			// I don't think anyone will miss their Pico Pal taking longer to turn off just for the LEDs to fade out lol.
 			// Power on made sense because that takes like a second to init everything but power off is instant.
 
-			if (run_mode == MODE_POWERSAVE) {
-				// if run mode was power save, step back up the lcd brightness
-				step_lcd_brightness(true);
-			}
 			uint8_t temp_lcd_led = lcd_led_duty_cycle;
 			uint8_t temp_button_led = button_led_duty_cycle;
 			decrease_button_brightness(MAX_BRIGHTNESS);
@@ -412,11 +408,6 @@ while(true)
 			// need this before everything else because sd busy will shut off lcd
 			shutdown_screen(1500);
 
-			if (run_mode == MODE_POWERSAVE) {
-				// if run mode was power save, step back up the lcd brightness
-				step_lcd_brightness(true);
-			}
-
 			uint8_t temp_lcd_led = lcd_led_duty_cycle;
 			uint8_t temp_button_led = button_led_duty_cycle;
 			decrease_button_brightness(MAX_BRIGHTNESS);
@@ -449,15 +440,20 @@ while(true)
 		gb_run_frame(&gb);
 
 #if ENABLE_SOUND
-		// if its not frame skip and not skipping audio frame and not enabling skipping then play audio
-		if (!should_skip_audio_frame || !gb.direct.frame_skip || !SKIP_AUDIO_FRAMES_IN_FRAME_SKIP) {
-			read_volume(&i2s_config);
-			audio_callback(NULL, stream, AUDIO_BUFFER_SIZE_BYTES);
-			i2s_dma_write(&i2s_config, stream);
-		}
+#if ENABLE_EXTREME_BATTERY_SAVE
+		if (run_mode != MODE_POWERSAVE)
+#endif
+		{
+			// if its not frame skip and not skipping audio frame and not enabling skipping then play audio
+			if (!should_skip_audio_frame || !gb.direct.frame_skip || !SKIP_AUDIO_FRAMES_IN_FRAME_SKIP) {
+				read_volume(&i2s_config);
+				audio_callback(NULL, stream, AUDIO_BUFFER_SIZE_BYTES);
+				i2s_dma_write(&i2s_config, stream);
+			}
 # if SKIP_AUDIO_FRAMES_IN_FRAME_SKIP
-		should_skip_audio_frame = !should_skip_audio_frame;
+			should_skip_audio_frame = !should_skip_audio_frame;
 # endif
+		}
 #endif
 
 		// MARK: - Update buttons state

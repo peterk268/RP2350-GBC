@@ -40,6 +40,9 @@
 #define FPS_LIMITER_ENABLED 1
 
 #define ENABLE_BAT_MONITORING 1
+// Extreme battery save: shuts off audio amp, stops audio processing, kills button LEDs,
+// and fixes LED PWM clkdiv for the 180MHz underclock instead of stepping LCD brightness.
+#define ENABLE_EXTREME_BATTERY_SAVE 1
 #define BAT_IMMEDIATE_CHECK 1
 #define BATTERY_TIMER_INTERVAL_MS 10000
 #define BAT_MONITOR_DEBUG 0

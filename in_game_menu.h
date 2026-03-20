@@ -108,21 +108,6 @@ void in_game_load_auto_state() {
     }
 }
 
-void in_game_toggle_battery_save_mode() {
-    if (run_mode != MODE_POWERSAVE) {
-        // enable power save
-        run_mode = MODE_POWERSAVE;
-        underclock_cpu(true);           // 180 MHz
-        step_lcd_brightness(false);     // lower brightness since lcd looks brighter with less refresh
-        gb.direct.frame_skip = true;    // skip each other frame
-    } else {
-        // disable power save → back to normal
-        run_mode = MODE_NORMAL;
-        underclock_cpu(false);
-        step_lcd_brightness(true);
-        gb.direct.frame_skip = false;
-    }
-}
 
 void in_game_screenshot() {
     write_screenshot_png_from_fb(front_fb, -1, false);
@@ -386,8 +371,19 @@ static void in_game_next_color_palette(void) {
 static void ig_set_mode_normal(void) {
     if (run_mode == MODE_POWERSAVE) {
         // restoring from powersave
+        reconfigure_led_pwm_for_underclock(false);
         underclock_cpu(false);
-        step_lcd_brightness(true);
+#if ENABLE_EXTREME_BATTERY_SAVE
+        gpio_write(IOX_AUDIO_EN, 1);
+        sleep_ms(10); // let LDO stabilise before DAC init
+        setup_dac();
+        current_volume_level = 0;
+        read_volume();
+        button_led_duty_cycle = powersave_saved_button_brightness;
+        pwm_set_chan_level(pwm_gpio_to_slice_num(GPIO_BUTTON_LED),
+                          pwm_gpio_to_channel(GPIO_BUTTON_LED),
+                          powersave_saved_button_brightness);
+#endif
     }
     run_mode = MODE_NORMAL;
     gb.direct.frame_skip = false;
@@ -408,7 +404,12 @@ static void ig_set_mode_powersave(void) {
     // If we were turbo, we’re switching modes anyway. Just force powersave behavior.
     run_mode = MODE_POWERSAVE;
     underclock_cpu(true);
-    step_lcd_brightness(false);
+    reconfigure_led_pwm_for_underclock(true);
+#if ENABLE_EXTREME_BATTERY_SAVE
+    powersave_saved_button_brightness = button_led_duty_cycle;
+    decrease_button_brightness(MAX_BRIGHTNESS);
+    gpio_write(IOX_AUDIO_EN, 0);
+#endif
     gb.direct.frame_skip = true;
 }
 
@@ -421,6 +422,11 @@ static void ig_toggle_fast_forward(void) {
 static void ig_toggle_battery_save(void) {
     if (run_mode == MODE_POWERSAVE) ig_set_mode_normal();
     else ig_set_mode_powersave(); // this implicitly disables turbo
+}
+
+// Public hotkey entry point — delegates to the same mode setters used by the menu.
+void in_game_toggle_battery_save_mode() {
+    ig_toggle_battery_save();
 }
 
 // ================================================================
@@ -786,10 +792,6 @@ void in_game_menu() {
         g_request_exit_to_rom_selector = true;
     } else if (requested_action == IG_ACT_SLEEP) {
 
-        if (run_mode == MODE_POWERSAVE) {
-            // if run mode was power save, step back up the lcd brightness
-            step_lcd_brightness(true);
-        }
         uint8_t temp_lcd_led = lcd_led_duty_cycle;
         // sd busy handles lcd led turn off
 #if LED_PHASE_OUT_PWR_DOWN
@@ -826,11 +828,13 @@ void in_game_menu() {
         // start back up everything
         wakeup_and_start_peripherals();
 
-
+#if ENABLE_EXTREME_BATTERY_SAVE
         if (run_mode == MODE_POWERSAVE) {
-            // if run mode was power save, step back down the lcd brightness
-            step_lcd_brightness(false);
+            // wakeup restored button LEDs and audio amp — re-suppress them for extreme powersave
+            gpio_write(IOX_AUDIO_EN, 0);
+            decrease_button_brightness(MAX_BRIGHTNESS);
         }
+#endif
     }
 
     g_request_exit_menu = false; 

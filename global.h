@@ -168,11 +168,17 @@ void switch_to_hdmi_clock(bool hdmi) {
     sfe_psram_update_timing();
 #endif
 }
+
+#define ALLOW_48KHz_PERFECT_PITCH 0
+#if ALLOW_48KHz_PERFECT_PITCH
+bool enabled_48khz = false;
 // Switch to 300MHz when playing 48kHz audio (perfect integer I2S divider), back to 340MHz otherwise.
 // Voltage stays at 1.25V — no change needed. Both clocks are integer multiples of DPI_PCLK (20MHz).
 // PWM clkdiv is adjusted proportionally so backlight brightness stays constant — at 300MHz the minimum
 // divider (1.0) gives ~1.172MHz; at 340MHz we set 340/300≈1.133 to match that same frequency.
 void switch_to_48khz_clock(bool enable_48khz) {
+    if (enable_48khz == enabled_48khz) return; // no change
+    enabled_48khz = enable_48khz;
     if (enable_48khz) {
         // Going down: lower frequency first, voltage unchanged (1.25V is fine at 300MHz)
         set_sys_clock_khz(SYS_CLOCK_48KHZ_KHZ, true);
@@ -191,6 +197,7 @@ void switch_to_48khz_clock(bool enable_48khz) {
     sfe_psram_update_timing();
 #endif
 }
+#endif
 void overclock_cpu(bool enable) {
     if (enable) {
 #if !SAFE_OVERCLOCK

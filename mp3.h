@@ -1559,8 +1559,10 @@ static play_result_t mp3_play_single_track(const char *filepath,
     }
 
     printf("%s: %u Hz, %u ch\n", is_wav ? "WAV" : is_flac ? "FLAC" : "MP3", track_sample_rate, track_channels);
+#if ALLOW_48KHz_PERFECT_PITCH
     // Switch sys clock for optimal integer I2S divider: 300MHz for 48kHz, 340MHz for everything else
     switch_to_48khz_clock(track_sample_rate == 48000);
+#endif
     i2s_set_sample_freq(&i2s_config, track_sample_rate, false);
 
     uint8_t channels = track_channels;

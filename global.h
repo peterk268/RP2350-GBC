@@ -169,6 +169,7 @@ void switch_to_hdmi_clock(bool hdmi) {
 #endif
 }
 
+// audible click with changing the frequency with i2s running so we disabled it.
 #define ALLOW_48KHz_PERFECT_PITCH 0
 #if ALLOW_48KHz_PERFECT_PITCH
 bool enabled_48khz = false;

@@ -145,6 +145,9 @@ static enum {
 #define SYS_CLOCK_NORMAL_KHZ 340000u
 // 378MHz = 15×25.2MHz: use this instead of 340MHz when HDMI output is enabled (HSTX hstx_csr_clkdiv=15).
 #define SYS_CLOCK_HDMI_KHZ 378000u
+// 300MHz = 15×20MHz: use this when playing 48kHz audio for a perfect integer I2S clock divider.
+// At 340MHz, 48kHz has -1.18% pitch error (div=14); at 300MHz, div=12 gives exact 48kHz.
+#define SYS_CLOCK_48KHZ_KHZ 300000u
 // Switch between normal DPI clock (340MHz, 1.25V) and HDMI clock (378MHz, 1.30V).
 // 1.30V = VREG_VOLTAGE_MAX (no voltage limit disable needed) — safe per Pimoroni thermal tests (~33C).
 // Device is docked/charging when HDMI is active so the extra draw is fine.
@@ -160,6 +163,29 @@ void switch_to_hdmi_clock(bool hdmi) {
         set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);
         vreg_set_voltage(VREG_VOLTAGE_1_25);
     }
+    sleep_ms(10);
+#if ENABLE_PSRAM
+    sfe_psram_update_timing();
+#endif
+}
+// Switch to 300MHz when playing 48kHz audio (perfect integer I2S divider), back to 340MHz otherwise.
+// Voltage stays at 1.25V — no change needed. Both clocks are integer multiples of DPI_PCLK (20MHz).
+// PWM clkdiv is adjusted proportionally so backlight brightness stays constant — at 300MHz the minimum
+// divider (1.0) gives ~1.172MHz; at 340MHz we set 340/300≈1.133 to match that same frequency.
+void switch_to_48khz_clock(bool enable_48khz) {
+    if (enable_48khz) {
+        // Going down: lower frequency first, voltage unchanged (1.25V is fine at 300MHz)
+        set_sys_clock_khz(SYS_CLOCK_48KHZ_KHZ, true);
+    } else {
+        // Going up: raise frequency back to normal 340MHz
+        set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);
+    }
+    // Compensate LED PWM clkdiv so backlight frequency stays constant (~1.172 MHz) at both sys clocks.
+    // At 300MHz: div=1.0 (hardware minimum). At 340MHz: div=340/300 to match.
+    float led_div = enable_48khz ? 1.0f : ((float)SYS_CLOCK_NORMAL_KHZ / (float)SYS_CLOCK_48KHZ_KHZ);
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(24), led_div);  // GPIO_LCD_LED
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(45), led_div);  // GPIO_PWR_LED
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(46), led_div);  // GPIO_BUTTON_LED
     sleep_ms(10);
 #if ENABLE_PSRAM
     sfe_psram_update_timing();

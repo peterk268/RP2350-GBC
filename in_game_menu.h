@@ -42,35 +42,6 @@ void in_game_cycle_color_palette() {
     }
 }
 
-void in_game_toggle_fast_forward() {
-    // Peanut GB frame skip toggle puts it at 60 fps.. skipping 1 frame every other frame
-    // My implementation runs at 120 fps.
-    if (run_mode == MODE_POWERSAVE) {
-        // if run mode was power save, step back up the lcd brightness
-        step_lcd_brightness(true);
-    }
-    run_mode = (run_mode == MODE_TURBO) ? MODE_NORMAL : MODE_TURBO;
-    if (run_mode == MODE_TURBO) {
-        gb.direct.frame_skip = true;   // 2× speed
-        underclock_cpu(false);         // ensure full speed
-    } else {
-        gb.direct.frame_skip = false;
-    }
-/* No Real need for this
-#if UNDERCLOCK_CPU_IN_NORMAL_EMULATION
-    overclock_cpu((run_mode == MODE_TURBO));
-#endif
-#if !ENABLE_120FPS_FASTFORWARD
-    gb.direct.frame_skip = (run_mode == MODE_TURBO);
-#endif
-#if ENABLE_SOUND
-# if !SKIP_AUDIO_FRAMES_IN_FRAME_SKIP
-    i2s_set_sample_freq(&i2s_config, 44100, (run_mode == MODE_TURBO));
-# endif
-#endif
-*/
-    printf("Frame Skip = %d\n", (run_mode == MODE_TURBO));
-}
 
 void in_game_save_game(bool hold_sd_busy) {
 #if ENABLE_SDCARD				
@@ -368,21 +339,37 @@ static void in_game_next_color_palette(void) {
 // ================================================================
 // Run mode setters: guarantee mutual exclusivity and consistent side effects
 // ================================================================
+// Extreme battery save side-effects — called on every powersave enter/exit
+// so no mode setter forgets them.
+// ================================================================
+#if ENABLE_EXTREME_BATTERY_SAVE
+static void extreme_powersave_enter(void) {
+    powersave_saved_button_brightness = button_led_duty_cycle;
+    decrease_button_brightness(MAX_BRIGHTNESS);
+    gpio_write(IOX_AUDIO_EN, 0);
+}
+static void extreme_powersave_exit(void) {
+    gpio_write(IOX_AUDIO_EN, 1);
+    sleep_ms(10); // let LDO stabilise before DAC init
+    setup_dac();
+    current_volume_level = 0;
+    read_volume();
+    button_led_duty_cycle = powersave_saved_button_brightness;
+    pwm_set_chan_level(pwm_gpio_to_slice_num(GPIO_BUTTON_LED),
+                      pwm_gpio_to_channel(GPIO_BUTTON_LED),
+                      powersave_saved_button_brightness);
+}
+#endif
+
+// ================================================================
+// Run mode setters: guarantee mutual exclusivity and consistent side effects
+// ================================================================
 static void ig_set_mode_normal(void) {
     if (run_mode == MODE_POWERSAVE) {
-        // restoring from powersave
         reconfigure_led_pwm_for_underclock(false);
         underclock_cpu(false);
 #if ENABLE_EXTREME_BATTERY_SAVE
-        gpio_write(IOX_AUDIO_EN, 1);
-        sleep_ms(10); // let LDO stabilise before DAC init
-        setup_dac();
-        current_volume_level = 0;
-        read_volume();
-        button_led_duty_cycle = powersave_saved_button_brightness;
-        pwm_set_chan_level(pwm_gpio_to_slice_num(GPIO_BUTTON_LED),
-                          pwm_gpio_to_channel(GPIO_BUTTON_LED),
-                          powersave_saved_button_brightness);
+        extreme_powersave_exit();
 #endif
     }
     run_mode = MODE_NORMAL;
@@ -391,9 +378,10 @@ static void ig_set_mode_normal(void) {
 
 static void ig_set_mode_turbo(void) {
     if (run_mode == MODE_POWERSAVE) {
-        // leaving powersave -> restore brightness/cpu first
         underclock_cpu(false);
-        step_lcd_brightness(true);
+#if ENABLE_EXTREME_BATTERY_SAVE
+        extreme_powersave_exit();
+#endif
     }
     run_mode = MODE_TURBO;
     gb.direct.frame_skip = true;
@@ -406,9 +394,7 @@ static void ig_set_mode_powersave(void) {
     underclock_cpu(true);
     reconfigure_led_pwm_for_underclock(true);
 #if ENABLE_EXTREME_BATTERY_SAVE
-    powersave_saved_button_brightness = button_led_duty_cycle;
-    decrease_button_brightness(MAX_BRIGHTNESS);
-    gpio_write(IOX_AUDIO_EN, 0);
+    extreme_powersave_enter();
 #endif
     gb.direct.frame_skip = true;
 }
@@ -422,11 +408,6 @@ static void ig_toggle_fast_forward(void) {
 static void ig_toggle_battery_save(void) {
     if (run_mode == MODE_POWERSAVE) ig_set_mode_normal();
     else ig_set_mode_powersave(); // this implicitly disables turbo
-}
-
-// Public hotkey entry point — delegates to the same mode setters used by the menu.
-void in_game_toggle_battery_save_mode() {
-    ig_toggle_battery_save();
 }
 
 // ================================================================

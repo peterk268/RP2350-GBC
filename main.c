@@ -530,7 +530,7 @@ while(true)
 
 			if(!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
 				/* select + A: enable/disable frame-skip => fast-forward */
-				in_game_toggle_fast_forward();
+				ig_toggle_fast_forward();
 			}
 			if (!gb.direct.joypad_bits.b && prev_joypad_bits.b) {
 				/* select + B: Save game ram*/
@@ -559,8 +559,8 @@ while(true)
 
 			// But currently getting like 125mW down from 195mW so it's a good start.
 			if (!gb.direct.joypad_bits.a && prev_joypad_bits.a) {
-				/* start + B: Battery Saving Mode*/
-				in_game_toggle_battery_save_mode();
+				/* start + A: Battery Saving Mode*/
+				ig_toggle_battery_save();
 			}
 
 			// Screenshot
@@ -651,8 +651,8 @@ while(true)
         printf("\nEmulation Ended");
 
 		// reset emulation mode back to normal
-		if (run_mode == MODE_POWERSAVE) in_game_toggle_battery_save_mode();
-		if (run_mode == MODE_TURBO) in_game_toggle_fast_forward();
+		if (run_mode == MODE_POWERSAVE) ig_toggle_battery_save();
+		if (run_mode == MODE_TURBO) ig_toggle_fast_forward();
 		
 		// To prevent the flicker of a game frame when exiting to rom selector
 		memset(front_fb->data, 0, sizeof(front_fb->data));

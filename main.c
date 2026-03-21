@@ -117,16 +117,14 @@ int main(void)
 
 	watchdog_update();
 
-	#if ENABLE_BAT_MONITORING
-#if BAT_IMMEDIATE_CHECK
+#if ENABLE_BAT_MONITORING && BAT_IMMEDIATE_CHECK
 	// Trigger the battery check immediately
     process_bat_percent();
 #endif
-	// Set up a repeating timer for 10 seconds
+	// Set up a repeating timer for periodic tasks (RTC sync + battery monitoring)
     if (!add_repeating_timer_ms(BATTERY_TIMER_INTERVAL_MS, battery_timer_callback, NULL, &battery_timer)) {
         printf("Failed to add repeating timer\n");
     }
-#endif
 	// Initialize the ADC for GPIO_AUD_POT_ADC and nHP_DETECT
     init_adc(GPIO_AUD_POT_ADC);
 
@@ -327,12 +325,12 @@ while(true)
 #if ENABLE_BAT_MONITORING
 	low_power = false;
 	low_power_shutdown = false;
+#endif
 	cancel_repeating_timer(&battery_timer);
-	// Set up a repeating timer for 10 seconds
+	// Set up a repeating timer for periodic tasks (RTC sync + battery monitoring)
     if (!add_repeating_timer_ms(BATTERY_TIMER_INTERVAL_MS, battery_timer_callback, NULL, &battery_timer)) {
         printf("Failed to add repeating timer\n");
     }
-#endif
 
 	watchdog_enable(WATCHDOG_TIMEOUT_MS, true); // 2 second timeout, pause-on-debug = true
 #if ENABLE_SAVE_ON_POWER_OFF
@@ -388,22 +386,24 @@ while(true)
 		}
 #endif
 
-#if ENABLE_BAT_MONITORING
-		// Check battery status periodically
+		// Periodic task: RTC sync always runs; battery check only when enabled
 		if (battery_task_flag) {
 			battery_task_flag = false;
 
 			// best to not have too much i2c bus contention in the same frame cycle
-			// so we alternate between rtc and battery checks
-			// each gets called every 20s.
+			// so we alternate between rtc and battery checks (each every 20s when both enabled)
+#if ENABLE_BAT_MONITORING
 			if (do_rtc_update) {
 				sync_gb_rtc(&gb);
 			} else {
 				process_bat_percent();
 			}
-
 			do_rtc_update = !do_rtc_update; // toggle for next round
+#else
+			sync_gb_rtc(&gb);
+#endif
         }
+#if ENABLE_BAT_MONITORING
 		if (low_power_shutdown) {
 			// need this before everything else because sd busy will shut off lcd
 			shutdown_screen(1500);

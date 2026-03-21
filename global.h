@@ -383,5 +383,12 @@ bool minimal_battery_monitoring_cb() {
 		sleep_ms(BATTERY_TIMER_INTERVAL_MS);
 	}
 	return was_task_flagged;
+#else
+	// Still consume the flag so it doesn't go stale
+	if (battery_task_flag) {
+		battery_task_flag = false;
+		return true;
+	}
+	return false;
 #endif
 }

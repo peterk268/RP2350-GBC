@@ -2360,6 +2360,15 @@ static play_result_t mp3_play_single_track(const char *filepath,
             sleep_ms(BATTERY_TIMER_INTERVAL_MS);
         }
         timer_task_flagged = was_task_flagged;
+#else
+        // Battery monitoring disabled: still consume the flag so the edge-detect
+        // below can trigger update_status_label (and its RTC sync) each timer tick.
+        if (battery_task_flag) {
+            battery_task_flag = false;
+            timer_task_flagged = true;
+        } else {
+            timer_task_flagged = false;
+        }
 #endif
         
         // we typically don't want to check the battery and update the rtc at the same time

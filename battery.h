@@ -913,8 +913,10 @@ void light_sleep_loop(void) {
 
             watchdog_update();
 
+#if ENABLE_BAT_MONITORING
             // If you're chasing low current, consider a quiet version here (no printf)
             process_bat_percent();
+#endif
         }
 
         // Wait for interrupt: button, iox nINT, switch-low, or timer tick

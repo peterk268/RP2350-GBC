@@ -10,7 +10,9 @@
 #define V_F_PORCH 10
 #define V_B_PORCH 15
 
-#define ENABLE_SCANLINES 0
+// Always 320 scanlines / yscale=1 so CRT mode can be toggled at runtime.
+// Actual content/black pattern is controlled by the crt_mode variable below.
+#define ENABLE_SCANLINES 1
 #define ENABLE_V_SCANLINES 0
 
 #define DISP_HOR_RES 160
@@ -56,6 +58,34 @@ uint16_t shift_components(uint16_t pixel);
 static inline void refresh_cgb_palette_cache(struct gb_s *gb);
 #endif
 extern uint8_t wash_out_level; // defined later in this file
+extern uint8_t crt_mode;       // defined in global.h
+extern bool gb_active;         // defined in global.h
+#define CRT_OFF       0
+#define CRT_SCANLINES 1
+#define CRT_BFI       2
+#define CRT_BOTH      3
+// BFI strobe floor as % of current brightness.
+// At >=144Hz there is no perceptible flicker, so 0 = full black gives true BFI
+// (maximum motion clarity).
+#define CRT_STROBE_PCT 0
+// Scanlines per BFI half-period (toggle interval). BFI_HZ must be 120 or 240.
+// 120Hz → 160 scanlines/toggle, 240Hz → 80 scanlines/toggle.
+#define BFI_SCANLINES_PER_TOGGLE (38400u / ((uint32_t)BFI_HZ * 2u))
+#if (BFI_HZ != 120) && (BFI_HZ != 240)
+#error "BFI_HZ must be 120 or 240 — other values cause per-frame brightness variation at 120fps"
+#endif
+
+// Automatic brightness compensation for CRT modes.
+// BFI at 50% duty cycle halves average brightness → 2× compensation.
+// Scanlines black every other row → 1.25× compensation (perceptually less severe).
+// Both combined → 2.5×. lcd_led_duty_cycle is never modified; compensation only
+// affects the PWM register so settings save/load always reflect the user's real preference.
+static inline uint8_t crt_compensated_brightness(uint8_t base) {
+    float comp = (float)base;
+    if (crt_mode == CRT_SCANLINES || crt_mode == CRT_BOTH) comp *= 1.25f;
+    if (crt_mode == CRT_BFI       || crt_mode == CRT_BOTH) comp *= 2.0f;
+    return (uint8_t)(comp > 255.0f ? 255.0f : comp);
+}
 
 // Cached conversion of CGB 15-bit palette entries to output RGB565.
 #if PEANUT_FULL_GBC_SUPPORT
@@ -117,50 +147,13 @@ static lv_color_t *lv_buf1;
 
 static bool show_gui = false;
 
-bool double_frame_needs_bfi = 0;
-#define ENABLE_BFI 0
-#define ENABLE_BACKLIGHT_STROBING 0
-#define USE_DUMB_BACKLIGHT_STROBING 1
-// Keep track of previous brightness level
-static uint8_t strobe_brightness = 0;
 
 #define ENABLE_INTERLACING ENABLE_SCANLINES && 0
 bool interlacing_field = 1; // 0 = even, 1 = odd
-#if !USE_DUMB_BACKLIGHT_STROBING
-#define STROBE_DELAY_US   1500  // wait after vblank (settle)
-#define STROBE_WIDTH_US   2000  // ON pulse length
-
-
-// Forward declarations
-int64_t backlight_on_callback(alarm_id_t id, void *user_data);
-int64_t backlight_off_callback(alarm_id_t id, void *user_data);
-
-int64_t backlight_on_callback(alarm_id_t id, void *user_data) {
-    #warning "This might need fixing"
-    increase_lcd_brightness(strobe_brightness); 
-    // schedule OFF pulse after STROBE_WIDTH_US
-    add_alarm_in_us(STROBE_WIDTH_US, backlight_off_callback, NULL, true);
-    return 0;
-}
-
-int64_t backlight_off_callback(alarm_id_t id, void *user_data) {
-    decrease_lcd_brightness(255); // off
-    return 0; // no repeat
-}
-
-// Call this once per frame at vblank
-void backlight_strobe_start(uint8_t duty_cycle) {
-    strobe_brightness = duty_cycle;
-    // Immediately OFF at frame start
-    decrease_lcd_brightness(255);
-    // Schedule ON pulse after delay
-    add_alarm_in_us(STROBE_DELAY_US, backlight_on_callback, NULL, true);
-}
-#endif
 uint16_t scanline_count = 0;
 
 #define ADD_TOP_PADDING 1
-#define TOP_PADDING 3
+#define TOP_PADDING 6
 uint16_t top_padding_counter = 0;
 
 #if ENABLE_FRAME_DEBUGGING
@@ -255,53 +248,70 @@ void render_loop() {
                 fps_last_time = now;
             }
 #endif
-#if ENABLE_SCANLINES
             scanline_count = 0;
-#endif
 #if ENABLE_INTERLACING
             interlacing_field = !interlacing_field;
 #endif
-#if ENABLE_BACKLIGHT_STROBING
-#if USE_DUMB_BACKLIGHT_STROBING
-            if (double_frame_needs_bfi) {
-                strobe_brightness = lcd_led_duty_cycle;
-                decrease_lcd_brightness(MAX_BRIGHTNESS);
-            } else {
-                increase_lcd_brightness(strobe_brightness);
-            }
-#else
-            backlight_strobe_start(lcd_led_duty_cycle);
-#endif
-#endif
-#if ENABLE_BACKLIGHT_STROBING || ENABLE_BFI
-            double_frame_needs_bfi = !double_frame_needs_bfi;
-#endif
-
 #if ADD_TOP_PADDING
             top_padding_counter = 0;
 #endif
+            // At the start of each frame, set the correct backlight for non-BFI modes.
+            // BFI manages the backlight itself every 80 scanlines below.
+            // This also handles restoring normal brightness when BFI is disabled.
+            {
+                bool crt_guard = __atomic_load_n(&gb_active, __ATOMIC_ACQUIRE)
+                              && run_mode != MODE_POWERSAVE
+                              && !__atomic_load_n(&show_gui, __ATOMIC_ACQUIRE);
+                bool bfi_on = (crt_mode == CRT_BFI || crt_mode == CRT_BOTH) && crt_guard;
+                if (!bfi_on) {
+                    bool sl = (crt_mode == CRT_SCANLINES) && crt_guard;
+                    lcd_set_pwm_direct(sl ? crt_compensated_brightness(lcd_led_duty_cycle)
+                                         : lcd_led_duty_cycle);
+                }
+            }
         }
         // Render scanline
         framebuffer_t *fb = __atomic_load_n(&front_fb, __ATOMIC_ACQUIRE);
 
-        render_scanline(scanline_buffer, (y < LCD_HEIGHT) 
-        && (!ENABLE_BFI || !double_frame_needs_bfi || gb.direct.frame_skip == 1) 
-        && (!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field)) 
+        // Common CRT guard: BFI and scanlines both require GB gameplay, no power save, no GUI.
+        bool crt_active = __atomic_load_n(&gb_active, __ATOMIC_ACQUIRE)
+                       && (run_mode != MODE_POWERSAVE)
+                       && !__atomic_load_n(&show_gui, __ATOMIC_ACQUIRE);
+
+        // BFI: toggle backlight every BFI_SCANLINES_PER_TOGGLE scanlines.
+        // Even phase (0, 2*N, ...) = bright; odd phase = dark.
+        // BFI_HZ must be 120 or 240 so the toggle interval divides 320 scanlines evenly.
+        if ((crt_mode == CRT_BFI || crt_mode == CRT_BOTH) && crt_active
+                && (scanline_count % BFI_SCANLINES_PER_TOGGLE == 0)) {
+            bool bright = ((scanline_count / BFI_SCANLINES_PER_TOGGLE) % 2 == 0);
+            uint8_t comp = crt_compensated_brightness(lcd_led_duty_cycle);
+            lcd_set_pwm_direct(bright ? comp : comp * CRT_STROBE_PCT / 100);
+        }
+
+        // Scanlines active for CRT_SCANLINES and CRT_BOTH modes only.
+        // Even scanlines = content, odd = black. Y advances on content lines.
+        // Without scanlines: both scanlines show content (software line doubling),
+        // y advances on odd scanlines (after second copy of each row).
+        bool scanlines_active = (crt_mode == CRT_SCANLINES || crt_mode == CRT_BOTH)
+                             && crt_active;
+        bool is_even_scanline = (scanline_count % 2 == 0);
+        bool is_content_scanline = scanlines_active ? is_even_scanline : true;
+        bool advance_y = scanlines_active ? is_even_scanline : !is_even_scanline;
+
+        render_scanline(scanline_buffer, (y < LCD_HEIGHT)
+        && is_content_scanline
         && (!ADD_TOP_PADDING || (top_padding_counter > TOP_PADDING))
         ? (__atomic_load_n(&show_gui, __ATOMIC_ACQUIRE) ? lvgl_fb[y] : fb->data[y]) : black_fb);
 
         scanvideo_end_scanline_generation(scanline_buffer);
 
-        if ((!ENABLE_SCANLINES || (scanline_count % 2 == interlacing_field))  
-        && (!ADD_TOP_PADDING || (top_padding_counter > TOP_PADDING))) {
+        if (advance_y && (!ADD_TOP_PADDING || (top_padding_counter > TOP_PADDING))) {
             y++;
         }
 #if ADD_TOP_PADDING
         top_padding_counter++;
 #endif
-#if ENABLE_SCANLINES
         scanline_count++;
-#endif
     }
 }
 

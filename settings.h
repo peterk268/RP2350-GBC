@@ -32,6 +32,11 @@
 #define ENABLE_FRAME_DEBUGGING 0
 #define ENABLE_FPS_MONITORING 1
 
+// BFI strobe frequency. Must be 120 or 240 (must divide evenly into 120fps).
+// 120Hz = 1 cycle/frame (160 scanlines/phase), 240Hz = 2 cycles/frame (80 scanlines/phase).
+// 144Hz causes per-frame brightness variation (1.2 cycles/frame) and is not supported.
+#define BFI_HZ 240
+
 #define SKIP_FRAMES 0
 // Its not stable unfortunately.. processor ain't fast enough.. yet. I might overclock more
 #define ENABLE_120FPS_FASTFORWARD 0
@@ -140,7 +145,8 @@ bool read_system_settings(uint8_t *lcd_brightness,
                           int8_t  *selected_palette,
                           uint8_t *wash_out_level,
                           char last_filename_raw[FILENAME_MAX_LEN],
-                          bool *auto_load_state);
+                          bool *auto_load_state,
+                          uint8_t *out_crt_mode);
 
 void save_system_settings(uint8_t lcd_brightness,
                           uint8_t button_brightness,
@@ -149,6 +155,7 @@ void save_system_settings(uint8_t lcd_brightness,
                           uint8_t wash_out_level,
                           char last_filename_raw[FILENAME_MAX_LEN],
                           bool auto_load_state,
+                          uint8_t in_crt_mode,
                           bool hold_sd_busy);
 
 // --- ROM settings ---

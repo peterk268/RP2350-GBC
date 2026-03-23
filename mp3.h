@@ -1207,7 +1207,7 @@ void mp3_save_shutdown(int current_track_index, uint64_t played_frames, drmp3_ui
 #if TIE_PWR_LED_TO_LCD
     pwr_led_duty_cycle = temp_lcd_led;
 #endif
-    save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
+    save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, crt_mode, true);
 }
 // ===================================================================
 // Now-playing progress helpers (must precede mp3_play_single_track)

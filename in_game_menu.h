@@ -257,6 +257,18 @@ static void ig_get_auto_load_state_text(char *out, size_t out_sz) {
     snprintf(out, out_sz, "%s", auto_load_state ? "ON" : "OFF");
 }
 
+static void ig_get_crt_mode_text(char *out, size_t out_sz) {
+    const char *names[] = { "Off", "Scanlines", "BFI", "Scanlines+BFI" };
+    snprintf(out, out_sz, "%s", names[crt_mode % 4]);
+}
+
+static void ig_cycle_crt_mode_next(void) {
+    crt_mode = (crt_mode + 1) % 4;
+}
+static void ig_cycle_crt_mode_prev(void) {
+    crt_mode = (crt_mode == 0) ? 3 : crt_mode - 1;
+}
+
 #define MAX_PALETTE_SWATCH 6
 
 static uint8_t collect_unique_rgb565(const palette_t pal, uint16_t *out, int out_max) {
@@ -474,7 +486,7 @@ static uint8_t ig_page_start = 0;
 static ig_menu_item_t *menu_items = NULL;
 static uint8_t menu_count = 0;
 
-#define MENU_COUNT 15  // keep this in sync with the items below
+#define MENU_COUNT 16  // keep this in sync with the items below
 
 static bool ig_menu_items_init_heap(void) {
     menu_items = NULL;
@@ -518,6 +530,11 @@ static bool ig_menu_items_init_heap(void) {
     menu_items[i++] = (ig_menu_item_t){
         "Auto Load State ", IG_ITEM_TOGGLE, ig_get_auto_load_state_text,
         ig_toggle_auto_load_state, ig_toggle_auto_load_state, ig_toggle_auto_load_state, IG_ACT_NONE
+    };
+
+    menu_items[i++] = (ig_menu_item_t){
+        "CRT         ", IG_ITEM_VALUE, ig_get_crt_mode_text,
+        ig_cycle_crt_mode_next, ig_cycle_crt_mode_prev, ig_cycle_crt_mode_next, IG_ACT_NONE
     };
 
     menu_items[i++] = (ig_menu_item_t){
@@ -795,12 +812,12 @@ void in_game_menu() {
 #endif
 
 #if LED_PHASE_OUT_PWR_DOWN
-        save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, );
+        save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, crt_mode, );
 #else
 # if TIE_PWR_LED_TO_LCD
         pwr_led_duty_cycle = temp_lcd_led;
 # endif
-        save_system_settings_if_changed(temp_lcd_led, saved_button_brightness, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
+        save_system_settings_if_changed(temp_lcd_led, saved_button_brightness, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, crt_mode, true);
 #endif
 
 
@@ -818,7 +835,7 @@ void in_game_menu() {
 #endif
     }
 
-    g_request_exit_menu = false; 
+    g_request_exit_menu = false;
     g_in_game_menu = false;
     __atomic_store_n(&show_gui, false, __ATOMIC_RELEASE);
 }

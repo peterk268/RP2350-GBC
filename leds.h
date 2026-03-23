@@ -97,7 +97,14 @@ void increase_lcd_brightness(uint8_t step) {
     adjust_brightness(GPIO_LCD_LED, &lcd_led_duty_cycle, step, true, false);
 }
 void decrease_lcd_brightness(uint8_t step) {
-    adjust_brightness(GPIO_LCD_LED, &lcd_led_duty_cycle, step, false, false); 
+    adjust_brightness(GPIO_LCD_LED, &lcd_led_duty_cycle, step, false, false);
+}
+
+// Set the LCD backlight PWM directly without modifying lcd_led_duty_cycle.
+// Use this for BFI strobe so the saved brightness value stays correct.
+static inline void lcd_set_pwm_direct(uint8_t level) {
+    pwm_set_chan_level(pwm_gpio_to_slice_num(GPIO_LCD_LED),
+                      pwm_gpio_to_channel(GPIO_LCD_LED), level);
 }
 
 void increase_pwr_brightness(uint8_t step) {

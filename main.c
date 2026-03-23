@@ -165,7 +165,7 @@ int main(void)
 
 	last_filename_init();
 	watchdog_update();
-	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level, last_filename_raw, &auto_load_state);
+	read_system_settings(&lcd_target_brightness, &button_target_brightness, &pwr_target_brightness, &manual_palette_selected, &wash_out_level, last_filename_raw, &auto_load_state, &crt_mode);
 #if TIE_PWR_LED_TO_LCD
 	pwr_target_brightness = lcd_target_brightness;
 #endif
@@ -254,6 +254,7 @@ while(true)
 #endif
 
     __atomic_store_n(&show_gui, false, __ATOMIC_RELEASE);
+    __atomic_store_n(&gb_active, true, __ATOMIC_RELEASE);
 
 
 	// MARK: - Initialise GB context
@@ -369,12 +370,12 @@ while(true)
 			in_game_save_auto_state(true);
 #endif			
 #if LED_PHASE_OUT_PWR_DOWN
-			save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, );
+			save_system_settings_if_changed(temp_lcd_led, temp_button_led, temp_pwr_led, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, crt_mode, );
 #else
 # if TIE_PWR_LED_TO_LCD
 			pwr_led_duty_cycle = temp_lcd_led;
 # endif
-			save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
+			save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, crt_mode, true);
 #endif
 			printf("Done");
 
@@ -418,7 +419,7 @@ while(true)
 # if TIE_PWR_LED_TO_LCD
 			pwr_led_duty_cycle = temp_lcd_led;
 # endif
-			save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, true);
+			save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, crt_mode, true);
 #endif
 			release_power(); // Cut power hold
 			sleep_ms(1);

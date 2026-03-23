@@ -68,6 +68,9 @@ void last_filename_deinit(void) {
 }
 
 bool auto_load_state = false;
+// CRT mode: 0=off, 1=scanlines only, 2=BFI only, 3=both (reduced strobe)
+uint8_t crt_mode = 0;
+bool gb_active = false; // true only during GB gameplay, not in mp3/imu modes
 
 static struct
 {

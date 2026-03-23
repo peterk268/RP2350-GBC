@@ -2340,6 +2340,7 @@ typedef struct {
     uint8_t wash_out_level;
     char last_filename_raw[FILENAME_MAX_LEN];
     bool auto_load_state;
+    uint8_t crt_mode;
 } system_settings_t;
 
 system_settings_t g_saved_settings = {0};
@@ -2378,7 +2379,7 @@ static bool ensure_settings_dir(void) {
 bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
                           uint8_t *power_brightness, int8_t *selected_palette,
                           uint8_t *wash_out_level, char last_filename_raw[FILENAME_MAX_LEN],
-                          bool *auto_load_state) {
+                          bool *auto_load_state, uint8_t *out_crt_mode) {
     FIL fil;
     UINT br;
     system_settings_t s = {0};
@@ -2408,7 +2409,8 @@ bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
     strncpy(last_filename_raw, s.last_filename_raw, FILENAME_MAX_LEN);
     last_filename_raw[FILENAME_MAX_LEN - 1] = '\0'; // ensure null termination
     *auto_load_state   = s.auto_load_state;
-    
+    *out_crt_mode      = s.crt_mode;
+
     // Save to global
     g_saved_settings = s;
 
@@ -2418,7 +2420,7 @@ bool read_system_settings(uint8_t *lcd_brightness, uint8_t *button_brightness,
 void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
                           uint8_t power_brightness, int8_t selected_palette,
                           uint8_t wash_out_level, char last_filename_raw[FILENAME_MAX_LEN],
-                          bool auto_load_state,
+                          bool auto_load_state, uint8_t in_crt_mode,
                           bool hold_sd_busy) {
 
     shutdown_lcd(false, false);
@@ -2430,7 +2432,8 @@ void save_system_settings(uint8_t lcd_brightness, uint8_t button_brightness,
         .power_brightness = power_brightness,
         .selected_palette = selected_palette,
         .wash_out_level = wash_out_level,
-        .auto_load_state = auto_load_state
+        .auto_load_state = auto_load_state,
+        .crt_mode = in_crt_mode
     };
     // Properly copy the filename into the struct
     strncpy(s.last_filename_raw, last_filename_raw, FILENAME_MAX_LEN);
@@ -2472,13 +2475,14 @@ static inline bool system_settings_equal(const system_settings_t *a, const syste
            a->selected_palette   == b->selected_palette &&
            a->wash_out_level     == b->wash_out_level &&
            a->auto_load_state    == b->auto_load_state &&
+           a->crt_mode           == b->crt_mode &&
            strncmp(a->last_filename_raw, b->last_filename_raw, FILENAME_MAX_LEN) == 0;
 }
 
 void save_system_settings_if_changed(uint8_t lcd_brightness, uint8_t button_brightness,
                                      uint8_t power_brightness, int8_t selected_palette,
                                      uint8_t wash_out_level, char last_filename_raw[FILENAME_MAX_LEN],
-                                     bool auto_load_state,
+                                     bool auto_load_state, uint8_t in_crt_mode,
                                      bool hold_sd_busy) {
 
 	system_settings_t current = {
@@ -2488,7 +2492,8 @@ void save_system_settings_if_changed(uint8_t lcd_brightness, uint8_t button_brig
         .power_brightness = power_brightness,
         .selected_palette = selected_palette,
         .wash_out_level = wash_out_level,
-        .auto_load_state = auto_load_state
+        .auto_load_state = auto_load_state,
+        .crt_mode = in_crt_mode
     };
     // Properly copy the filename into the struct
     strncpy(current.last_filename_raw, last_filename_raw, FILENAME_MAX_LEN);
@@ -2504,6 +2509,7 @@ void save_system_settings_if_changed(uint8_t lcd_brightness, uint8_t button_brig
                              wash_out_level,
                              last_filename_raw,
                              auto_load_state,
+                             in_crt_mode,
                              hold_sd_busy);
         g_saved_settings = current;
     }

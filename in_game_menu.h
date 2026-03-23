@@ -258,15 +258,28 @@ static void ig_get_auto_load_state_text(char *out, size_t out_sz) {
 }
 
 static void ig_get_crt_mode_text(char *out, size_t out_sz) {
+#if ENABLE_CRT_PHOSPHOR
+    const char *names[] = { "Off", "Scanlines", "BFI", "Scanlines+BFI", "Phosphor" };
+    snprintf(out, out_sz, "%s", names[crt_mode % 5]);
+#else
     const char *names[] = { "Off", "Scanlines", "BFI", "Scanlines+BFI" };
     snprintf(out, out_sz, "%s", names[crt_mode % 4]);
+#endif
 }
 
 static void ig_cycle_crt_mode_next(void) {
+#if ENABLE_CRT_PHOSPHOR
+    crt_mode = (crt_mode + 1) % 5;
+#else
     crt_mode = (crt_mode + 1) % 4;
+#endif
 }
 static void ig_cycle_crt_mode_prev(void) {
+#if ENABLE_CRT_PHOSPHOR
+    crt_mode = (crt_mode == 0) ? 4 : crt_mode - 1;
+#else
     crt_mode = (crt_mode == 0) ? 3 : crt_mode - 1;
+#endif
 }
 
 #define MAX_PALETTE_SWATCH 6

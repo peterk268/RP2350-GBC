@@ -64,6 +64,10 @@ extern bool gb_active;         // defined in global.h
 #define CRT_SCANLINES 1
 #define CRT_BFI       2
 #define CRT_BOTH      3
+// Phosphor: 4-step exponential backlight decay per 60Hz game cycle.
+// Same 240Hz dark intervals as BFI but bright phases fade: 100%→70%→35%→10%.
+// Mimics CRT phosphor persistence — softer than hard BFI, same motion clarity.
+#define CRT_PHOSPHOR  4
 // BFI strobe floor as % of current brightness.
 // At >=144Hz there is no perceptible flicker, so 0 = full black gives true BFI
 // (maximum motion clarity).
@@ -80,10 +84,15 @@ extern bool gb_active;         // defined in global.h
 // Scanlines black every other row → 1.25× compensation (perceptually less severe).
 // Both combined → 2.5×. lcd_led_duty_cycle is never modified; compensation only
 // affects the PWM register so settings save/load always reflect the user's real preference.
+// Phosphor decay levels per bright phase (% of compensated peak), repeated every 60Hz.
+// 4 bright phases per 60Hz cycle at 240Hz BFI: 100%→70%→35%→10%.
+static const uint8_t phosphor_levels[4] = {100, 85, 65, 45};
+
 static inline uint8_t crt_compensated_brightness(uint8_t base) {
     float comp = (float)base;
     if (crt_mode == CRT_SCANLINES || crt_mode == CRT_BOTH) comp *= 1.25f;
-    if (crt_mode == CRT_BFI       || crt_mode == CRT_BOTH) comp *= 2.0f;
+    // BFI and Phosphor both use 2× to compensate for 50% dark duty cycle.
+    if (crt_mode == CRT_BFI || crt_mode == CRT_BOTH || crt_mode == CRT_PHOSPHOR) comp *= 2.0f;
     return (uint8_t)(comp > 255.0f ? 255.0f : comp);
 }
 
@@ -181,6 +190,10 @@ bool wait_for_core1_parked(uint32_t timeout_us) {
 void render_loop() {
     static uint32_t last_frame_num = 0;
     static uint32_t y = 0;
+    // Phosphor decay: step (0-3) tracks which decay level to use next bright phase.
+    // disp_frame_count resets step every 2 display frames (= 1 game frame @ 60Hz).
+    static uint32_t disp_frame_count = 0;
+    static uint8_t  phosphor_step    = 0;
 
     while (true) {
         if (__atomic_load_n(&sd_busy, __ATOMIC_ACQUIRE)) {
@@ -255,18 +268,24 @@ void render_loop() {
 #if ADD_TOP_PADDING
             top_padding_counter = 0;
 #endif
-            // At the start of each frame, set the correct backlight for non-BFI modes.
-            // BFI manages the backlight itself every 80 scanlines below.
-            // This also handles restoring normal brightness when BFI is disabled.
+            // At the start of each frame, set the correct backlight for non-BFI/phosphor modes.
+            // BFI and Phosphor manage the backlight themselves per-scanline below.
+            // This also handles restoring normal brightness when those modes are disabled.
             {
                 bool crt_guard = __atomic_load_n(&gb_active, __ATOMIC_ACQUIRE)
                               && run_mode != MODE_POWERSAVE
                               && !__atomic_load_n(&show_gui, __ATOMIC_ACQUIRE);
-                bool bfi_on = (crt_mode == CRT_BFI || crt_mode == CRT_BOTH) && crt_guard;
-                if (!bfi_on) {
+                bool strobing = (crt_mode == CRT_BFI || crt_mode == CRT_BOTH
+                              || crt_mode == CRT_PHOSPHOR) && crt_guard;
+                if (!strobing) {
                     bool sl = (crt_mode == CRT_SCANLINES) && crt_guard;
                     lcd_set_pwm_direct(sl ? crt_compensated_brightness(lcd_led_duty_cycle)
                                          : lcd_led_duty_cycle);
+                }
+                // Phosphor: reset decay step every 2 display frames (60Hz cycle).
+                disp_frame_count++;
+                if (crt_mode == CRT_PHOSPHOR && crt_guard && (disp_frame_count % 2 == 0)) {
+                    phosphor_step = 0;
                 }
             }
         }
@@ -278,14 +297,23 @@ void render_loop() {
                        && (run_mode != MODE_POWERSAVE)
                        && !__atomic_load_n(&show_gui, __ATOMIC_ACQUIRE);
 
-        // BFI: toggle backlight every BFI_SCANLINES_PER_TOGGLE scanlines.
-        // Even phase (0, 2*N, ...) = bright; odd phase = dark.
-        // BFI_HZ must be 120 or 240 so the toggle interval divides 320 scanlines evenly.
-        if ((crt_mode == CRT_BFI || crt_mode == CRT_BOTH) && crt_active
-                && (scanline_count % BFI_SCANLINES_PER_TOGGLE == 0)) {
+        // BFI/Phosphor: fire at every toggle boundary (every BFI_SCANLINES_PER_TOGGLE scanlines).
+        if ((scanline_count % BFI_SCANLINES_PER_TOGGLE == 0) && crt_active) {
             bool bright = ((scanline_count / BFI_SCANLINES_PER_TOGGLE) % 2 == 0);
             uint8_t comp = crt_compensated_brightness(lcd_led_duty_cycle);
-            lcd_set_pwm_direct(bright ? comp : comp * CRT_STROBE_PCT / 100);
+
+            if (crt_mode == CRT_BFI || crt_mode == CRT_BOTH) {
+                // Hard BFI: full bright or full dark (CRT_STROBE_PCT = 0).
+                lcd_set_pwm_direct(bright ? comp : comp * CRT_STROBE_PCT / 100);
+            } else if (crt_mode == CRT_PHOSPHOR) {
+                // Phosphor: bright phases follow exponential decay curve; dark phases = 0.
+                if (bright) {
+                    lcd_set_pwm_direct(comp * phosphor_levels[phosphor_step % 4] / 100);
+                    phosphor_step++;
+                } else {
+                    lcd_set_pwm_direct(0);
+                }
+            }
         }
 
         // Scanlines active for CRT_SCANLINES and CRT_BOTH modes only.

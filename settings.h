@@ -36,6 +36,10 @@
 // 120Hz = 1 cycle/frame (160 scanlines/phase), 240Hz = 2 cycles/frame (80 scanlines/phase).
 // 144Hz causes per-frame brightness variation (1.2 cycles/frame) and is not supported.
 #define BFI_HZ 240
+// Set to 1 to expose the Phosphor CRT mode in the menu.
+// Phosphor requires interpolated sub-frames to look authentic; on 60fps content it
+// just dims the same frame repeatedly and looks worse than hard BFI.
+#define ENABLE_CRT_PHOSPHOR 0
 
 #define SKIP_FRAMES 0
 // Its not stable unfortunately.. processor ain't fast enough.. yet. I might overclock more

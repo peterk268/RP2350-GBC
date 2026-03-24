@@ -10,6 +10,8 @@
 #define PEANUT_GB_HIGH_LCD_ACCURACY 0
 #define PEANUT_GB_USE_BIOS 0
 #define PEANUT_FULL_GBC_SUPPORT 1
+// Place hot emulation functions in SRAM to avoid XIP flash cache misses
+#define PGB_HOT __attribute__((hot, section(".time_critical.peanut_gb")))
 /* Use DMA for all drawing to LCD. Benefits aren't fully realised at the moment
  * due to busy loops waiting for DMA completion. */
 #define USE_DMA		0

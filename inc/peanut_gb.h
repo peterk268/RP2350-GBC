@@ -1908,7 +1908,7 @@ PGB_HOT void __gb_draw_line(struct gb_s *gb)
         if (lcdc_now & LCDC_TILE_SELECT)
             tile = VRAM_TILES_1 + idx * 0x10;
         else
-            tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
+            tile = VRAM_TILES_2 + ((idx + 0x80) & 0xFF) * 0x10;
 
 #if PEANUT_FULL_GBC_SUPPORT
         if (cgb_mode)
@@ -1945,7 +1945,7 @@ PGB_HOT void __gb_draw_line(struct gb_s *gb)
                 if (lcdc_now & LCDC_TILE_SELECT)
                     tile = VRAM_TILES_1 + idx * 0x10;
                 else
-                    tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
+                    tile = VRAM_TILES_2 + ((idx + 0x80) & 0xFF) * 0x10;
 
                 if (cgb_mode)
                 {
@@ -2007,7 +2007,7 @@ PGB_HOT void __gb_draw_line(struct gb_s *gb)
                 if (lcdc_now & LCDC_TILE_SELECT)
                     tile = VRAM_TILES_1 + idx * 0x10;
                 else
-                    tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
+                    tile = VRAM_TILES_2 + ((idx + 0x80) & 0xFF) * 0x10;
                 tile += 2 * py;
                 t1 = gb->vram[tile];
                 t2 = gb->vram[tile + 1];
@@ -2050,7 +2050,7 @@ PGB_HOT void __gb_draw_line(struct gb_s *gb)
         if (lcdc_now & LCDC_TILE_SELECT)
             tile = VRAM_TILES_1 + idx * 0x10;
         else
-            tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
+            tile = VRAM_TILES_2 + ((idx + 0x80) & 0xFF) * 0x10;
 
 #if PEANUT_FULL_GBC_SUPPORT
         if (cgb_mode)
@@ -2099,7 +2099,7 @@ PGB_HOT void __gb_draw_line(struct gb_s *gb)
                 if (lcdc_now & LCDC_TILE_SELECT)
                     tile = VRAM_TILES_1 + idx * 0x10;
                 else
-                    tile = VRAM_TILES_2 + ((idx + 0x80) % 0x100) * 0x10;
+                    tile = VRAM_TILES_2 + ((idx + 0x80) & 0xFF) * 0x10;
 
 #if PEANUT_FULL_GBC_SUPPORT
                 if (cgb_mode)

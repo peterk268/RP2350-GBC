@@ -13,7 +13,17 @@
       "Bash(curl -fsSL \"https://raw.githubusercontent.com/mackron/dr_libs/master/dr_wav.h\" -o \"/Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/inc/dr_wav.h\")",
       "Bash(grep -n \"void shutdown_peripherals\\\\|void wakeup_and_start_peripherals\\\\|void sleep_and_shutdown_peripherals\" /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/*.c /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/*.h)",
       "Bash(cmake --build /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/build)",
-      "WebFetch(domain:blurbusters.com)"
+      "WebFetch(domain:blurbusters.com)",
+      "Bash(grep -rn \"add_compile_options\\\\|target_compile_options\\\\|-O2\\\\|-O3\\\\|-Ofast\\\\|-march\\\\|-mcpu\\\\|ATTRIBUTE_SECTION\" /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/*.cmake /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/CMakeLists.txt)",
+      "Bash(grep -n \"#define.*PEANUT\" /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/inc/*.h)",
+      "Bash(grep -n \"void audio_callback\\\\|void lcd_draw_line\" /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/*.h /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/inc/*.h)",
+      "Bash(grep -n \"AUDIO_BUFFER_SIZE\\\\|AUDIO_SAMPLES\\\\|AUDIO_SAMPLE_RATE\" /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/settings.h /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/*.h)",
+      "Bash(grep -rn \"overclock_cpu\\\\|UNDERCLOCK\" /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/inc /Users/peter/Desktop/Embedded/RP2350-GBC/Pico-Pal-GBC-v5/RP2350-GBC/*.h)"
+      "Bash(ls:*)",
+      "Bash(git status:*)",
+      "Bash(npm run test:*)",
+      "Read(*)",
+      "Bash(grep*)"
     ]
   }
 }

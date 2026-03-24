@@ -89,7 +89,11 @@ target_link_libraries(RP2350_GBC
         pico_scanvideo_dpi
         sparkfun_pico)
 
-option(ENABLE_APP_LTO "Enable app-only link-time optimization in Release builds" OFF)
+target_compile_options(RP2350_GBC PRIVATE
+    $<$<CONFIG:Release>:-O3>
+)
+
+option(ENABLE_APP_LTO "Enable app-only link-time optimization in Release builds" ON)
 if(ENABLE_APP_LTO)
     set_source_files_properties(${RP2350_GBC_APP_SOURCES} PROPERTIES
         COMPILE_OPTIONS "$<$<CONFIG:Release>:-flto>"

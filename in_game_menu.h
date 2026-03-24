@@ -531,7 +531,7 @@ static bool ig_menu_items_init_heap(void) {
     menu_items[i++] = (ig_menu_item_t){ "Screenshot",      IG_ITEM_ACTION, NULL, NULL, NULL, in_game_screenshot, IG_ACT_NONE };
 
     menu_items[i++] = (ig_menu_item_t){
-        "Fast Forward     ", IG_ITEM_TOGGLE, ig_get_fast_forward_text,
+        "Turbo                 ", IG_ITEM_TOGGLE, ig_get_fast_forward_text,
         ig_toggle_fast_forward, ig_toggle_fast_forward, ig_toggle_fast_forward, IG_ACT_NONE
     };
 

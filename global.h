@@ -183,34 +183,42 @@ void switch_to_hdmi_clock(bool hdmi) {
 #endif
 }
 
-// audible click with changing the frequency with i2s running so we disabled it.
-#define ALLOW_48KHz_PERFECT_PITCH 0
+#define ALLOW_48KHz_PERFECT_PITCH 1
 #if ALLOW_48KHz_PERFECT_PITCH
 bool enabled_48khz = false;
 // Switch to 300MHz when playing 48kHz audio (perfect integer I2S divider), back to 340MHz otherwise.
 // Voltage stays at 1.25V — no change needed. Both clocks are integer multiples of DPI_PCLK (20MHz).
 // PWM clkdiv is adjusted proportionally so backlight brightness stays constant — at 300MHz the minimum
 // divider (1.0) gives ~1.172MHz; at 340MHz we set 340/300≈1.133 to match that same frequency.
-void switch_to_48khz_clock(bool enable_48khz) {
-    if (enable_48khz == enabled_48khz) return; // no change
+void switch_to_48khz_clock(bool enable_48khz, uint32_t sample_freq, bool muted) {
+    if (enable_48khz == enabled_48khz) return; // no change — skip the whole stop/restart dance
     enabled_48khz = enable_48khz;
+
+    // Mute DAC before disrupting I2S (must precede to suppress loss-of-lock click)
+    if (!muted) mute_dac();
+    sleep_ms(10);                   // let I2C mute settle
+
     if (enable_48khz) {
-        // Going down: lower frequency first, voltage unchanged (1.25V is fine at 300MHz)
-        set_sys_clock_khz(SYS_CLOCK_48KHZ_KHZ, true);
+        set_sys_clock_khz(SYS_CLOCK_48KHZ_KHZ, true);   // 300 MHz
     } else {
-        // Going up: raise frequency back to normal 340MHz
-        set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);
+        set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);   // 340 MHz
     }
+    sleep_ms(10);                   // let clock stabilize before reconfiguring I2S
+
     // Compensate LED PWM clkdiv so backlight frequency stays constant (~1.172 MHz) at both sys clocks.
-    // At 300MHz: div=1.0 (hardware minimum). At 340MHz: div=340/300 to match.
     float led_div = enable_48khz ? 1.0f : ((float)SYS_CLOCK_NORMAL_KHZ / (float)SYS_CLOCK_48KHZ_KHZ);
-    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_LCD_LED), led_div);  // GPIO_LCD_LED
-    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_PWR_LED), led_div);  // GPIO_PWR_LED
-    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_BUTTON_LED), led_div);  // GPIO_BUTTON_LED
-    sleep_ms(10);
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_LCD_LED), led_div);
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_PWR_LED), led_div);
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_BUTTON_LED), led_div);
+
 #if ENABLE_PSRAM
     sfe_psram_update_timing();
 #endif
+
+    i2s_set_sample_freq(&i2s_config, sample_freq, false); // update PIO dividers for new sys clock
+
+    sleep_ms(10);                   // let DAC PLL re-lock before unmuting
+    if (!muted) unmute_dac();
 }
 #endif
 // Compensate LED PWM clkdiv when switching between 340MHz (normal) and POWERSAVE_CLOCK_KHZ.

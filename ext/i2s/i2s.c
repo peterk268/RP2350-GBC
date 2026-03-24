@@ -240,6 +240,32 @@ void i2s_set_sample_freq(i2s_config_t *i2s_config, uint32_t sample_freq, bool fr
     i2s_config->sample_freq = sample_freq;
 }
 
+// Stop I2S: abort DMA, disable PIO state machines, clear TX FIFO.
+// Call before changing sys clock to prevent BCLK/LRCLK/MCLK glitching.
+void i2s_stop(i2s_config_t *i2s_config) {
+    dma_channel_abort(i2s_config->dma_channel);
+    pio_sm_set_enabled(i2s_config->pio, i2s_config->sm, false);
+    if (i2s_config->mclk_enabled)
+        pio_sm_set_enabled(i2s_config->pio, i2s_config->sm_mclk, false);
+    pio_sm_clear_fifos(i2s_config->pio, i2s_config->sm);
+}
+
+// Restart I2S after a clock change. Assumes i2s_set_sample_freq() has already been
+// called to update the PIO clock dividers for the new sys clock. Re-enables both SMs
+// in sync so MCLK and BCLK/LRCLK start phase-aligned.
+void i2s_restart(i2s_config_t *i2s_config) {
+    pio_sm_clear_fifos(i2s_config->pio, i2s_config->sm);
+    pio_sm_restart(i2s_config->pio, i2s_config->sm);
+    if (i2s_config->mclk_enabled) {
+        pio_sm_clear_fifos(i2s_config->pio, i2s_config->sm_mclk);
+        pio_sm_restart(i2s_config->pio, i2s_config->sm_mclk);
+        uint32_t sm_mask = (1u << i2s_config->sm) | (1u << i2s_config->sm_mclk);
+        pio_enable_sm_mask_in_sync(i2s_config->pio, sm_mask);
+    } else {
+        pio_sm_set_enabled(i2s_config->pio, i2s_config->sm, true);
+    }
+}
+
 
 // /**
 //  * Increases the output volume

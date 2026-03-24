@@ -35,3 +35,5 @@ void i2s_volume(i2s_config_t *i2s_config, float volume);
 void i2s_increase_volume(i2s_config_t *i2s_config);
 void i2s_decrease_volume(i2s_config_t *i2s_config);
 void i2s_set_sample_freq(i2s_config_t *i2s_config, uint32_t sample_freq, bool frameskip);
+void i2s_stop(i2s_config_t *i2s_config);
+void i2s_restart(i2s_config_t *i2s_config);

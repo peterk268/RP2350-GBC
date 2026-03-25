@@ -804,7 +804,11 @@ void in_game_menu() {
         uint8_t temp_lcd_led = lcd_led_duty_cycle;
         // sd busy handles lcd led turn off
 #if LED_PHASE_OUT_PWR_DOWN
+#  if ENABLE_EXTREME_BATTERY_SAVE
+        uint8_t temp_button_led = (run_mode == MODE_POWERSAVE) ? powersave_saved_button_brightness : button_led_duty_cycle;
+#  else
         uint8_t temp_button_led = button_led_duty_cycle;
+#  endif
         uint8_t temp_pwr_led = pwr_led_duty_cycle;
         fade_out_leds_powerdown();
 #endif
@@ -828,7 +832,12 @@ void in_game_menu() {
 # if TIE_PWR_LED_TO_LCD
         pwr_led_duty_cycle = temp_lcd_led;
 # endif
-        save_system_settings_if_changed(temp_lcd_led, saved_button_brightness, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, crt_mode, true);
+#if ENABLE_EXTREME_BATTERY_SAVE
+        uint8_t eff_btn_brightness = (run_mode == MODE_POWERSAVE) ? powersave_saved_button_brightness : saved_button_brightness;
+#else
+        uint8_t eff_btn_brightness = saved_button_brightness;
+#endif
+        save_system_settings_if_changed(temp_lcd_led, eff_btn_brightness, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, crt_mode, true);
 #endif
 
 

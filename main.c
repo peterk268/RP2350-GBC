@@ -357,7 +357,11 @@ while(true)
 			// Power on made sense because that takes like a second to init everything but power off is instant.
 
 			uint8_t temp_lcd_led = lcd_led_duty_cycle;
+#if ENABLE_EXTREME_BATTERY_SAVE
+			uint8_t temp_button_led = (run_mode == MODE_POWERSAVE) ? powersave_saved_button_brightness : button_led_duty_cycle;
+#else
 			uint8_t temp_button_led = button_led_duty_cycle;
+#endif
 			decrease_button_brightness(MAX_BRIGHTNESS);
 			// sd busy handles lcd led turn off
 #if LED_PHASE_OUT_PWR_DOWN
@@ -412,7 +416,11 @@ while(true)
 			shutdown_screen(1500);
 
 			uint8_t temp_lcd_led = lcd_led_duty_cycle;
+#if ENABLE_EXTREME_BATTERY_SAVE
+			uint8_t temp_button_led = (run_mode == MODE_POWERSAVE) ? powersave_saved_button_brightness : button_led_duty_cycle;
+#else
 			uint8_t temp_button_led = button_led_duty_cycle;
+#endif
 			decrease_button_brightness(MAX_BRIGHTNESS);
 			// sd busy handles lcd led turn off
 #if ENABLE_SDCARD

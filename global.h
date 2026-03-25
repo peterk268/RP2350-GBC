@@ -196,14 +196,14 @@ void switch_to_48khz_clock(bool enable_48khz, uint32_t sample_freq, bool muted) 
 
     // Mute DAC before disrupting I2S (must precede to suppress loss-of-lock click)
     if (!muted) mute_dac();
-    sleep_ms(10);                   // let I2C mute settle
+    sleep_ms(15);                   // let I2C mute settle
 
     if (enable_48khz) {
         set_sys_clock_khz(SYS_CLOCK_48KHZ_KHZ, true);   // 300 MHz
     } else {
         set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);   // 340 MHz
     }
-    sleep_ms(10);                   // let clock stabilize before reconfiguring I2S
+    sleep_ms(15);                   // let clock stabilize before reconfiguring I2S
 
     // Compensate LED PWM clkdiv so backlight frequency stays constant (~1.172 MHz) at both sys clocks.
     float led_div = enable_48khz ? 1.0f : ((float)SYS_CLOCK_NORMAL_KHZ / (float)SYS_CLOCK_48KHZ_KHZ);
@@ -217,7 +217,7 @@ void switch_to_48khz_clock(bool enable_48khz, uint32_t sample_freq, bool muted) 
 
     i2s_set_sample_freq(&i2s_config, sample_freq, false); // update PIO dividers for new sys clock
 
-    sleep_ms(10);                   // let DAC PLL re-lock before unmuting
+    sleep_ms(15);                   // let DAC PLL re-lock before unmuting
     if (!muted) unmute_dac();
 }
 #endif

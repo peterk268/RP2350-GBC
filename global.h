@@ -71,6 +71,7 @@ bool auto_load_state = false;
 // CRT mode: 0=off, 1=scanlines only, 2=BFI only, 3=both (reduced strobe)
 uint8_t crt_mode = 0;
 bool gb_active = false; // true only during GB gameplay, not in mp3/imu modes
+bool is_mp3_app = false; // set to true if mp3 app is selected at boot (IOX_B_B state)
 
 static struct
 {
@@ -162,6 +163,15 @@ static uint8_t powersave_saved_button_brightness = 0;
 #define POWERSAVE_CLOCK_KHZ 180000u
 #endif
 
+// Compensate LED PWM clkdiv when switching between 340MHz (normal) and POWERSAVE_CLOCK_KHZ.
+// At POWERSAVE_CLOCK_KHZ: div=1.0 (hardware min). At 340MHz: div=ratio to match same PWM freq.
+void reconfigure_led_pwm_for_underclock(bool underclocked) {
+    float led_div = underclocked ? 1.0f : is_mp3_app ? ((float)SYS_CLOCK_NORMAL_KHZ / (float)SYS_CLOCK_48KHZ_KHZ) : ((float)SYS_CLOCK_NORMAL_KHZ / (float)POWERSAVE_CLOCK_KHZ);
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_LCD_LED),    led_div);
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_PWR_LED),    led_div);
+    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_BUTTON_LED), led_div);
+}
+
 // Switch between normal DPI clock (340MHz, 1.25V) and HDMI clock (378MHz, 1.30V).
 // 1.30V = VREG_VOLTAGE_MAX (no voltage limit disable needed) — safe per Pimoroni thermal tests (~33C).
 // Device is docked/charging when HDMI is active so the extra draw is fine.
@@ -178,6 +188,7 @@ void switch_to_hdmi_clock(bool hdmi) {
         vreg_set_voltage(VREG_VOLTAGE_1_25);
     }
     sleep_ms(10);
+    // Changes in PWM, I2S, Scanvideo clock dividers are not needed since they are not used.
 #if ENABLE_PSRAM
     sfe_psram_update_timing();
 #endif
@@ -203,14 +214,11 @@ void switch_to_48khz_clock(bool enable_48khz, uint32_t sample_freq, bool muted) 
     } else {
         set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);   // 340 MHz
     }
-    sleep_ms(15);                   // let clock stabilize before reconfiguring I2S
+    
+    sleep_ms(1);
+    reconfigure_led_pwm_for_underclock(enabled_48khz);
 
-    // Compensate LED PWM clkdiv so backlight frequency stays constant (~1.172 MHz) at both sys clocks.
-    float led_div = enable_48khz ? 1.0f : ((float)SYS_CLOCK_NORMAL_KHZ / (float)SYS_CLOCK_48KHZ_KHZ);
-    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_LCD_LED), led_div);
-    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_PWR_LED), led_div);
-    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_BUTTON_LED), led_div);
-
+    sleep_ms(10); // let clock stabilize before reconfiguring I2S
 #if ENABLE_PSRAM
     sfe_psram_update_timing();
 #endif
@@ -221,14 +229,6 @@ void switch_to_48khz_clock(bool enable_48khz, uint32_t sample_freq, bool muted) 
     if (!muted) unmute_dac();
 }
 #endif
-// Compensate LED PWM clkdiv when switching between 340MHz (normal) and POWERSAVE_CLOCK_KHZ.
-// At POWERSAVE_CLOCK_KHZ: div=1.0 (hardware min). At 340MHz: div=ratio to match same PWM freq.
-void reconfigure_led_pwm_for_underclock(bool underclocked) {
-    float led_div = underclocked ? 1.0f : ((float)SYS_CLOCK_NORMAL_KHZ / (float)POWERSAVE_CLOCK_KHZ);
-    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_LCD_LED),    led_div);
-    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_PWR_LED),    led_div);
-    pwm_set_clkdiv(pwm_gpio_to_slice_num(GPIO_BUTTON_LED), led_div);
-}
 
 void overclock_cpu(bool enable) {
     if (enable) {
@@ -266,6 +266,12 @@ void underclock_cpu(bool enable) {
 	if (enable) {
 		// Going down: lower frequency first, then voltage
 		set_sys_clock_khz(POWERSAVE_CLOCK_KHZ, true);
+        sleep_ms(1);
+        reconfigure_led_pwm_for_underclock(enable); // PWM clkdiv
+#if ENABLE_SOUND
+        i2s_set_sample_freq(&i2s_config, i2s_config.sample_freq, false); // I2S PIO clkdiv
+#endif
+        // Note: scanvideo pixel clock intentionally scales with sys clock — gives ~60fps at 180MHz.
 		sleep_ms(10);
 
 		vreg_set_voltage(VREG_VOLTAGE_DEFAULT);
@@ -279,6 +285,12 @@ void underclock_cpu(bool enable) {
         sleep_ms(10);
 
         set_sys_clock_khz(SYS_CLOCK_NORMAL_KHZ, true);
+        sleep_ms(1);
+        reconfigure_led_pwm_for_underclock(enable); // PWM clkdiv
+#if ENABLE_SOUND
+        i2s_set_sample_freq(&i2s_config, i2s_config.sample_freq, false); // I2S PIO clkdiv
+#endif
+        // Note: scanvideo pixel clock intentionally scales with sys clock — returns to ~120fps at 340MHz.
         sleep_ms(10);
 #if ENABLE_PSRAM
         sfe_psram_update_timing();

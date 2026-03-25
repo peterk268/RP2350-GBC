@@ -391,7 +391,6 @@ static void extreme_powersave_exit(void) {
 // ================================================================
 static void ig_set_mode_normal(void) {
     if (run_mode == MODE_POWERSAVE) {
-        reconfigure_led_pwm_for_underclock(false);
         underclock_cpu(false);
 #if ENABLE_EXTREME_BATTERY_SAVE
         extreme_powersave_exit();
@@ -417,7 +416,6 @@ static void ig_set_mode_powersave(void) {
     // If we were turbo, we’re switching modes anyway. Just force powersave behavior.
     run_mode = MODE_POWERSAVE;
     underclock_cpu(true);
-    reconfigure_led_pwm_for_underclock(true);
 #if ENABLE_EXTREME_BATTERY_SAVE
     extreme_powersave_enter();
 #endif

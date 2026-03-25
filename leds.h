@@ -88,6 +88,8 @@ void adjust_brightness(uint8_t gpio_num, uint8_t *current_duty_cycle, uint8_t st
 
 // LED Configuration Wrapper
 void config_leds() {
+    reconfigure_led_pwm_for_underclock(false);
+
     config_led(GPIO_LCD_LED, lcd_led_duty_cycle, false);    // Active High
     config_led(GPIO_PWR_LED, pwr_led_duty_cycle, false);    // Active High
     config_led(GPIO_BUTTON_LED, button_led_duty_cycle, false); // Active High

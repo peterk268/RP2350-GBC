@@ -2709,6 +2709,9 @@ void play_mp3_stream(const char *start_filename) {
     // But when having the lvgl fb buffers allocated,
     // we waste memory and also crash with malloc failures.
     lvgl_free_buffers();
+    // Free the spare GBC frame buffer (~46 KB)
+	// front_fb->data = lvgl_fb and write_fb->data = lv_buf1, so those must stay.
+	if (free_fb) { free(free_fb); free_fb = NULL; }
     lvgl_fb = front_fb->data;
     lv_buf1 = (lv_color_t *)write_fb->data;
 

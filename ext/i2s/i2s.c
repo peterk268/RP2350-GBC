@@ -190,6 +190,34 @@ void i2s_dma_write(i2s_config_t *i2s_config, const uint16_t *samples) {
 }
 
 /**
+ * Write silence (zeros) to DMA buffer and initiate DMA transfer (blocking).
+ * Avoids needing a separate silence buffer allocation.
+ */
+void i2s_dma_write_silence(i2s_config_t *i2s_config) {
+    if (!i2s_config || !i2s_config->dma_buf) return;
+    dma_channel_wait_for_finish_blocking(i2s_config->dma_channel);
+    memset(i2s_config->dma_buf, 0, i2s_config->dma_trans_count * sizeof(uint32_t));
+    dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
+                                        i2s_config->dma_buf,
+                                        i2s_config->dma_trans_count);
+}
+
+/**
+ * Non-blocking silence write. Returns true if DMA accepted, false if still busy.
+ */
+bool i2s_dma_write_silence_non_blocking(i2s_config_t *i2s_config) {
+    if (!i2s_config || !i2s_config->dma_buf)
+        return true;
+    if (dma_channel_is_busy(i2s_config->dma_channel))
+        return false;
+    memset(i2s_config->dma_buf, 0, i2s_config->dma_trans_count * sizeof(uint32_t));
+    dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
+                                        i2s_config->dma_buf,
+                                        i2s_config->dma_trans_count);
+    return true;
+}
+
+/**
  * Non-blocking I2S DMA write.
  *
  * Returns:

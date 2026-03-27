@@ -1,8 +1,8 @@
 // ===============================================================
-// Pico Pal MP3 Streaming Player (PLAYLIST + TRIPLE PCM BUFFER)
+// Pico Pal MP3 Streaming Player (PLAYLIST + DOUBLE PCM BUFFER)
 // - Scans "/music" for .mp3; if none, falls back to root
-// - PCM_FRAME_COUNT = 6144 (high for long buffers in PSRAM)
-// - Triple PCM buffers
+// - PCM_FRAME_COUNT = 6144
+// - Double PCM buffers (buf_play + buf_decoding)
 // - Non-blocking I2S DMA (i2s_dma_write_non_blocking must be implemented)
 // - Controls:
 //      A       -> Play / Pause
@@ -29,7 +29,7 @@
 #define PCM_FRAME_COUNT 6144 // 16384 takes too long to load next
 #endif
 
-#define MP3_STREAM_BUF_SIZE       (16 * 1024)   // 16 KB ring buffer (in PSRAM via malloc)
+#define MP3_STREAM_BUF_SIZE       (8 * 1024)    // 8 KB ring buffer
 #define MP3_REFILL_CHUNK          (4 * 1024)    // max bytes per SD read
 
 // FLAC dynamic seek cache (built while playing for files without an embedded seektable)
@@ -1029,7 +1029,7 @@ static bool seek_relative_seconds(
     drmp3 *mp3,
     int seconds,
     int sample_rate,
-    bool *decoded_next_chunk,
+    bool *fill_ready,
     uint32_t *seeked_byte_pos,   // out: byte position seeked to (before drmp3_init)
     uint64_t played_frames_ref   // current played_frames for time calculation
 ){
@@ -1084,7 +1084,7 @@ static bool seek_relative_seconds(
         return false;
     }
 
-    *decoded_next_chunk = false;
+    *fill_ready = false;
     return true;
 }
 
@@ -1338,6 +1338,18 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                            uint32_t resume_position_ms,
                                            int current_track_index) {
 
+    // Persistent heap allocations — allocated once on the first MP3 track, reused forever.
+    // Avoids heap fragmentation from free+realloc between tracks, which can push these
+    // time-critical buffers into PSRAM (5x slower) on subsequent tracks.
+    static drmp3    *s_mp3_state    = NULL;
+    static uint8_t  *s_mp3_ring_buf = NULL;
+    // PCM decode buffers — persistent to prevent PSRAM spill on subsequent tracks.
+    // drmp3_init re-allocates its internal pData between tracks, fragmenting the heap.
+    // Always allocate max size (stereo) so mono tracks can reuse without realloc.
+    static int16_t  *s_pcmA = NULL;
+    static int16_t  *s_pcmB = NULL;
+    static const uint32_t PCM_BUF_MAX = PCM_FRAME_COUNT * 2; // stereo max
+
     uint64_t played_frames = 0;
     g_total_duration_ms = 0;
     g_mp3_audio_start   = 0;
@@ -1349,19 +1361,22 @@ static play_result_t mp3_play_single_track(const char *filepath,
     bool is_wav  = has_wav_extension(filepath);
     bool is_flac = has_flac_extension(filepath);
 
-    // --- Allocate stream structure + ring buffer in PSRAM ---
     mp3_stream_t *stream = (mp3_stream_t *)calloc(1, sizeof(mp3_stream_t));
     if (!stream) {
         printf("mp3_stream_t malloc fail\n");
         return PLAY_RESULT_NEXT;
     }
 
-    stream->buf = (uint8_t *)malloc(MP3_STREAM_BUF_SIZE);
-    if (!stream->buf) {
-        printf("mp3_stream_t buf malloc fail\n");
-        free(stream);
-        return PLAY_RESULT_NEXT;
+    // Allocate ring buffer once; reuse on subsequent tracks to keep it in SRAM.
+    if (!s_mp3_ring_buf) {
+        s_mp3_ring_buf = (uint8_t *)malloc(MP3_STREAM_BUF_SIZE);
+        if (!s_mp3_ring_buf) {
+            printf("mp3 ring buf malloc fail\n");
+            free(stream);
+            return PLAY_RESULT_NEXT;
+        }
     }
+    stream->buf = s_mp3_ring_buf;
 
     fr = f_open(&stream->file, filepath, FA_READ);
     if (fr != FR_OK) {
@@ -1503,8 +1518,13 @@ static play_result_t mp3_play_single_track(const char *filepath,
             mp3_refill(stream);
         }
 
-        mp3 = (drmp3 *)calloc(1, sizeof(drmp3));
-        if (!mp3) { result = PLAY_RESULT_NEXT; goto CLEANUP_FILE; }
+        // Allocate drmp3 state once; reuse on subsequent tracks to keep it in SRAM.
+        if (!s_mp3_state) {
+            s_mp3_state = (drmp3 *)malloc(sizeof(drmp3));
+            if (!s_mp3_state) { result = PLAY_RESULT_NEXT; goto CLEANUP_FILE; }
+        }
+        mp3 = s_mp3_state;
+        memset(mp3, 0, sizeof(drmp3));
 
         if (!drmp3_init(mp3,
                         mp3_stream_read,
@@ -1567,24 +1587,25 @@ static play_result_t mp3_play_single_track(const char *filepath,
     i2s_set_sample_freq(&i2s_config, track_sample_rate, false);
 
     uint8_t channels = track_channels;
-    uint32_t sample_count = PCM_FRAME_COUNT * channels;
+    // Persistent decode buffers — allocated once at max (stereo) size, reused across tracks.
+    if (!s_pcmA) s_pcmA = (int16_t *)malloc(PCM_BUF_MAX * sizeof(int16_t));
+    if (!s_pcmB) s_pcmB = (int16_t *)malloc(PCM_BUF_MAX * sizeof(int16_t));
 
-    // Triple PCM buffers + silence buffer for pause (all in PSRAM)
-    // Make sure all PCM buffers start as silence (no old track data)
-    int16_t *pcmA        = (int16_t *)calloc(sample_count, sizeof(int16_t));
-    int16_t *pcmB        = (int16_t *)calloc(sample_count, sizeof(int16_t));
-    int16_t *pcmC        = (int16_t *)calloc(sample_count, sizeof(int16_t));
-    int16_t *silence_buf = (int16_t *)calloc(sample_count, sizeof(int16_t));
+    // Zero decode buffers so new track starts silent (no stale audio).
+    if (s_pcmA) memset(s_pcmA, 0, PCM_BUF_MAX * sizeof(int16_t));
+    if (s_pcmB) memset(s_pcmB, 0, PCM_BUF_MAX * sizeof(int16_t));
 
-    if (!pcmA || !pcmB || !pcmC || !silence_buf) {
+    int16_t *pcmA = s_pcmA;
+    int16_t *pcmB = s_pcmB;
+
+    if (!pcmA || !pcmB) {
         printf("pcm malloc fail\n");
         result = PLAY_RESULT_NEXT;
         goto CLEANUP_MP3;
     }
 
-    int16_t *buf_play  = pcmA;
-    int16_t *buf_ready = pcmB;
-    int16_t *buf_fill  = pcmC;
+    int16_t *buf_play     = pcmA;
+    int16_t *buf_decoding = pcmB;
 
     // Extra prefill for MP3 ring buffer (WAV/FLAC reads directly from FatFS)
     if (!is_wav && !is_flac) {
@@ -1604,22 +1625,18 @@ static play_result_t mp3_play_single_track(const char *filepath,
     uint64_t frames_play = DECODE_FRAMES(buf_play);
     if (frames_play > 0) played_frames += frames_play;
     mp3_zero_pcm_tail(buf_play, frames_play, PCM_FRAME_COUNT, channels);
-    i2s_dma_write(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_play));
+    if (paused) i2s_dma_write_silence(&i2s_config);
+    else        i2s_dma_write(&i2s_config, (const uint16_t *)buf_play);
 
     if (!is_wav && !is_flac) {
         for (int i = 0; i < 4 && !stream->eof; i++) mp3_refill(stream);
     }
 
-    uint64_t frames_ready = DECODE_FRAMES(buf_ready);
-    if (frames_ready > 0) played_frames += frames_ready;
-    mp3_zero_pcm_tail(buf_ready, frames_ready, PCM_FRAME_COUNT, channels);
+    uint64_t frames_decoding = DECODE_FRAMES(buf_decoding);
+    if (frames_decoding > 0) played_frames += frames_decoding;
+    mp3_zero_pcm_tail(buf_decoding, frames_decoding, PCM_FRAME_COUNT, channels);
 
-    uint64_t frames_fill = DECODE_FRAMES(buf_fill);
-    if (frames_fill > 0) played_frames += frames_fill;
-    mp3_zero_pcm_tail(buf_fill, frames_fill, PCM_FRAME_COUNT, channels);
-
-    bool ready_chunk_valid = (frames_ready > 0);
-    bool decoded_next_chunk = (frames_fill > 0);
+    bool fill_ready = (frames_decoding > 0);
     uint32_t replayed_chunk_count = 0;
 
     bool next_track_requested = false;
@@ -1685,39 +1702,32 @@ static play_result_t mp3_play_single_track(const char *filepath,
             static uint64_t last_i2s = 0;
             uint64_t i2s_now = time_us_64();
 
-            // If the fill buffer is decoded while ready is empty, promote it.
-            if (!ready_chunk_valid && decoded_next_chunk) {
-                int16_t *tmp = buf_ready;
-                buf_ready = buf_fill;
-                buf_fill = tmp;
-                ready_chunk_valid = true;
-                decoded_next_chunk = false;
-            }
-
-            const uint16_t *dma_src = (const uint16_t *)silence_buf;
             bool rotate_audio_buffers = false;
             bool replay_previous_chunk = false;
-            if (!paused) {
-                if (ready_chunk_valid) {
-                    dma_src = (const uint16_t *)buf_ready;
+            bool dma_accepted;
+            if (paused) {
+                dma_accepted = i2s_dma_write_silence_non_blocking(&i2s_config);
+            } else {
+                const uint16_t *dma_src;
+                if (fill_ready) {
+                    dma_src = (const uint16_t *)buf_decoding;
                     rotate_audio_buffers = true;
                 } else {
                     // Decoder fell behind: replay last known-good audio.
                     dma_src = (const uint16_t *)buf_play;
                     replay_previous_chunk = true;
                 }
+                dma_accepted = i2s_dma_write_non_blocking(&i2s_config, dma_src);
             }
 
-            if (i2s_dma_write_non_blocking(&i2s_config, dma_src)) {
+            if (dma_accepted) {
                 if (rotate_audio_buffers) {
-                    // DMA accepted buf_ready and started playing it.
+                    // DMA accepted buf_decoding; swap so old buf_play becomes new decode target.
                     int16_t *old = buf_play;
-                    buf_play  = buf_ready;   // now playing
-                    buf_ready = buf_fill;    // next ready
-                    buf_fill  = old;         // to be filled
+                    buf_play     = buf_decoding;
+                    buf_decoding = old;
 
-                    ready_chunk_valid = decoded_next_chunk;
-                    decoded_next_chunk = false;  // decode again on next loop
+                    fill_ready = false;  // decode again on next loop
                 }
                 last_i2s = i2s_now;
 
@@ -1733,13 +1743,13 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 }
             }
 
-            // Decode into buf_fill only when we actually need another chunk.
-            if (!decoded_next_chunk && !paused) {
-                uint64_t frames = DECODE_FRAMES(buf_fill);
+            // Decode into buf_decoding only when we actually need another chunk.
+            if (!fill_ready && !paused) {
+                uint64_t frames = DECODE_FRAMES(buf_decoding);
 
                 if (frames > 0) {
                     played_frames += frames;
-                    mp3_zero_pcm_tail(buf_fill, frames, PCM_FRAME_COUNT, channels);
+                    mp3_zero_pcm_tail(buf_decoding, frames, PCM_FRAME_COUNT, channels);
 
                     // Record a seekpoint every ~10 seconds for FLAC files without a seektable.
                     // f_tell is up to FLAC_READ_AHEAD_BYTES ahead of the actual decode position;
@@ -1801,8 +1811,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             printf("Repeat ONE complete -> Repeat OFF\n");
                         }
 
-                        ready_chunk_valid = false;
-                        decoded_next_chunk = false;
+                        fill_ready = false;
                         // Reset seek correction: time restarts from 0
                         g_time_display_base_frames = played_frames;
                         g_time_display_offset_ms   = 0;
@@ -1810,10 +1819,9 @@ static play_result_t mp3_play_single_track(const char *filepath,
                     }
                     // Not EOF but no frames – try again next cycle
                 } else {
-                    decoded_next_chunk = true;
+                    fill_ready = true;
                 }
             }
-            // i2s_dma_write(&i2s_config, (const uint16_t *)(paused ? silence_buf : buf_ready));
 
             // do buttons and controls only if last i2s write was <50ms ago, if not it means we got a new write coming up (128ms)
             // so we need to prime the buffer first before messing with controls
@@ -2054,8 +2062,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                 bool seeked = is_wav ? drwav_seek_to_pcm_frame(wav, (drwav_uint64)target_frame)
                                                      : drflac_seek_to_pcm_frame(flac, (drflac_uint64)target_frame);
                                 if (seeked) {
-                                    ready_chunk_valid = false;
-                                    decoded_next_chunk = false;
+                                    fill_ready = false;
                                     played_frames              = target_frame;
                                     g_time_display_base_frames = target_frame;
                                     g_time_display_offset_ms   = target_ms;
@@ -2063,8 +2070,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                 }
                             } else {
                                 uint32_t seeked_pos = 0;
-                                if (seek_relative_seconds(stream, mp3, -step, track_sample_rate, &decoded_next_chunk, &seeked_pos, played_frames)) {
-                                    ready_chunk_valid = false;
+                                if (seek_relative_seconds(stream, mp3, -step, track_sample_rate, &fill_ready, &seeked_pos, played_frames)) {
                                     if (g_total_duration_ms > 0 && file_size > g_mp3_audio_start) {
                                         int64_t audio_bytes = (int64_t)file_size - (int64_t)g_mp3_audio_start;
                                         int64_t off = (int64_t)seeked_pos - (int64_t)g_mp3_audio_start;
@@ -2122,8 +2128,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                 bool seeked = is_wav ? drwav_seek_to_pcm_frame(wav, (drwav_uint64)target_frame)
                                                      : drflac_seek_to_pcm_frame(flac, (drflac_uint64)target_frame);
                                 if (seeked) {
-                                    ready_chunk_valid = false;
-                                    decoded_next_chunk = false;
+                                    fill_ready = false;
                                     played_frames              = target_frame;
                                     g_time_display_base_frames = target_frame;
                                     g_time_display_offset_ms   = target_ms;
@@ -2131,8 +2136,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                 }
                             } else {
                                 uint32_t seeked_pos = 0;
-                                if (seek_relative_seconds(stream, mp3, step, track_sample_rate, &decoded_next_chunk, &seeked_pos, played_frames)) {
-                                    ready_chunk_valid = false;
+                                if (seek_relative_seconds(stream, mp3, step, track_sample_rate, &fill_ready, &seeked_pos, played_frames)) {
                                     if (g_total_duration_ms > 0 && file_size > g_mp3_audio_start) {
                                         int64_t audio_bytes = (int64_t)file_size - (int64_t)g_mp3_audio_start;
                                         int64_t off = (int64_t)seeked_pos - (int64_t)g_mp3_audio_start;
@@ -2411,12 +2415,9 @@ END_PLAYBACK:
     }
 
     // Push silence to let the output settle before freeing buffers
-    i2s_dma_write(&i2s_config, (const uint16_t *)silence_buf);
+    i2s_dma_write_silence(&i2s_config);
 
-    free(pcmA);
-    free(pcmB);
-    free(pcmC);
-    free(silence_buf);
+    // pcmA/B are persistent (s_pcmA/B) — don't free them.
 
 CLEANUP_MP3:
     if (wav) {
@@ -2438,7 +2439,7 @@ CLEANUP_MP3:
     }
     if (mp3) {
         drmp3_uninit(mp3);
-        free(mp3);
+        // Don't free — s_mp3_state keeps this allocation alive for the next track.
         mp3 = NULL;
     }
 
@@ -2447,7 +2448,7 @@ CLEANUP_FILE:
 
 CLEANUP_STREAM_ONLY:
     if (stream) {
-        if (stream->buf) free(stream->buf);
+        // Don't free stream->buf — it points to s_mp3_ring_buf which persists.
         free(stream);
     }
 

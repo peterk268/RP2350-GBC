@@ -1022,9 +1022,77 @@ static void mp3_build_playlist(void) {
 
 
 // ===================================================================
-// Persistent buffer for drmp3's internal pData — keeps it in SRAM.
-// Without this, drmp3_init allocates 64KB via malloc which lands in PSRAM (5x slower).
+// MEMORY STRATEGY — READ BEFORE CHANGING
+//
+// RP2350 total SRAM: 520 KB (0x20000000–0x20082000)
+// RP2350 PSRAM:      8 MB  (0x11000000)
+//
+// The SparkFun TLSF allocator manages SRAM + PSRAM as one pool,
+// filling SRAM first. PSRAM reads are ~5x slower than SRAM.
+// Game ROM is explicitly malloc'd into PSRAM and is never in SRAM.
+//
+// ── ACTUAL SRAM LAYOUT (from linker_custom.ld + build map) ──────
+//
+//   Region        Address                  Size   Notes
+//   .data (RAM)   0x20000110–0x2000D01F    52 KB  RAM-resident code + data
+//     of which:
+//       peanut_gb time_critical            38 KB  __gb_read/write/step/draw etc.
+//       other time_critical + .data        14 KB  gb_rom_read, SPI, scanvideo, etc.
+//   .bss          0x2000D020–0x20028409   109 KB  static globals
+//     of which:
+//       struct gb_s (global.h)            ~49 KB  WRAM(32)+VRAM(16)+OAM+HRAM+misc
+//       other statics                     ~60 KB  pixels_buf, palette cache, etc.
+//   Heap          0x20028410–0x2007BFFF   334 KB  TLSF-managed (SRAM fills first)
+//   Core1 stack   0x2007C000–0x2007DFFF    8 KB   grows down (separate from heap)
+//   Core0 stack   0x2007E000–0x2007FFFF    8 KB   grows down (separate from heap)
+//   SCRATCH_X     0x20080000–0x20080FFF    4 KB   pico_hdmi DMA ISR code
+//   SCRATCH_Y     0x20081000–0x20081FFF    4 KB   scratch data
+//   Total                                520 KB
+//
+// ── HEAP BUDGET (334 KB total) ──────────────────────────────────
+//
+// Emulator mode (persistent while game runs):
+//   fb0 + fb1 + fb2  (gpu.h)   135 KB  — 3× framebuffer_t [144×160×2 + 4]
+//   lvgl_fb          (gpu.h)    45 KB  — [160×144×2] UI display buffer
+//   lv_buf1          (gpu.h)    45 KB  — [160×144×2] LVGL partial draw buf
+//   I2S DMA buffer   (main.c)    3 KB  — AUDIO_SAMPLES(738) × 4 bytes
+//   audio stream buf (main.c)    3 KB  — AUDIO_SAMPLES × 4 bytes
+//   cart_ram                    ≤32 KB  — cartridge SRAM (game-dependent)
+//   Subtotal                   ~263 KB → ~71 KB heap free
+//
+// MP3 mode — persistent across all tracks:
+//   s_drmp3_pdata  (mp3.h)      64 KB  — drmp3 compressed-data read buffer
+//   s_pcmA + s_pcmB (mp3.h)     48 KB  — PCM double-buffers (24 KB each)
+//   s_mp3_ring_buf (mp3.h)      16 KB  — compressed bitstream ring buffer
+//   I2S DMA buffer (main.c)     24 KB  — PCM_FRAME_COUNT(6144) × 4 bytes
+//   Subtotal persistent        ~152 KB → ~182 KB heap free between tracks
+//
+// MP3 mode — per-track (freed at track end):
+//   drflac state               ~49 KB  — verified SRAM: 0x20055AC0 (2026-03-28)
+//   flac_seekcache (mp3.h)       6 KB  — 512-entry seek cache
+//   drwav / mp3_stream_t        <1 KB
+//   Subtotal per-track          ~56 KB → ~127 KB heap free during FLAC playback
+//
+// ── SRAM SAFETY ─────────────────────────────────────────────────
+// All time-critical decode buffers are persistent statics allocated
+// on first track play and NEVER freed. This ensures they land in SRAM
+// before the heap fragments, and eliminates the PSRAM spill that
+// previously caused MP3 crackling.
+//
+// drflac (~49 KB per-track) verified landing in SRAM with zero underruns.
+// If heap headroom shrinks in future (new persistent allocs), make it a
+// persistent static too — needs a custom allocator since drflac_open
+// allocates it internally.
+//
+// DO NOT change persistent statics to per-track malloc/free — that
+// reintroduces fragmentation and will push pData back into PSRAM.
 // ===================================================================
+
+// Persistent buffer for drmp3's internal pData.
+// drmp3 uses onRealloc(NULL, 64KB) for its first allocation (equivalent
+// to malloc). Our custom callbacks intercept this and return s_drmp3_pdata
+// instead of calling system malloc, keeping pData in SRAM permanently.
+// The onFree callback is a no-op — the buffer is never released.
 static uint8_t *s_drmp3_pdata = NULL;
 static size_t   s_drmp3_pdata_cap = 0;
 #define DRMP3_PDATA_INIT_SIZE (DRMP3_DATA_CHUNK_SIZE)  // 64KB
@@ -1388,9 +1456,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                                            uint32_t resume_position_ms,
                                            int current_track_index) {
 
-    // Persistent heap allocations — allocated once on the first MP3 track, reused forever.
-    // Avoids heap fragmentation from free+realloc between tracks, which can push these
-    // time-critical buffers into PSRAM (5x slower) on subsequent tracks.
+    // Persistent allocations — see MEMORY STRATEGY comment above s_drmp3_pdata.
     static drmp3    *s_mp3_state    = NULL;
     static uint8_t  *s_mp3_ring_buf = NULL;
     // PCM decode buffers — persistent to prevent PSRAM spill on subsequent tracks.
@@ -1675,6 +1741,11 @@ static play_result_t mp3_play_single_track(const char *filepath,
                : (uint64_t)drmp3_read_pcm_frames_s16(mp3,  PCM_FRAME_COUNT, (dst)))
 
     printf("Starting %s stream...\n", is_wav ? "WAV" : is_flac ? "FLAC" : "MP3");
+    if (is_flac && flac)
+        printf("\tflac state:%p (SRAM<0x20082000 PSRAM=0x11xxxxxx)\n", (void *)flac);
+    if (!is_wav && !is_flac)
+        printf("\tpData:%p ring:%p pcmA:%p pcmB:%p (SRAM<0x20082000 PSRAM=0x11xxxxxx)\n",
+               (void *)s_drmp3_pdata, (void *)s_mp3_ring_buf, (void *)s_pcmA, (void *)s_pcmB);
 
     (void)mp3_get_resume_offset(stream); // position snapshot (MP3 byte tracking)
     uint64_t frames_play = DECODE_FRAMES(buf_play);

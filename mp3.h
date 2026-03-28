@@ -1022,6 +1022,47 @@ static void mp3_build_playlist(void) {
 
 
 // ===================================================================
+// Persistent buffer for drmp3's internal pData — keeps it in SRAM.
+// Without this, drmp3_init allocates 64KB via malloc which lands in PSRAM (5x slower).
+// ===================================================================
+static uint8_t *s_drmp3_pdata = NULL;
+static size_t   s_drmp3_pdata_cap = 0;
+#define DRMP3_PDATA_INIT_SIZE (DRMP3_DATA_CHUNK_SIZE)  // 64KB
+
+static void *drmp3_sram_malloc(size_t sz, void *pUserData) {
+    (void)pUserData;
+    if (!s_drmp3_pdata) {
+        size_t alloc_sz = (sz > DRMP3_PDATA_INIT_SIZE) ? sz : DRMP3_PDATA_INIT_SIZE;
+        s_drmp3_pdata = (uint8_t *)malloc(alloc_sz);
+        s_drmp3_pdata_cap = s_drmp3_pdata ? alloc_sz : 0;
+    }
+    if (sz <= s_drmp3_pdata_cap) return s_drmp3_pdata;
+    uint8_t *p = (uint8_t *)realloc(s_drmp3_pdata, sz);
+    if (p) { s_drmp3_pdata = p; s_drmp3_pdata_cap = sz; }
+    return p;
+}
+
+static void *drmp3_sram_realloc(void *p, size_t sz, void *pUserData) {
+    (void)pUserData;
+    if (p != s_drmp3_pdata) return realloc(p, sz);
+    if (sz <= s_drmp3_pdata_cap) return s_drmp3_pdata;
+    uint8_t *np = (uint8_t *)realloc(s_drmp3_pdata, sz);
+    if (np) { s_drmp3_pdata = np; s_drmp3_pdata_cap = sz; }
+    return np;
+}
+
+static void drmp3_sram_free(void *p, void *pUserData) {
+    (void)pUserData; (void)p;
+}
+
+static const drmp3_allocation_callbacks s_drmp3_alloc = {
+    .pUserData = NULL,
+    .onMalloc  = drmp3_sram_malloc,
+    .onRealloc = drmp3_sram_realloc,
+    .onFree    = drmp3_sram_free,
+};
+
+// ===================================================================
 // Seek helper: approximate seek by jumping compressed bytes
 // ===================================================================
 static bool seek_relative_seconds(
@@ -1079,7 +1120,7 @@ static bool seek_relative_seconds(
                     NULL,
                     drmp3_on_meta,
                     stream,
-                    NULL)) {
+                    &s_drmp3_alloc)) {
         printf("E drmp3_init after seek\n");
         return false;
     }
@@ -1344,12 +1385,12 @@ static play_result_t mp3_play_single_track(const char *filepath,
     static drmp3    *s_mp3_state    = NULL;
     static uint8_t  *s_mp3_ring_buf = NULL;
     // PCM decode buffers — persistent to prevent PSRAM spill on subsequent tracks.
-    // drmp3_init re-allocates its internal pData between tracks, fragmenting the heap.
     // Always allocate max size (stereo) so mono tracks can reuse without realloc.
     static int16_t  *s_pcmA = NULL;
     static int16_t  *s_pcmB = NULL;
     static int16_t  *s_pcmC = NULL;
     static const uint32_t PCM_BUF_MAX = PCM_FRAME_COUNT * 2; // stereo max
+
 
     uint64_t played_frames = 0;
     g_total_duration_ms = 0;
@@ -1533,7 +1574,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                         NULL,
                         drmp3_on_meta,
                         stream,
-                        NULL)) {
+                        &s_drmp3_alloc)) {
             printf("E drmp3_init failed\n");
             result = PLAY_RESULT_NEXT;
             goto CLEANUP_FILE;
@@ -1592,6 +1633,11 @@ static play_result_t mp3_play_single_track(const char *filepath,
     if (!s_pcmA) s_pcmA = (int16_t *)malloc(PCM_BUF_MAX * sizeof(int16_t));
     if (!s_pcmB) s_pcmB = (int16_t *)malloc(PCM_BUF_MAX * sizeof(int16_t));
     if (!s_pcmC) s_pcmC = (int16_t *)malloc(PCM_BUF_MAX * sizeof(int16_t));
+    // Pre-allocate drmp3 pData buffer to guarantee SRAM placement.
+    if (!s_drmp3_pdata) {
+        s_drmp3_pdata = (uint8_t *)malloc(DRMP3_PDATA_INIT_SIZE);
+        s_drmp3_pdata_cap = s_drmp3_pdata ? DRMP3_PDATA_INIT_SIZE : 0;
+    }
 
     // Zero decode buffers so new track starts silent (no stale audio).
     if (s_pcmA) memset(s_pcmA, 0, PCM_BUF_MAX * sizeof(int16_t));
@@ -1820,7 +1866,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             stream->eof = false;
                             drmp3_uninit(mp3);
                             if (!drmp3_init(mp3, mp3_stream_read,
-                                            NULL, NULL, drmp3_on_meta, stream, NULL)) {
+                                            NULL, NULL, drmp3_on_meta, stream, &s_drmp3_alloc)) {
                                 printf("E drmp3_init after repeat\n");
                                 result = PLAY_RESULT_NEXT;
                                 goto END_PLAYBACK;
@@ -2446,6 +2492,7 @@ END_PLAYBACK:
     i2s_dma_write_silence(&i2s_config);
 
     // pcmA/B/C are persistent (s_pcmA/B/C) — don't free them.
+    // drmp3 pData is persistent (s_drmp3_pdata) — don't free it.
 
 CLEANUP_MP3:
     if (wav) {

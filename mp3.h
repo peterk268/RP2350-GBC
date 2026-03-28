@@ -1044,11 +1044,15 @@ static void *drmp3_sram_malloc(size_t sz, void *pUserData) {
 
 static void *drmp3_sram_realloc(void *p, size_t sz, void *pUserData) {
     (void)pUserData;
-    if (p != s_drmp3_pdata) return realloc(p, sz);
-    if (sz <= s_drmp3_pdata_cap) return s_drmp3_pdata;
-    uint8_t *np = (uint8_t *)realloc(s_drmp3_pdata, sz);
-    if (np) { s_drmp3_pdata = np; s_drmp3_pdata_cap = sz; }
-    return np;
+    // NULL realloc = first allocation. Route through persistent buffer so we
+    // don't leak a new 64KB block on every drmp3_init (our free is a no-op).
+    if (p == NULL || p == s_drmp3_pdata) {
+        if (sz <= s_drmp3_pdata_cap) return s_drmp3_pdata;
+        uint8_t *np = (uint8_t *)realloc(s_drmp3_pdata, sz);
+        if (np) { s_drmp3_pdata = np; s_drmp3_pdata_cap = sz; }
+        return np;
+    }
+    return realloc(p, sz);
 }
 
 static void drmp3_sram_free(void *p, void *pUserData) {
@@ -1112,8 +1116,14 @@ static bool seek_relative_seconds(
     stream->count = 0;
     stream->eof = false;
 
-    // Re-init decoder
+    // Mark fill_ready false now so the main loop won't use stale buf_decoding
+    // even if the reinit below fails.
+    *fill_ready = false;
+
+    // Re-init decoder. memset first: drmp3_uninit with our no-op free leaves
+    // pData/dataSize/dataCapacity non-zero, which confuses drmp3_init_internal.
     drmp3_uninit(mp3);
+    memset(mp3, 0, sizeof(drmp3));
     if (!drmp3_init(mp3,
                     mp3_stream_read,
                     NULL,
@@ -1125,7 +1135,6 @@ static bool seek_relative_seconds(
         return false;
     }
 
-    *fill_ready = false;
     return true;
 }
 
@@ -1844,6 +1853,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
                             stream->rd = stream->wr = stream->count = 0;
                             stream->eof = false;
                             drmp3_uninit(mp3);
+                            memset(mp3, 0, sizeof(drmp3));
                             if (!drmp3_init(mp3, mp3_stream_read,
                                             NULL, NULL, drmp3_on_meta, stream, &s_drmp3_alloc)) {
                                 printf("E drmp3_init after repeat\n");

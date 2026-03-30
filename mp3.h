@@ -1959,7 +1959,12 @@ static play_result_t mp3_play_single_track(const char *filepath,
             // Budget: DMA period (~139ms 44.1k / ~128ms 48k) - 90ms guard = ~49ms window for decode+controls.
             static uint64_t last_controls_us = 0;
             uint64_t now_guard = time_us_64();
-            if (now_guard - last_i2s > (PCM_FRAME_COUNT*1000000ULL / track_sample_rate) - 80*1000 || now_guard - last_controls_us < 10*1000) {
+            // DMA deadline guard: never bypass — skipping controls here protects audio.
+            // 10ms minimum-interval guard: bypass when IOX_nINT is asserted (button currently
+            // held) so button state is read promptly without waiting for the next 10ms window.
+            bool nint_active = !gpio_read(GPIO_IOX_nINT);
+            if (now_guard - last_i2s > (PCM_FRAME_COUNT*1000000ULL / track_sample_rate) - 70*1000 ||
+                (!nint_active && now_guard - last_controls_us < 10*1000)) {
                 continue;
             }
             last_controls_us = now_guard;

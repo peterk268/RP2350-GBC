@@ -142,6 +142,7 @@ void hardfault_handler_c(uint32_t *sp) {
 #define SETTINGS_DIR       "/settings"
 #define SYSTEM_FILE_PATH   SETTINGS_DIR "/system.bin"
 #define ROM_FILE_PATH      SETTINGS_DIR "/rom.bin"
+#define ALARM_FILE_PATH    SETTINGS_DIR "/alarm.bin"
 #define FILENAME_MAX_LEN   256
 #define PATH_MAX_LEN 512
 

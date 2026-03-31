@@ -66,6 +66,7 @@
 #include "imu.h"
 #include "imu_dash.h"
 #include "in_game_menu.h"
+#include "alarm.h"
 
 int main(void)
 {	
@@ -233,7 +234,10 @@ int main(void)
     // MARK: - PWM Set up
 	fade_in_leds_startup();
 
-	// read_io_expander_states(0);
+	if (!gpio_read(IOX_B_UP)) {
+		run_alarm_clock();
+		while (1) { tight_loop_contents(); }
+	}
 	if (!gpio_read(IOX_B_A)) {
 		underclock_cpu(true); // 10mA saved
 		run_gmeter_dashboard();

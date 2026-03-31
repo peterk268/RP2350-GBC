@@ -1,4 +1,5 @@
 void shutdown_screen(uint32_t duration_ms);
+void run_alarm_clock(void);
 void sleep_and_shutdown_peripherals();
 void gpio_write(uint8_t gpio_num, bool value);
 void start_lcd(bool button_leds_restore, bool start_core1);

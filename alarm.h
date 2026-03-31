@@ -506,6 +506,8 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
     adjust_brightness(GPIO_LCD_LED, &lcd_led_duty_cycle, 0, true, false);
     button_led_duty_cycle = 0;
     adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, 0, true, false);
+    pwr_led_duty_cycle = 0;
+    adjust_brightness(GPIO_PWR_LED, &pwr_led_duty_cycle, 0, true, false);
 
     bool audio_open = false;
     mp3_stream_t *stream = NULL;
@@ -562,6 +564,9 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
             }
             if (button_led_duty_cycle < target_bl) {
                 adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, 1, true, false);
+            }
+            if (pwr_led_duty_cycle < target_bl) {
+                adjust_brightness(GPIO_PWR_LED, &pwr_led_duty_cycle, 1, true, false);
             }
         }
 
@@ -678,6 +683,8 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
                 adjust_brightness(GPIO_LCD_LED, &lcd_led_duty_cycle, 1, true, false);
             if (button_led_duty_cycle < 230)
                 adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, 1, true, false);
+            if (pwr_led_duty_cycle < 230)
+                adjust_brightness(GPIO_PWR_LED, &pwr_led_duty_cycle, 1, true, false);
             if (audio_available && current_volume_level < DAC_MAX_VOL_SPK) {
                 current_volume_level = DAC_MAX_VOL_SPK;
                 set_volume(DAC_MAX_VOL_SPK, DAC_MAX_VOL_SPK);
@@ -810,7 +817,7 @@ void run_alarm_clock(void) {
 
             // ── Peripheral shutdown (mirrors sleep_and_shutdown_peripherals) ──
             shutdown_lcd(true, true);
-            deconfig_led(GPIO_PWR_LED);
+            decrease_pwr_brightness(MAX_BRIGHTNESS);
             gpio_write(IOX_AUDIO_EN, 0);
             hyper_underclock_cpu(true);
             sleep_ms(100);

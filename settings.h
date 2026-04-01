@@ -33,6 +33,11 @@
 #define USE_IPS_LCD 1
 #define ENABLE_FRAME_DEBUGGING 0
 #define ENABLE_FPS_MONITORING 1
+/* Log LCD ON/OFF transitions and draw_line call counts to serial.
+ * Useful for diagnosing black screen issues (e.g. with GB Studio games). */
+#define DEBUG_LCD_STATE 0
+// Log VRAM writes, DMA register setup, KEY1/STOP (double-speed), and MBC5 PC on bank writes.
+#define DEBUG_VRAM_DMA 0
 
 // BFI strobe frequency. Must be 120 or 240 (must divide evenly into 120fps).
 // 120Hz = 1 cycle/frame (160 scanlines/phase), 240Hz = 2 cycles/frame (80 scanlines/phase).

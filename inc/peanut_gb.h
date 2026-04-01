@@ -532,6 +532,7 @@ struct count_s
 	uint_fast16_t serial_count;	/* Serial Counter */
 	uint_fast32_t rtc_count;	/* RTC Counter */
 	uint_fast32_t lcd_off_count;	/* Cycles LCD has been disabled */
+	uint_fast32_t lcd_off_elapsed;	/* Cycles in the current LCD-off period (resets on each disable) */
 };
 
 #if ENABLE_LCD
@@ -671,7 +672,14 @@ struct gb_s
 		bool lcd_blank	: 1;
 		/* Set if MBC3O cart is used. */
 		bool cart_is_mbc3O : 1;
+		/* HALT bug: when set, the next __gb_read_pc call does not
+		 * increment PC. This emulates the Game Boy hardware bug where
+		 * the byte after HALT is read twice when IME=0. */
+		bool halt_bug	: 1;
 	};
+	/* EI delay: when non-zero, decrement once per executed instruction.
+	 * IME is enabled when this reaches zero. */
+	uint8_t ime_delay;
 
 	/* Cartridge information:
 	 * Memory Bank Controller (MBC) type. */
@@ -902,6 +910,9 @@ PGB_HOT uint8_t __gb_read(struct gb_s *gb, uint16_t addr)
 	case 0x5:
 	case 0x6:
 	case 0x7:
+		if(gb->mbc == 5)
+			return __gb_rom_read_fast(gb, (addr - ROM_N_ADDR) + (gb->selected_rom_bank * ROM_BANK_SIZE));
+
 		if(gb->mbc == 1 && gb->cart_mode_select)
 			return __gb_rom_read_fast(gb,
 					       addr + ((gb->selected_rom_bank & 0x1F) - 1) * ROM_BANK_SIZE);
@@ -1046,22 +1057,31 @@ PGB_HOT uint8_t __gb_read(struct gb_s *gb, uint16_t addr)
  * Most fetches are from ROM, so avoid full bus decode in that case. */
 PGB_FORCE_INLINE uint8_t __gb_read_pc(struct gb_s *gb)
 {
-	const uint16_t addr = gb->cpu_reg.pc.reg++;
+	const uint16_t addr = gb->cpu_reg.pc.reg;
+	/* HALT bug: when set, the next fetch reads the current PC without
+	 * incrementing. This only applies to one fetch. */
+	if(PGB_LIKELY(!gb->halt_bug))
+		gb->cpu_reg.pc.reg++;
+	else
+		gb->halt_bug = false;
 
-	if(PGB_LIKELY(addr < VRAM_ADDR))
-	{
-		if(addr < ROM_N_ADDR)
+		if(PGB_LIKELY(addr < VRAM_ADDR))
 		{
-			if(gb->hram_io[IO_BOOT] == 0 && addr < 0x0100)
-				return gb->gb_bootrom_read(gb, addr);
-			return __gb_rom_read_fast(gb, addr);
-		}
+			if(addr < ROM_N_ADDR)
+			{
+				if(gb->hram_io[IO_BOOT] == 0 && addr < 0x0100)
+					return gb->gb_bootrom_read(gb, addr);
+				return __gb_rom_read_fast(gb, addr);
+			}
 
-		if(gb->mbc == 1 && gb->cart_mode_select)
-			return __gb_rom_read_fast(gb,
-				addr + ((gb->selected_rom_bank & 0x1F) - 1) * ROM_BANK_SIZE);
+			if(gb->mbc == 5)
+				return __gb_rom_read_fast(gb, (addr - ROM_N_ADDR) + (gb->selected_rom_bank * ROM_BANK_SIZE));
 
-		return __gb_rom_read_fast(gb, addr + (gb->selected_rom_bank - 1) * ROM_BANK_SIZE);
+			if(gb->mbc == 1 && gb->cart_mode_select)
+				return __gb_rom_read_fast(gb,
+					addr + ((gb->selected_rom_bank & 0x1F) - 1) * ROM_BANK_SIZE);
+
+			return __gb_rom_read_fast(gb, addr + (gb->selected_rom_bank - 1) * ROM_BANK_SIZE);
 	}
 
 	if(PGB_LIKELY(addr >= WRAM_0_ADDR && addr < ECHO_ADDR))
@@ -1101,6 +1121,9 @@ PGB_FORCE_INLINE uint8_t __gb_peek_pc(struct gb_s *gb)
 				return gb->gb_bootrom_read(gb, addr);
 			return __gb_rom_read_fast(gb, addr);
 		}
+
+		if(gb->mbc == 5)
+			return __gb_rom_read_fast(gb, (addr - ROM_N_ADDR) + (gb->selected_rom_bank * ROM_BANK_SIZE));
 
 		if(gb->mbc == 1 && gb->cart_mode_select)
 			return __gb_rom_read_fast(gb,
@@ -1150,14 +1173,14 @@ PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 		}
 
 	/* Intentional fall through. */
-	case 0x2:
-		if(gb->mbc == 5)
-		{
-			gb->selected_rom_bank = (gb->selected_rom_bank & 0x100) | val;
-			gb->selected_rom_bank =
-				gb->selected_rom_bank & gb->num_rom_banks_mask;
-			return;
-		}
+		case 0x2:
+			if(gb->mbc == 5)
+			{
+				gb->selected_rom_bank = (gb->selected_rom_bank & 0x100) | val;
+				gb->selected_rom_bank =
+					gb->selected_rom_bank & gb->num_rom_banks_mask;
+				return;
+			}
 
 	/* Intentional fall through. */
 	case 0x3:
@@ -1234,12 +1257,12 @@ PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 		gb->cart_mode_select = val;
 		return;
 
-	case 0x8:
-	case 0x9:
-#if PEANUT_FULL_GBC_SUPPORT
-		gb->vram[addr - gb->cgb.vramBankOffset] = val;
-#else
-		gb->vram[addr - VRAM_ADDR] = val;
+		case 0x8:
+		case 0x9:
+	#if PEANUT_FULL_GBC_SUPPORT
+			gb->vram[addr - gb->cgb.vramBankOffset] = val;
+	#else
+			gb->vram[addr - VRAM_ADDR] = val;
 #endif
 		return;
 
@@ -1401,11 +1424,24 @@ PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 			/* Check if LCD is going to be switched on. */
 			if (!lcd_enabled && (val & LCDC_ENABLE))
 			{
-				gb->lcd_blank = true;
+				/* Only suppress the first frame (lcd_blank) if the LCD
+				 * was off long enough to have missed visible scanlines.
+				 * Briefly toggling LCD off/on during VBlank (common in
+				 * GB Studio and many other games) must NOT trigger a
+				 * blank frame, or every frame would be suppressed. */
+				gb->lcd_blank = (gb->counter.lcd_off_elapsed >= (LCD_LINE_CYCLES * 15));
+#if DEBUG_LCD_STATE
+				printf("LCD ON  LY=%u blank=%u off_elapsed=%lu\n",
+				       gb->hram_io[IO_LY], gb->lcd_blank,
+				       (unsigned long)gb->counter.lcd_off_elapsed);
+#endif
 			}
 			/* Check if LCD is being switched off. */
 			else if (lcd_enabled && !(val & LCDC_ENABLE))
 			{
+#if DEBUG_LCD_STATE
+				printf("LCD OFF LY=%u\n", gb->hram_io[IO_LY]);
+#endif
 				/* Peanut-GB will happily turn off LCD outside
 				 * of VBLANK even though this damages real
 				 * hardware. */
@@ -1419,6 +1455,8 @@ PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 				/* Keep track of lcd_count to correctly track
 				 * passing time. */
 				gb->counter.lcd_off_count += gb->counter.lcd_count;
+				/* Reset elapsed counter for this new off period. */
+				gb->counter.lcd_off_elapsed = gb->counter.lcd_count;
 				/* Reset LCD timer, since the LCD starts from
 				 * the beginning on power on. */
 				gb->counter.lcd_count = 0;
@@ -1497,11 +1535,11 @@ PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 			gb->hram_io[IO_WX] = val;
 			return;
 
-#if PEANUT_FULL_GBC_SUPPORT
-		/* Prepare Speed Switch*/
-		case 0x4D:
-			gb->cgb.doubleSpeedPrep = val & 1;
-			return;
+	#if PEANUT_FULL_GBC_SUPPORT
+			/* Prepare Speed Switch*/
+			case 0x4D:
+				gb->cgb.doubleSpeedPrep = val & 1;
+				return;
 
 		/* CGB VRAM Bank*/
 		case 0x4F:
@@ -1514,26 +1552,26 @@ PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 			gb->hram_io[IO_BOOT] = 0x01;
 			return;
 #if PEANUT_FULL_GBC_SUPPORT
-		/* DMA Register */
-		case 0x51:
-			gb->cgb.dmaSource = (gb->cgb.dmaSource & 0xFF) + (val << 8);
-			return;
-		case 0x52:
-			gb->cgb.dmaSource = (gb->cgb.dmaSource & 0xFF00) + val;
-			return;
-		case 0x53:
-			gb->cgb.dmaDest = (gb->cgb.dmaDest & 0xFF) + (val << 8);
-			return;
-		case 0x54:
-			gb->cgb.dmaDest = (gb->cgb.dmaDest & 0xFF00) + val;
-			return;
+			/* DMA Register */
+			case 0x51:
+				gb->cgb.dmaSource = (gb->cgb.dmaSource & 0xFF) + (val << 8);
+				return;
+			case 0x52:
+				gb->cgb.dmaSource = (gb->cgb.dmaSource & 0xFF00) + val;
+				return;
+			case 0x53:
+				gb->cgb.dmaDest = (gb->cgb.dmaDest & 0xFF) + (val << 8);
+				return;
+			case 0x54:
+				gb->cgb.dmaDest = (gb->cgb.dmaDest & 0xFF00) + val;
+				return;
 
 		/* DMA Register*/
-		case 0x55:
-			gb->cgb.dmaSize = (val & 0x7F) + 1;
-			gb->cgb.dmaMode = val >> 7;
-			//DMA GBC
-			if(gb->cgb.dmaActive)
+			case 0x55:
+				gb->cgb.dmaSize = (val & 0x7F) + 1;
+				gb->cgb.dmaMode = val >> 7;
+				//DMA GBC
+				if(gb->cgb.dmaActive)
 			{  // Only transfer if dma is not active (=1) otherwise treat it as a termination
 				if(gb->cgb.cgbMode && (!gb->cgb.dmaMode))
 				{
@@ -1610,12 +1648,12 @@ PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 			return;
 #endif
 
-		/* Interrupt Enable Register */
-		case 0xFF:
-			gb->hram_io[IO_IE] = val;
-			return;
+			/* Interrupt Enable Register */
+			case 0xFF:
+				gb->hram_io[IO_IE] = val;
+				return;
+			}
 		}
-	}
 
 	/* Invalid writes are ignored. */
 	return;
@@ -2361,11 +2399,11 @@ PGB_HOT void __gb_step_cpu(struct gb_s *gb)
 		__gb_write(gb, --gb->cpu_reg.sp.reg, gb->cpu_reg.pc.bytes.c);
 
 		/* Call interrupt handler if required. */
-		if(gb->hram_io[IO_IF] & gb->hram_io[IO_IE] & VBLANK_INTR)
-		{
-			gb->cpu_reg.pc.reg = VBLANK_INTR_ADDR;
-			gb->hram_io[IO_IF] ^= VBLANK_INTR;
-		}
+			if(gb->hram_io[IO_IF] & gb->hram_io[IO_IE] & VBLANK_INTR)
+			{
+				gb->cpu_reg.pc.reg = VBLANK_INTR_ADDR;
+				gb->hram_io[IO_IF] ^= VBLANK_INTR;
+			}
 		else if(gb->hram_io[IO_IF] & gb->hram_io[IO_IE] & LCDC_INTR)
 		{
 			gb->cpu_reg.pc.reg = LCDC_INTR_ADDR;
@@ -2481,15 +2519,18 @@ PGB_HOT void __gb_step_cpu(struct gb_s *gb)
 		break;
 
 	case 0x10: /* STOP */
+		/* STOP is encoded as a 2-byte instruction (0x10 0x00). Consume
+		 * the trailing byte to keep PC in sync with real hardware. */
+		(void)__gb_read_pc(gb);
 		//gb->gb_halt = 1;
-#if PEANUT_FULL_GBC_SUPPORT
-		if(gb->cgb.cgbMode & gb->cgb.doubleSpeedPrep)
-		{
-			gb->cgb.doubleSpeedPrep = 0;
-			gb->cgb.doubleSpeed ^= 1;
-		}
-#endif
-		break;
+	#if PEANUT_FULL_GBC_SUPPORT
+			if(gb->cgb.cgbMode & gb->cgb.doubleSpeedPrep)
+			{
+				gb->cgb.doubleSpeedPrep = 0;
+				gb->cgb.doubleSpeed ^= 1;
+			}
+	#endif
+			break;
 
 	case 0x11: /* LD DE, imm */
 		gb->cpu_reg.de.bytes.e = __gb_read_pc(gb);
@@ -3000,66 +3041,133 @@ PGB_HOT void __gb_step_cpu(struct gb_s *gb)
 		__gb_write(gb, gb->cpu_reg.hl.reg, gb->cpu_reg.hl.bytes.l);
 		break;
 
-	case 0x76: /* HALT */
-	{
-		int_fast16_t halt_cycles = INT_FAST16_MAX;
-
-		/* TODO: Emulate HALT bug? */
-		gb->gb_halt = true;
-
-		if(gb->hram_io[IO_SC] & SERIAL_SC_TX_START)
+		case 0x76: /* HALT */
 		{
-			int serial_cycles = SERIAL_CYCLES -
-				gb->counter.serial_count;
+			if(!gb->gb_ime)
+			{
+				if(gb->hram_io[IO_IF] & gb->hram_io[IO_IE] & ANY_INTR)
+				{
+					/* IME=0 AND an interrupt is already pending: HALT does
+					 * not stall at all. Execution continues from HALT+1 and
+					 * the next fetch is affected by the HALT bug. */
+					gb->halt_bug = true;
+					inst_cycles = 4;
+				}
+				else
+				{
+					/* IME=0 AND no enabled interrupt pending: behave like
+					 * normal HALT until IF&IE becomes non-zero.
+					 * No HALT bug in this path. */
+					int_fast16_t halt_cycles = INT_FAST16_MAX;
 
-			if(serial_cycles < halt_cycles)
-				halt_cycles = serial_cycles;
+				gb->gb_halt = true;
+
+				if(gb->hram_io[IO_SC] & SERIAL_SC_TX_START)
+				{
+					int serial_cycles = SERIAL_CYCLES -
+						gb->counter.serial_count;
+
+					if(serial_cycles < halt_cycles)
+						halt_cycles = serial_cycles;
+				}
+
+				if(gb->hram_io[IO_TAC] & IO_TAC_ENABLE_MASK)
+				{
+					int tac_cycles = TAC_CYCLES[gb->hram_io[IO_TAC] & IO_TAC_RATE_MASK] -
+						gb->counter.tima_count;
+
+					if(tac_cycles < halt_cycles)
+						halt_cycles = tac_cycles;
+				}
+
+				if((gb->hram_io[IO_LCDC] & LCDC_ENABLE))
+				{
+					int lcd_cycles;
+
+					if((gb->hram_io[IO_STAT] & STAT_MODE) == IO_STAT_MODE_HBLANK)
+					{
+						lcd_cycles = LCD_MODE0_HBLANK_MAX_DRUATION - gb->counter.lcd_count;
+					}
+					else if((gb->hram_io[IO_STAT] & STAT_MODE) == IO_STAT_MODE_OAM_SCAN)
+					{
+						lcd_cycles = LCD_MODE3_LCD_DRAW_MIN_DURATION - gb->counter.lcd_count;
+					}
+					else if((gb->hram_io[IO_STAT] & STAT_MODE) == IO_STAT_MODE_LCD_DRAW)
+					{
+						lcd_cycles = LCD_MODE0_HBLANK_MAX_DRUATION - gb->counter.lcd_count;
+					}
+					else
+					{
+						/* VBlank */
+						lcd_cycles = LCD_LINE_CYCLES - gb->counter.lcd_count;
+					}
+
+					if(lcd_cycles < halt_cycles)
+						halt_cycles = lcd_cycles;
+				}
+
+				if(halt_cycles <= 0)
+					halt_cycles = 4;
+
+				inst_cycles = (uint_fast16_t)halt_cycles;
+			}
 		}
-
-		if(gb->hram_io[IO_TAC] & IO_TAC_ENABLE_MASK)
+		else
 		{
-			int tac_cycles = TAC_CYCLES[gb->hram_io[IO_TAC] & IO_TAC_RATE_MASK] -
-				gb->counter.tima_count;
+			/* Normal HALT: IME=1, stall until an enabled interrupt fires. */
+			int_fast16_t halt_cycles = INT_FAST16_MAX;
 
-			if(tac_cycles < halt_cycles)
-				halt_cycles = tac_cycles;
+			gb->gb_halt = true;
+
+			if(gb->hram_io[IO_SC] & SERIAL_SC_TX_START)
+			{
+				int serial_cycles = SERIAL_CYCLES -
+					gb->counter.serial_count;
+
+				if(serial_cycles < halt_cycles)
+					halt_cycles = serial_cycles;
+			}
+
+			if(gb->hram_io[IO_TAC] & IO_TAC_ENABLE_MASK)
+			{
+				int tac_cycles = TAC_CYCLES[gb->hram_io[IO_TAC] & IO_TAC_RATE_MASK] -
+					gb->counter.tima_count;
+
+				if(tac_cycles < halt_cycles)
+					halt_cycles = tac_cycles;
+			}
+
+			if((gb->hram_io[IO_LCDC] & LCDC_ENABLE))
+			{
+				int lcd_cycles;
+
+				if((gb->hram_io[IO_STAT] & STAT_MODE) == IO_STAT_MODE_HBLANK)
+				{
+					lcd_cycles = LCD_MODE0_HBLANK_MAX_DRUATION - gb->counter.lcd_count;
+				}
+				else if((gb->hram_io[IO_STAT] & STAT_MODE) == IO_STAT_MODE_OAM_SCAN)
+				{
+					lcd_cycles = LCD_MODE3_LCD_DRAW_MIN_DURATION - gb->counter.lcd_count;
+				}
+				else if((gb->hram_io[IO_STAT] & STAT_MODE) == IO_STAT_MODE_LCD_DRAW)
+				{
+					lcd_cycles = LCD_MODE0_HBLANK_MAX_DRUATION - gb->counter.lcd_count;
+				}
+				else
+				{
+					/* VBlank */
+					lcd_cycles = LCD_LINE_CYCLES - gb->counter.lcd_count;
+				}
+
+				if(lcd_cycles < halt_cycles)
+					halt_cycles = lcd_cycles;
+			}
+
+			if(halt_cycles <= 0)
+				halt_cycles = 4;
+
+			inst_cycles = (uint_fast16_t)halt_cycles;
 		}
-
-		if((gb->hram_io[IO_LCDC] & LCDC_ENABLE))
-		{
-			int lcd_cycles;
-
-			/* If LCD is in HBlank, calculate the number of cycles
-			 * until the end of HBlank and the start of mode 2 or
-			 * mode 1. */
-			if((gb->hram_io[IO_STAT] & STAT_MODE) == IO_STAT_MODE_HBLANK)
-			{
-				lcd_cycles = LCD_MODE0_HBLANK_MAX_DRUATION - gb->counter.lcd_count;
-			}
-			else if((gb->hram_io[IO_STAT] & STAT_MODE) == IO_STAT_MODE_OAM_SCAN)
-			{
-				lcd_cycles = LCD_MODE3_LCD_DRAW_MIN_DURATION - gb->counter.lcd_count;
-			}
-			else if((gb->hram_io[IO_STAT] & STAT_MODE) == IO_STAT_MODE_LCD_DRAW)
-			{
-				lcd_cycles = LCD_MODE0_HBLANK_MAX_DRUATION - gb->counter.lcd_count;
-			}
-			else
-			{
-				/* VBlank */
-				lcd_cycles = LCD_LINE_CYCLES - gb->counter.lcd_count;
-			}
-
-			if(lcd_cycles < halt_cycles)
-				halt_cycles = lcd_cycles;
-		}
-
-		/* Some halt cycles may already be very high, so make sure we
-		 * don't underflow here. */
-		if(halt_cycles <= 0)
-			halt_cycles = 4;
-
-		inst_cycles = (uint_fast16_t)halt_cycles;
 		break;
 	}
 
@@ -3600,6 +3708,7 @@ PGB_HOT void __gb_step_cpu(struct gb_s *gb)
 		gb->cpu_reg.pc.bytes.c = __gb_read(gb, gb->cpu_reg.sp.reg++);
 		gb->cpu_reg.pc.bytes.p = __gb_read(gb, gb->cpu_reg.sp.reg++);
 		gb->gb_ime = true;
+		gb->ime_delay = 0;
 	}
 	break;
 
@@ -3737,6 +3846,7 @@ PGB_HOT void __gb_step_cpu(struct gb_s *gb)
 
 	case 0xF3: /* DI */
 		gb->gb_ime = false;
+		gb->ime_delay = 0;
 		break;
 
 	case 0xF5: /* PUSH AF */
@@ -3783,7 +3893,8 @@ PGB_HOT void __gb_step_cpu(struct gb_s *gb)
 	}
 
 	case 0xFB: /* EI */
-		gb->gb_ime = true;
+		/* IME is enabled after the next instruction, not immediately. */
+		gb->ime_delay = 2;
 		break;
 
 	case 0xFE: /* CP imm */
@@ -3946,6 +4057,7 @@ PGB_HOT void __gb_step_cpu(struct gb_s *gb)
 		if(!(gb->hram_io[IO_LCDC] & LCDC_ENABLE))
 		{
 			gb->counter.lcd_off_count += inst_cycles;
+			gb->counter.lcd_off_elapsed += inst_cycles;
 			if(gb->counter.lcd_off_count >= LCD_FRAME_CYCLES)
 			{
 				gb->counter.lcd_off_count -= LCD_FRAME_CYCLES;
@@ -3984,13 +4096,13 @@ PGB_HOT void __gb_step_cpu(struct gb_s *gb)
 				gb->hram_io[IO_STAT] &= 0xFB;
 
 			/* Check if LCD should be in Mode 1 (VBLANK) state */
-			if(gb->hram_io[IO_LY] == LCD_HEIGHT)
-			{
-				gb->hram_io[IO_STAT] =
-					(gb->hram_io[IO_STAT] & ~STAT_MODE) | IO_STAT_MODE_VBLANK;
-				gb->gb_frame = true;
-				gb->hram_io[IO_IF] |= VBLANK_INTR;
-				gb->lcd_blank = false;
+				if(gb->hram_io[IO_LY] == LCD_HEIGHT)
+				{
+					gb->hram_io[IO_STAT] =
+						(gb->hram_io[IO_STAT] & ~STAT_MODE) | IO_STAT_MODE_VBLANK;
+					gb->gb_frame = true;
+					gb->hram_io[IO_IF] |= VBLANK_INTR;
+					gb->lcd_blank = false;
 
 				if(gb->hram_io[IO_STAT] & STAT_MODE_1_INTR)
 					gb->hram_io[IO_IF] |= LCDC_INTR;
@@ -4093,6 +4205,11 @@ PGB_HOT void __gb_step_cpu(struct gb_s *gb)
 		}
 	} while(gb->gb_halt && (gb->hram_io[IO_IF] & gb->hram_io[IO_IE]) == 0);
 	/* If halted, loop until an interrupt occurs. */
+	if(gb->ime_delay)
+	{
+		if(--gb->ime_delay == 0)
+			gb->gb_ime = true;
+	}
 }
 
 PGB_HOT void gb_run_frame(struct gb_s *gb)
@@ -4188,6 +4305,8 @@ void gb_reset(struct gb_s *gb)
 {
 	gb->gb_halt = false;
 	gb->gb_ime = true;
+	gb->ime_delay = 0;
+	gb->halt_bug = false;
 
 	/* Initialise MBC values. */
 	gb->selected_rom_bank = 1;
@@ -4254,6 +4373,7 @@ void gb_reset(struct gb_s *gb)
 	gb->counter.serial_count = 0;
 	gb->counter.rtc_count = 0;
 	gb->counter.lcd_off_count = 0;
+	gb->counter.lcd_off_elapsed = LCD_FRAME_CYCLES; /* Treat first enable as a cold start */
 
 	gb->direct.joypad = 0xFF;
 	gb->hram_io[IO_JOYP] = 0xCF;
@@ -4340,7 +4460,7 @@ enum gb_init_error_e gb_init(struct gb_s *gb,
 	const uint8_t cart_ram[] =
 	{
 		0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0,
-		1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0
+		1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0
 	};
 	/* How large the ROM is in banks of 16 KiB. */
 	const uint16_t num_rom_banks_mask[] =

@@ -98,7 +98,7 @@ static bool mp3_menu_items_init(void) {
     size_t i = 0;
 
     mp3_menu_items[i++] = (ig_menu_item_t){
-        "Display      ", IG_ITEM_SLIDER, ig_get_lcd_brightness_text,
+        "Display       ", IG_ITEM_SLIDER, ig_get_lcd_brightness_text,
         in_game_increase_lcd_brightness, in_game_decrease_lcd_brightness,
         in_game_increase_lcd_brightness, IG_ACT_NONE
     };
@@ -108,27 +108,27 @@ static bool mp3_menu_items_init(void) {
         in_game_increase_button_brightness, IG_ACT_NONE
     };
     mp3_menu_items[i++] = (ig_menu_item_t){
-        "Shuffle      ", IG_ITEM_TOGGLE, mp3_get_shuffle_text,
+        "Shuffle            ", IG_ITEM_TOGGLE, mp3_get_shuffle_text,
         mp3_toggle_shuffle, mp3_toggle_shuffle, mp3_toggle_shuffle, IG_ACT_NONE
     };
     mp3_menu_items[i++] = (ig_menu_item_t){
-        "Repeat       ", IG_ITEM_VALUE, mp3_get_repeat_text,
+        "Repeat            ", IG_ITEM_VALUE, mp3_get_repeat_text,
         mp3_repeat_inc, mp3_repeat_dec, mp3_repeat_inc, IG_ACT_NONE
     };
     mp3_menu_items[i++] = (ig_menu_item_t){
-        "Button Lock  ", IG_ITEM_TOGGLE, mp3_get_lock_text,
+        "Button Lock   ", IG_ITEM_TOGGLE, mp3_get_lock_text,
         mp3_toggle_lock, mp3_toggle_lock, mp3_toggle_lock, IG_ACT_NONE
     };
     mp3_menu_items[i++] = (ig_menu_item_t){
-        "Analog Gain  ", IG_ITEM_SLIDER, mp3_get_gain_text,
+        "Analog Gain   ", IG_ITEM_SLIDER, mp3_get_gain_text,
         mp3_gain_inc, mp3_gain_dec, mp3_gain_inc, IG_ACT_NONE
     };
     mp3_menu_items[i++] = (ig_menu_item_t){
-        "3D Effect    ", IG_ITEM_TOGGLE, mp3_get_3d_text,
+        "3D Effect        ", IG_ITEM_TOGGLE, mp3_get_3d_text,
         mp3_toggle_3d, mp3_toggle_3d, mp3_toggle_3d, IG_ACT_NONE
     };
     mp3_menu_items[i++] = (ig_menu_item_t){
-        "Audio Output ", IG_ITEM_VALUE, mp3_get_audio_mode_text,
+        "Audio Output", IG_ITEM_VALUE, mp3_get_audio_mode_text,
         mp3_audio_mode_inc, mp3_audio_mode_dec, mp3_audio_mode_inc, IG_ACT_NONE
     };
     mp3_menu_items[i++] = (ig_menu_item_t){

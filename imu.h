@@ -273,7 +273,7 @@ static inline float imu_gyro_lsb_to_dps(imu_gyro_scale_t scale) {
  * Raw data reads
  * ============================================================ */
 
-static inline void imu_read_accel_raw(int16_t *ax, int16_t *ay, int16_t *az) {
+inline void imu_read_accel_raw(int16_t *ax, int16_t *ay, int16_t *az) {
     uint8_t buf[6];
     imu_read_regs(IMU_REG_OUTX_L_A, buf, 6);
     *ax = (int16_t)((buf[1] << 8) | buf[0]);

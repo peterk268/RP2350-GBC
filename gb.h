@@ -29,6 +29,14 @@ void gb_cart_ram_write(struct gb_s *gb, const uint_fast32_t addr,
 	ram_changed = true;
 }
 
+/* MBC7 accelerometer callback — reads X/Y from LSM6DSO for Kirby Tilt etc. */
+static void mbc7_get_accel(struct gb_s *gb_ctx, int16_t *x, int16_t *y)
+{
+	(void)gb_ctx;
+	int16_t az;
+	imu_read_accel_raw(x, y, &az);
+}
+
 /**
  * Ignore all errors.
  */

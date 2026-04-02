@@ -284,6 +284,10 @@ while(true)
 	/* Use direct memory pointers for hot ROM/RAM accesses in the emulator core. */
 	gb_set_direct_memory(&gb, (const uint8_t *)rom, ram);
 
+	/* MBC7 accelerometer: wire up LSM6DSO via imu.h */
+	imu_init();
+	gb_init_mbc7_accel(&gb, &mbc7_get_accel);
+
 	// MARK: - Auto Assign Palette
 	if (!palette) {
 		if (!palette_heap_init()) {

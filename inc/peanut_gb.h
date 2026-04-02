@@ -4734,7 +4734,7 @@ enum gb_init_error_e gb_init(struct gb_s *gb,
 	 * Table for cartridge type (MBC). -1 if invalid.
 	 * TODO: MMM01 is untested.
 	 * TODO: MBC6 is untested.
-	 * TODO: MBC7 is unsupported.
+	 * MBC7 (0x22): Supported with accelerometer via gb_init_mbc7_accel().
 	 * TODO: POCKET CAMERA is unsupported.
 	 * TODO: BANDAI TAMA5 is unsupported.
 	 * TODO: HuC3 is unsupported.
@@ -4805,6 +4805,15 @@ enum gb_init_error_e gb_init(struct gb_s *gb,
 	gb->num_rom_banks_mask = num_rom_banks_mask[gb->gb_rom_read(gb, bank_count_location)] - 1;
 	gb->cart_ram = cart_ram[gb->gb_rom_read(gb, mbc_location)];
 	gb->num_ram_banks = num_ram_banks[gb->gb_rom_read(gb, ram_size_location)];
+
+	/* MBC7 EEPROM is not described by the standard ram_size byte — the header
+	 * always says 0 RAM banks. Force cart_ram=1 and num_ram_banks=1 so the
+	 * zero-RAM guard below doesn't disable the EEPROM interface. */
+	if(gb->mbc == 7)
+	{
+		gb->cart_ram = 1;
+		gb->num_ram_banks = 1;
+	}
 
 	/* If the ROM says that it support RAM, but has 0 RAM banks, then
 	 * disable RAM reads from the cartridge. */

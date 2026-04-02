@@ -1450,6 +1450,18 @@ PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 	case 0xB:
 		if(gb->mbc == 7)
 		{
+#if DEBUG_VRAM_DMA
+			{
+				static uint8_t mbc7_dbg = 0;
+				if(!mbc7_dbg) {
+					printf("[MBC7] write addr=0x%04X val=0x%02X en=%d regs=%d latch=%d\n",
+						(unsigned)addr, val,
+						gb->enable_cart_ram, gb->mbc7.regs_enabled, gb->mbc7.latch_step);
+					if(gb->enable_cart_ram && gb->mbc7.regs_enabled && ((addr>>4)&0xF)==1 && val==0xAA)
+						mbc7_dbg = 1; /* stop after first successful latch */
+				}
+			}
+#endif
 			if(!(gb->enable_cart_ram && gb->mbc7.regs_enabled))
 				return;
 			switch((addr >> 4) & 0xF)
@@ -1466,6 +1478,9 @@ PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 					{
 						int16_t ix = 0, iy = 0;
 						gb->mbc7.get_accel(gb, &ix, &iy);
+#if DEBUG_VRAM_DMA
+						printf("[MBC7] latch ix=%d iy=%d\n", (int)ix, (int)iy);
+#endif
 						/* Scale: LSM6DSO ±4g → ±8192 per g; MBC7 center=0x81D0, ~0x70 per g */
 						int32_t x = (int32_t)0x81D0 + ((int32_t)ix * 112 / 8192);
 						int32_t y = (int32_t)0x81D0 + ((int32_t)iy * 112 / 8192);

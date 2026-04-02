@@ -286,6 +286,9 @@ while(true)
 
 	/* MBC7 accelerometer: wire up LSM6DSO via imu.h */
 	imu_init();
+	// Accel configuration
+    imu_set_accel(IMU_ODR_104_HZ, IMU_ACCEL_SCALE_4G);
+
 	gb_init_mbc7_accel(&gb, &mbc7_get_accel);
 
 	// MARK: - Auto Assign Palette

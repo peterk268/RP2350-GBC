@@ -700,6 +700,26 @@ struct gb_s
 
 	union cart_rtc rtc_latched, rtc_real;
 
+	/* MBC7: accelerometer + 93C56 EEPROM (cartridge type 0x22) */
+	struct {
+		/* Front-end supplies raw IMU data; 0=flat, ±8192 per g at ±4g scale. */
+		void (*get_accel)(struct gb_s*, int16_t *x, int16_t *y);
+		uint8_t  regs_enabled;    /* 1 after second-stage enable (0x40→0x4000) */
+		uint8_t  latch_step;      /* 0=idle, 1=erased (0x55 seen), 2=latched */
+		uint16_t accel_x;         /* latched X in MBC7 format (center 0x81D0)  */
+		uint16_t accel_y;         /* latched Y                                  */
+		/* 93C56 EEPROM serial interface state */
+		uint8_t  eeprom_cs;       /* current CS level                           */
+		uint8_t  eeprom_sk;       /* previous SK (rising-edge detect)           */
+		uint8_t  eeprom_do;       /* DO output bit                              */
+		uint8_t  eeprom_we;       /* write-enable latch                         */
+		uint8_t  eeprom_state;    /* state machine (see MBC7_EEP_* constants)   */
+		uint8_t  eeprom_bit_cnt;  /* bits received/sent so far                  */
+		uint16_t eeprom_cmd;      /* 10-bit command shift register              */
+		uint16_t eeprom_data;     /* 16-bit data shift register                 */
+		uint8_t  eeprom_addr;     /* decoded 7-bit address                      */
+	} mbc7;
+
 	struct cpu_registers_s cpu_reg;
 	//struct gb_registers_s gb_reg;
 	struct count_s counter;
@@ -884,6 +904,142 @@ PGB_FORCE_INLINE void __gb_cart_ram_write_fast(struct gb_s *gb, uint_fast32_t ad
 	gb->gb_cart_ram_write(gb, addr, val);
 }
 
+/* ── MBC7 EEPROM (93C56) state machine ─────────────────────────────────── */
+#define MBC7_EEP_IDLE   0  /* waiting for CS high                           */
+#define MBC7_EEP_CMD    1  /* clocking in 10-bit command                    */
+#define MBC7_EEP_READ   2  /* shifting out 16 data bits                     */
+#define MBC7_EEP_WRITE  3  /* shifting in 16 data bits (single address)     */
+#define MBC7_EEP_WRAL   4  /* shifting in 16 data bits (write-all)          */
+#define MBC7_EEP_DONE   5  /* operation complete, DO=1                      */
+
+/* Called on every SK rising edge while CS=1. */
+static void __gb_mbc7_eeprom_clock(struct gb_s *gb, uint8_t di)
+{
+	di &= 1;
+	switch(gb->mbc7.eeprom_state)
+	{
+	case MBC7_EEP_CMD:
+		gb->mbc7.eeprom_cmd = (uint16_t)((gb->mbc7.eeprom_cmd << 1) | di);
+		gb->mbc7.eeprom_bit_cnt++;
+		if(gb->mbc7.eeprom_bit_cnt == 10)
+		{
+			/* bits[8:7]=opcode, bits[6:0]=address */
+			uint8_t opcode = (gb->mbc7.eeprom_cmd >> 7) & 0x03;
+			uint8_t addr   =  gb->mbc7.eeprom_cmd & 0x7F;
+			gb->mbc7.eeprom_addr      = addr;
+			gb->mbc7.eeprom_bit_cnt   = 0;
+			gb->mbc7.eeprom_data      = 0;
+
+			if(opcode == 2) /* READ */
+			{
+				/* Load word (big-endian: MSB at addr*2) */
+				gb->mbc7.eeprom_data =
+					(uint16_t)((__gb_cart_ram_read_fast(gb, addr * 2u) << 8) |
+					            __gb_cart_ram_read_fast(gb, addr * 2u + 1u));
+				gb->mbc7.eeprom_state = MBC7_EEP_READ;
+				/* First DO bit available before next clock */
+				gb->mbc7.eeprom_do = (gb->mbc7.eeprom_data >> 15) & 1;
+			}
+			else if(opcode == 1) /* WRITE */
+			{
+				gb->mbc7.eeprom_state = MBC7_EEP_WRITE;
+			}
+			else if(opcode == 3) /* ERASE single word */
+			{
+				if(gb->mbc7.eeprom_we)
+				{
+					gb->gb_cart_ram_write(gb, addr * 2u,      0xFF);
+					gb->gb_cart_ram_write(gb, addr * 2u + 1u, 0xFF);
+				}
+				gb->mbc7.eeprom_state = MBC7_EEP_DONE;
+				gb->mbc7.eeprom_do    = 1;
+			}
+			else /* opcode == 0: extended commands */
+			{
+				uint8_t sub = (addr >> 5) & 0x03;
+				if(sub == 3)      /* EWEN  */
+				{
+					gb->mbc7.eeprom_we = 1;
+					gb->mbc7.eeprom_state = MBC7_EEP_DONE;
+					gb->mbc7.eeprom_do    = 1;
+				}
+				else if(sub == 0) /* EWDS  */
+				{
+					gb->mbc7.eeprom_we = 0;
+					gb->mbc7.eeprom_state = MBC7_EEP_DONE;
+					gb->mbc7.eeprom_do    = 1;
+				}
+				else if(sub == 2) /* ERAL  */
+				{
+					if(gb->mbc7.eeprom_we)
+					{
+						uint8_t i;
+						for(i = 0; i < 128u; i++)
+						{
+							gb->gb_cart_ram_write(gb, i * 2u,      0xFF);
+							gb->gb_cart_ram_write(gb, i * 2u + 1u, 0xFF);
+						}
+					}
+					gb->mbc7.eeprom_state = MBC7_EEP_DONE;
+					gb->mbc7.eeprom_do    = 1;
+				}
+				else              /* WRAL  */
+				{
+					gb->mbc7.eeprom_state = MBC7_EEP_WRAL;
+				}
+			}
+		}
+		break;
+
+	case MBC7_EEP_READ:
+		gb->mbc7.eeprom_bit_cnt++;
+		if(gb->mbc7.eeprom_bit_cnt < 16)
+			gb->mbc7.eeprom_do = (gb->mbc7.eeprom_data >> (15u - gb->mbc7.eeprom_bit_cnt)) & 1;
+		else
+		{
+			gb->mbc7.eeprom_do    = 0;
+			gb->mbc7.eeprom_state = MBC7_EEP_DONE;
+		}
+		break;
+
+	case MBC7_EEP_WRITE:
+	case MBC7_EEP_WRAL:
+		gb->mbc7.eeprom_data = (uint16_t)((gb->mbc7.eeprom_data << 1) | di);
+		gb->mbc7.eeprom_bit_cnt++;
+		if(gb->mbc7.eeprom_bit_cnt == 16)
+		{
+			if(gb->mbc7.eeprom_we)
+			{
+				if(gb->mbc7.eeprom_state == MBC7_EEP_WRITE)
+				{
+					uint8_t a = gb->mbc7.eeprom_addr;
+					gb->gb_cart_ram_write(gb, a * 2u,
+						(gb->mbc7.eeprom_data >> 8) & 0xFF);
+					gb->gb_cart_ram_write(gb, a * 2u + 1u,
+						gb->mbc7.eeprom_data & 0xFF);
+				}
+				else /* WRAL */
+				{
+					uint8_t i;
+					for(i = 0; i < 128u; i++)
+					{
+						gb->gb_cart_ram_write(gb, i * 2u,
+							(gb->mbc7.eeprom_data >> 8) & 0xFF);
+						gb->gb_cart_ram_write(gb, i * 2u + 1u,
+							gb->mbc7.eeprom_data & 0xFF);
+					}
+				}
+			}
+			gb->mbc7.eeprom_state = MBC7_EEP_DONE;
+			gb->mbc7.eeprom_do    = 1;
+		}
+		break;
+
+	default:
+		break;
+	}
+}
+
 /**
  * Internal function used to read bytes.
  * addr is host platform endian.
@@ -910,7 +1066,7 @@ PGB_HOT uint8_t __gb_read(struct gb_s *gb, uint16_t addr)
 	case 0x5:
 	case 0x6:
 	case 0x7:
-		if(gb->mbc == 5)
+		if(gb->mbc == 5 || gb->mbc == 7)
 			return __gb_rom_read_fast(gb, (addr - ROM_N_ADDR) + (gb->selected_rom_bank * ROM_BANK_SIZE));
 
 		if(gb->mbc == 1 && gb->cart_mode_select)
@@ -928,6 +1084,22 @@ PGB_HOT uint8_t __gb_read(struct gb_s *gb, uint16_t addr)
 #endif
 	case 0xA:
 	case 0xB:
+		if(gb->mbc == 7)
+		{
+			/* Registers only accessible after both enable stages. */
+			if(!(gb->enable_cart_ram && gb->mbc7.regs_enabled))
+				return 0xFF;
+			/* Register select: bits 7:4 of the address byte */
+			switch((addr >> 4) & 0xF)
+			{
+			case 0x2: return  gb->mbc7.accel_x & 0xFF;
+			case 0x3: return (gb->mbc7.accel_x >> 8) & 0xFF;
+			case 0x4: return  gb->mbc7.accel_y & 0xFF;
+			case 0x5: return (gb->mbc7.accel_y >> 8) & 0xFF;
+			case 0x8: return  gb->mbc7.eeprom_do & 1;
+			default:  return 0xFF;
+			}
+		}
 		if(gb->mbc == 3 && gb->cart_ram_bank >= 0x08)
 		{
 			return gb->rtc_latched.bytes[gb->cart_ram_bank - 0x08];
@@ -1074,7 +1246,7 @@ PGB_FORCE_INLINE uint8_t __gb_read_pc(struct gb_s *gb)
 				return __gb_rom_read_fast(gb, addr);
 			}
 
-			if(gb->mbc == 5)
+			if(gb->mbc == 5 || gb->mbc == 7)
 				return __gb_rom_read_fast(gb, (addr - ROM_N_ADDR) + (gb->selected_rom_bank * ROM_BANK_SIZE));
 
 			if(gb->mbc == 1 && gb->cart_mode_select)
@@ -1122,7 +1294,7 @@ PGB_FORCE_INLINE uint8_t __gb_peek_pc(struct gb_s *gb)
 			return __gb_rom_read_fast(gb, addr);
 		}
 
-		if(gb->mbc == 5)
+		if(gb->mbc == 5 || gb->mbc == 7)
 			return __gb_rom_read_fast(gb, (addr - ROM_N_ADDR) + (gb->selected_rom_bank * ROM_BANK_SIZE));
 
 		if(gb->mbc == 1 && gb->cart_mode_select)
@@ -1220,12 +1392,20 @@ PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 		}
 		else if(gb->mbc == 5)
 			gb->selected_rom_bank = (val & 0x01) << 8 | (gb->selected_rom_bank & 0xFF);
+		else if(gb->mbc == 7)
+			gb->selected_rom_bank = val & 0x7F;
 
 		gb->selected_rom_bank = gb->selected_rom_bank & gb->num_rom_banks_mask;
 		return;
 
 	case 0x4:
 	case 0x5:
+		if(gb->mbc == 7)
+		{
+			/* MBC7 second-stage register enable: write 0x40 here */
+			gb->mbc7.regs_enabled = (val == 0x40) ? 1 : 0;
+			return;
+		}
 		if(gb->mbc == 1)
 		{
 			gb->cart_ram_bank = (val & 3);
@@ -1268,6 +1448,77 @@ PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 
 	case 0xA:
 	case 0xB:
+		if(gb->mbc == 7)
+		{
+			if(!(gb->enable_cart_ram && gb->mbc7.regs_enabled))
+				return;
+			switch((addr >> 4) & 0xF)
+			{
+			case 0x0: /* Accelerometer latch erase: write 0x55 */
+				if(val == 0x55)
+					gb->mbc7.latch_step = 1;
+				break;
+			case 0x1: /* Accelerometer latch capture: write 0xAA */
+				if(val == 0xAA && gb->mbc7.latch_step == 1)
+				{
+					/* Sample IMU if callback is registered */
+					if(gb->mbc7.get_accel)
+					{
+						int16_t ix = 0, iy = 0;
+						gb->mbc7.get_accel(gb, &ix, &iy);
+						/* Scale: LSM6DSO ±4g → ±8192 per g; MBC7 center=0x81D0, ~0x70 per g */
+						int32_t x = (int32_t)0x81D0 + ((int32_t)ix * 112 / 8192);
+						int32_t y = (int32_t)0x81D0 + ((int32_t)iy * 112 / 8192);
+						if(x < 0)      x = 0;
+						if(x > 0xFFFF) x = 0xFFFF;
+						if(y < 0)      y = 0;
+						if(y > 0xFFFF) y = 0xFFFF;
+						gb->mbc7.accel_x = (uint16_t)x;
+						gb->mbc7.accel_y = (uint16_t)y;
+					}
+					else
+					{
+						/* No IMU: report flat (center) */
+						gb->mbc7.accel_x = 0x81D0;
+						gb->mbc7.accel_y = 0x81D0;
+					}
+					gb->mbc7.latch_step = 2;
+				}
+				break;
+			case 0x8: /* EEPROM serial interface */
+			{
+				uint8_t new_cs = (val >> 7) & 1;
+				uint8_t new_sk = (val >> 6) & 1;
+				uint8_t di     = (val >> 1) & 1;
+
+				/* CS falling edge: reset EEPROM to idle */
+				if(gb->mbc7.eeprom_cs && !new_cs)
+				{
+					gb->mbc7.eeprom_state   = MBC7_EEP_IDLE;
+					gb->mbc7.eeprom_do      = 1;
+					gb->mbc7.eeprom_bit_cnt = 0;
+				}
+				/* CS rising edge: start receiving command */
+				if(!gb->mbc7.eeprom_cs && new_cs)
+				{
+					gb->mbc7.eeprom_state   = MBC7_EEP_CMD;
+					gb->mbc7.eeprom_cmd     = 0;
+					gb->mbc7.eeprom_bit_cnt = 0;
+					gb->mbc7.eeprom_do      = 0;
+				}
+				/* SK rising edge while CS=1: clock data */
+				if(new_cs && !gb->mbc7.eeprom_sk && new_sk)
+					__gb_mbc7_eeprom_clock(gb, di);
+
+				gb->mbc7.eeprom_cs = new_cs;
+				gb->mbc7.eeprom_sk = new_sk;
+				break;
+			}
+			default:
+				break;
+			}
+			return;
+		}
 		if(gb->mbc == 3 && gb->cart_ram_bank >= 0x08)
 		{
 			const uint8_t rtc_reg_mask[5] = {
@@ -4243,6 +4494,13 @@ int gb_get_save_size_s(struct gb_s *gb, size_t *ram_size)
 		return 0;
 	}
 
+	/* MBC7 EEPROM is a 93C56: 128 × 16-bit words = 256 bytes. */
+	if(gb->mbc == 7)
+	{
+		*ram_size = 0x100;
+		return 0;
+	}
+
 	/* Return -1 on invalid or unsupported RAM size. */
 	if(ram_size_code >= PEANUT_GB_ARRAYSIZE(ram_sizes))
 		return -1;
@@ -4268,6 +4526,10 @@ uint_fast32_t gb_get_save_size(struct gb_s *gb)
 	if(gb->mbc == 2)
 		return 0x200;
 
+	/* MBC7 EEPROM is 256 bytes. */
+	if(gb->mbc == 7)
+		return 0x100;
+
 	/* Return 0 on invalid or unsupported RAM size. */
 	if(ram_size_code >= PEANUT_GB_ARRAYSIZE(ram_sizes))
 		return 0;
@@ -4282,6 +4544,18 @@ void gb_init_serial(struct gb_s *gb,
 {
 	gb->gb_serial_tx = gb_serial_tx;
 	gb->gb_serial_rx = gb_serial_rx;
+}
+
+/**
+ * Register an accelerometer callback for MBC7 cartridges.
+ * The callback should fill *x and *y with raw int16_t values from the IMU,
+ * where 0 = flat and ±8192 ≈ ±1g (LSM6DSO at ±4g scale).
+ * Pass NULL to report flat (center) for both axes.
+ */
+void gb_init_mbc7_accel(struct gb_s *gb,
+		void (*get_accel)(struct gb_s*, int16_t *x, int16_t *y))
+{
+	gb->mbc7.get_accel = get_accel;
 }
 
 uint8_t gb_colour_hash(struct gb_s *gb)
@@ -4313,6 +4587,21 @@ void gb_reset(struct gb_s *gb)
 	gb->cart_ram_bank = 0;
 	gb->enable_cart_ram = 0;
 	gb->cart_mode_select = 0;
+
+	/* MBC7 state */
+	gb->mbc7.regs_enabled  = 0;
+	gb->mbc7.latch_step    = 0;
+	gb->mbc7.accel_x       = 0x81D0;
+	gb->mbc7.accel_y       = 0x81D0;
+	gb->mbc7.eeprom_cs     = 0;
+	gb->mbc7.eeprom_sk     = 0;
+	gb->mbc7.eeprom_do     = 1;
+	gb->mbc7.eeprom_we     = 0;
+	gb->mbc7.eeprom_state  = MBC7_EEP_IDLE;
+	gb->mbc7.eeprom_bit_cnt = 0;
+	gb->mbc7.eeprom_cmd    = 0;
+	gb->mbc7.eeprom_data   = 0;
+	gb->mbc7.eeprom_addr   = 0;
 
 	/* Use values as though the boot ROM was already executed. */
 	if(gb->gb_bootrom_read == NULL)
@@ -4454,13 +4743,15 @@ enum gb_init_error_e gb_init(struct gb_s *gb,
 	const int8_t cart_mbc[] =
 	{
 		0, 1, 1, 1, -1, 2, 2, -1, 0, 0, -1, 0, 0, 0, -1, 3,
-		3, 3, 3, 3, -1, -1, -1, -1, -1, 5, 5, 5, 5, 5, 5, -1
+		3, 3, 3, 3, -1, -1, -1, -1, -1, 5, 5, 5, 5, 5, 5, -1,
+		-1, -1, 7   /* 0x20=invalid, 0x21=invalid, 0x22=MBC7+SENSOR+RAM+BATTERY */
 	};
 	/* Whether cart has RAM. */
 	const uint8_t cart_ram[] =
 	{
 		0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0,
-		1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0
+		1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0,
+		0, 0, 1   /* 0x20=no RAM, 0x21=no RAM, 0x22=has RAM (EEPROM) */
 	};
 	/* How large the ROM is in banks of 16 KiB. */
 	const uint16_t num_rom_banks_mask[] =
@@ -4711,6 +5002,15 @@ void gb_init_serial(struct gb_s *gb,
 		    void (*gb_serial_tx)(struct gb_s*, const uint8_t),
 		    enum gb_serial_rx_ret_e (*gb_serial_rx)(struct gb_s*,
 			    uint8_t*));
+
+/**
+ * Registers an accelerometer callback for MBC7 (type 0x22) cartridges.
+ * get_accel should write raw int16_t IMU values to *x and *y,
+ * where 0=flat and ±8192≈±1g (LSM6DSO at ±4g scale).
+ * Pass NULL to report flat for both axes (playable but non-interactive).
+ */
+void gb_init_mbc7_accel(struct gb_s *gb,
+		void (*get_accel)(struct gb_s*, int16_t *x, int16_t *y));
 
 /**
  * Obtains the save size of the game (size of the Cart RAM). Required by the

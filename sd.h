@@ -1546,6 +1546,52 @@ void draw_settings(lv_obj_t *list) {
     lv_obj_align_to(time_label, time_title, LV_ALIGN_OUT_BOTTOM_MID, 0, spacing);
 }
 
+// Standalone blocking settings screen — call from any menu context.
+// list: an existing LVGL list/container to draw into.
+// hint_left/hint_right: bottom bar label objects; hints are restored on exit.
+void run_settings_screen(lv_obj_t *list, lv_obj_t *hint_left, lv_obj_t *hint_right) {
+    mcp7940n_get_tm(RTC_I2C_PORT, &draft_tm);
+    selected_date_value = 1;
+    draw_settings(list);
+    update_bottom_bar(hint_left, hint_right, true);  // "Select: Exit | Start: Save"
+
+    bool up=1, down=1, left=1, right=1, start=1, select=1;
+    bool prev_up=1, prev_down=1, prev_left=1, prev_right=1, prev_start=1, prev_select=1;
+
+    while (true) {
+        select = gpio_read(GPIO_B_SELECT);
+        if (!gpio_read(GPIO_IOX_nINT)) {
+            read_io_expander_states(0);
+            up    = gpio_read(IOX_B_UP);
+            down  = gpio_read(IOX_B_DOWN);
+            left  = gpio_read(IOX_B_LEFT);
+            right = gpio_read(IOX_B_RIGHT);
+            start = gpio_read(IOX_B_START);
+        }
+        // START → save and exit
+        if (prev_start && !start) {
+            mcp7940n_set_tm(RTC_I2C_PORT, &draft_tm);
+            break;
+        }
+        // SELECT → exit without saving
+        if (prev_select && !select) { break; }
+
+        if (prev_up   && !up)   { modify_draft_tm(&draft_tm, selected_date_value, +1); draw_settings(list); }
+        if (prev_down && !down) { modify_draft_tm(&draft_tm, selected_date_value, -1); draw_settings(list); }
+        if (prev_right && !right) {
+            if (++selected_date_value > 6) selected_date_value = 1;
+            draw_settings(list);
+        }
+        if (prev_left && !left) {
+            if (--selected_date_value < 1) selected_date_value = 6;
+            draw_settings(list);
+        }
+        prev_up=up; prev_down=down; prev_left=left; prev_right=right;
+        prev_start=start; prev_select=select;
+        lv_tick_inc(5); lv_timer_handler(); watchdog_update(); sleep_ms(3);
+    }
+}
+
 static const char* basename_from_path(const char *path);
 void draw_rom_list(lv_obj_t *list, char filenames[][256], uint16_t num_file, uint16_t selected, uint16_t page_start) {
     lv_obj_clean(list);

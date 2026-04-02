@@ -21,7 +21,9 @@ void update_mp3_bottom_bar_shuffle_repeat(lv_obj_t *right,
                                             bool shuffle, 
                                             bool paused);
 void mp3_apply_now_playing_theme();
-             
+void open_mp3_menu(void);
+
 size_t sfe_mem_size(void);
 size_t sfe_mem_max_free_size(void);
 size_t sfe_mem_used(void);
+void imu_read_accel_raw(int16_t *ax, int16_t *ay, int16_t *az);

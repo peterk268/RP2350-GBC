@@ -2045,14 +2045,18 @@ static play_result_t mp3_play_single_track(const char *filepath,
             } else {
                 // SELECT is held: check for combos
 
-                // 1) START + SELECT → lock/unlock all buttons
+                // 1) START + SELECT → open MP3 menu
                 if (btn_start && !(prev_btn_start && prev_btn_select)) {
-                    g_buttons_locked = !g_buttons_locked;
                     select_was_combo = true;
-                    // sleep mp3
-                    g_mp3_inactive = g_buttons_locked; 
-                    if (!g_buttons_locked) last_interaction_us = now_us;
-                    printf("Buttons %s\n", g_buttons_locked ? "LOCKED" : "UNLOCKED");
+                    paused = true;
+                    toggle_speakers_if_paused();
+                    open_mp3_menu();
+                    paused = false;
+                    toggle_speakers_if_paused();  // re-evaluates paused after menu exits
+                    update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj,
+                                                         g_repeat_mode,
+                                                         g_shuffle_enabled,
+                                                         paused);
                 }
 
                 // Only allow brightness combos when NOT locked

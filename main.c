@@ -67,6 +67,7 @@
 #include "imu_dash.h"
 #include "in_game_menu.h"
 #include "alarm.h"
+#include "mp3_menu.h"
 
 int main(void)
 {	

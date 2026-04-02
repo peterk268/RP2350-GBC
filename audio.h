@@ -36,6 +36,8 @@ void dac_i2c_read(uint8_t page, uint8_t reg, uint8_t *data, size_t length);
 
 #define VOL_LUT_SIZE 256
 
+uint8_t g_analog_gain = ANALOG_GAIN;  // runtime-editable analog gain ceiling
+bool    g_3d_enabled  = true;          // mirrors set_3d(0x15,0x00) called in setup_dac
 
 void detect_headphones() {
     uint8_t data;

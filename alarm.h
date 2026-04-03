@@ -20,23 +20,22 @@
 //   15 min+   sustain until power-off
 // ================================================================
 
-#pragma once
-
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include "ff.h"
-#include "hardware/timer.h"
-#include "hardware/irq.h"
-#include "hardware/sync.h"
-#include "pico/time.h"
-
 // ── Constants ───────────────────────────────────────────────────
 
 #define ALARM_MAGIC          0xA1A4C10Cu
 #define ALARM_AUDIO_DIR      "/alarm"
 #define ALARM_AUDIO_FILE     "/alarm/dawn.mp3"
 
+#define ALARM_DEBUG 0
+#if ALARM_DEBUG
+// Dawn starts this many minutes before the alarm time
+#define ALARM_DAWN_WINDOW_MIN  4
+
+// Phase durations in seconds (from start of dawn window)
+#define ALARM_PHASE1_END_S   (2  * 60)  // 420s: LCD color + backlight
+#define ALARM_PHASE2_END_S   (3 * 60)  // 600s: button LEDs added
+#define ALARM_PHASE3_END_S   (4 * 60)  // 900s: audio added (= alarm time)
+#else 
 // Dawn starts this many minutes before the alarm time
 #define ALARM_DAWN_WINDOW_MIN  15
 
@@ -44,13 +43,15 @@
 #define ALARM_PHASE1_END_S   (7  * 60)  // 420s: LCD color + backlight
 #define ALARM_PHASE2_END_S   (10 * 60)  // 600s: button LEDs added
 #define ALARM_PHASE3_END_S   (15 * 60)  // 900s: audio added (= alarm time)
-
+#endif
 // Warm amber for UI text / sleep screen
 #define ALARM_COLOR_AMBER    0xFF8C00u
 // Color for selected field
 #define ALARM_COLOR_SELECT   0x33CC66u
 // Color for unselected fields
 #define ALARM_COLOR_DIM      0x666666u
+// Max brightness level for LEDs during alarm
+#define ALARM_MAX_BRIGHTNESS 230u
 
 // ── Data Structures ──────────────────────────────────────────────
 
@@ -513,6 +514,10 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
     mp3_stream_t *stream = NULL;
     drmp3 *mp3_dec = NULL;
     bool mp3_dec_inited = false;
+    drwav *wav_dec = NULL;
+    drflac *flac_dec = NULL;
+    bool is_wav = false;
+    bool is_flac = false;
     int16_t *pcm_buf = NULL;
     enum { ALARM_AUDIO_PATH_MAX = 64 };
     char *audio_path = (char *)calloc(ALARM_AUDIO_PATH_MAX, sizeof(char));
@@ -543,10 +548,10 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
             rgb_t col = alarm_sunrise_color((uint8_t)t_frac);
             alarm_fill_screen_rgb(col.r, col.g, col.b);
 
-            // Backlight: ramp to 230 over phase 1, then hold
+            // Backlight: ramp to ALARM_MAX_BRIGHTNESS over phase 1, then hold
             uint8_t target_bl = (cur_s >= ALARM_PHASE1_END_S)
-                ? 230
-                : (uint8_t)(((uint32_t)cur_s * 230u) / ALARM_PHASE1_END_S);
+                ? ALARM_MAX_BRIGHTNESS
+                : (uint8_t)(((uint32_t)cur_s * ALARM_MAX_BRIGHTNESS) / ALARM_PHASE1_END_S);
             if (lcd_led_duty_cycle < target_bl) {
                 adjust_brightness(GPIO_LCD_LED, &lcd_led_duty_cycle, 1, true, false);
             }
@@ -556,11 +561,11 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
         if (cur_s >= ALARM_PHASE1_END_S) {
             uint8_t target_bl;
             if (cur_s >= ALARM_PHASE2_END_S) {
-                target_bl = 230;
+                target_bl = ALARM_MAX_BRIGHTNESS;
             } else {
                 int phase2_s = cur_s - ALARM_PHASE1_END_S;
                 int phase2_dur = ALARM_PHASE2_END_S - ALARM_PHASE1_END_S;
-                target_bl = (uint8_t)(((uint32_t)phase2_s * 230u) / (uint32_t)phase2_dur);
+                target_bl = (uint8_t)(((uint32_t)phase2_s * ALARM_MAX_BRIGHTNESS) / (uint32_t)phase2_dur);
             }
             if (button_led_duty_cycle < target_bl) {
                 adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, 1, true, false);
@@ -579,37 +584,66 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
                 // Try to open audio file once
                 if (!audio_open && f_mount(fs_audio, pSD->pcName, 1) == FR_OK) {
                     if (alarm_find_audio_file(audio_path, ALARM_AUDIO_PATH_MAX)) {
+                        is_wav = has_wav_extension(audio_path);
+                        is_flac = has_flac_extension(audio_path);
                         stream = (mp3_stream_t *)malloc(sizeof(mp3_stream_t));
                         if (stream) {
                             memset(stream, 0, sizeof(mp3_stream_t));
-                            stream->buf = (uint8_t *)malloc(MP3_STREAM_BUF_SIZE);
-                            if (stream->buf) {
-                                FRESULT fr2 = f_open(&stream->file, audio_path, FA_READ);
-                                if (fr2 == FR_OK) {
-                                    // Pre-fill ring buffer
-                                    for (int i = 0; i < 4; i++) mp3_refill(stream);
-
-                                    mp3_dec = (drmp3 *)calloc(1, sizeof(drmp3));
-                                    if (mp3_dec && drmp3_init(mp3_dec, mp3_stream_read, NULL, NULL, NULL,
-                                                   stream, &s_drmp3_alloc)) {
-                                        mp3_dec_inited = true;
+                            FRESULT fr2 = f_open(&stream->file, audio_path, FA_READ);
+                            if (fr2 == FR_OK) {
+                                if (is_wav) {
+                                    wav_dec = (drwav *)calloc(1, sizeof(drwav));
+                                    if (wav_dec && drwav_init(wav_dec, wav_fatfs_read, wav_fatfs_seek, wav_fatfs_tell, &stream->file, NULL)) {
                                         pcm_buf = (int16_t *)malloc(PCM_FRAME_COUNT * 2 * sizeof(int16_t));
                                         if (pcm_buf) {
                                             audio_available = true;
                                             audio_open = true;
                                             set_volume(0, 0);
+                                            i2s_set_sample_freq(&i2s_config, wav_dec->sampleRate, false);
                                             printf("Alarm audio open: %s\n", audio_path);
+                                        }
+                                    }
+                                } else if (is_flac) {
+                                    flac_dec = drflac_open(flac_fatfs_read, flac_fatfs_seek, flac_fatfs_tell, &stream->file, NULL);
+                                    if (flac_dec) {
+                                        pcm_buf = (int16_t *)malloc(PCM_FRAME_COUNT * 2 * sizeof(int16_t));
+                                        if (pcm_buf) {
+                                            audio_available = true;
+                                            audio_open = true;
+                                            set_volume(0, 0);
+                                            i2s_set_sample_freq(&i2s_config, flac_dec->sampleRate, false);
+                                            printf("Alarm audio open: %s\n", audio_path);
+                                        }
+                                    }
+                                } else {
+                                    stream->buf = (uint8_t *)malloc(MP3_STREAM_BUF_SIZE);
+                                    if (stream->buf) {
+                                        // Pre-fill ring buffer
+                                        for (int i = 0; i < 4; i++) mp3_refill(stream);
+
+                                        mp3_dec = (drmp3 *)calloc(1, sizeof(drmp3));
+                                        if (mp3_dec && drmp3_init(mp3_dec, mp3_stream_read, NULL, NULL, NULL,
+                                                       stream, &s_drmp3_alloc)) {
+                                            mp3_dec_inited = true;
+                                            pcm_buf = (int16_t *)malloc(PCM_FRAME_COUNT * 2 * sizeof(int16_t));
+                                            if (pcm_buf) {
+                                                audio_available = true;
+                                                audio_open = true;
+                                                set_volume(0, 0);
+                                                i2s_set_sample_freq(&i2s_config, mp3_dec->sampleRate, false);
+                                                printf("Alarm audio open: %s\n", audio_path);
+                                            }
                                         }
                                     }
                                 }
                             }
                             if (!audio_available) {
-                                if (mp3_dec_inited) {
-                                    drmp3_uninit(mp3_dec);
-                                    mp3_dec_inited = false;
-                                }
+                                if (mp3_dec_inited) { drmp3_uninit(mp3_dec); mp3_dec_inited = false; }
                                 if (mp3_dec) { free(mp3_dec); mp3_dec = NULL; }
+                                if (wav_dec) { drwav_uninit(wav_dec); free(wav_dec); wav_dec = NULL; }
+                                if (flac_dec) { drflac_close(flac_dec); flac_dec = NULL; }
                                 if (stream->buf) free(stream->buf);
+                                f_close(&stream->file);
                                 free(stream);
                                 stream = NULL;
                             }
@@ -626,7 +660,7 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
                 }
             }
 
-            if (audio_available && stream && pcm_buf && mp3_dec) {
+            if (audio_available && stream && pcm_buf && (mp3_dec || wav_dec || flac_dec)) {
                 // Ramp volume over phase 3
                 int phase3_s = cur_s - ALARM_PHASE2_END_S;
                 int phase3_dur = ALARM_PHASE3_END_S - ALARM_PHASE2_END_S;
@@ -638,10 +672,25 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
                 }
 
                 // Decode and play one buffer (~139ms at 44.1kHz)
-                drmp3_uint64 frames = drmp3_read_pcm_frames_s16(
-                    mp3_dec, PCM_FRAME_COUNT, pcm_buf);
+                uint64_t frames;
+                if (is_wav) {
+                    frames = (uint64_t)drwav_read_pcm_frames_s16(wav_dec, PCM_FRAME_COUNT, pcm_buf);
+                } else if (is_flac) {
+                    frames = (uint64_t)drflac_read_pcm_frames_s16(flac_dec, PCM_FRAME_COUNT, (drflac_int16 *)pcm_buf);
+                } else {
+                    frames = (uint64_t)drmp3_read_pcm_frames_s16(mp3_dec, PCM_FRAME_COUNT, pcm_buf);
+                }
                 if (frames == 0) {
-                    // EOF — reset and loop
+                    if (is_wav) {
+                        // EOF — seek back to start and loop
+                        drwav_seek_to_pcm_frame(wav_dec, 0);
+                        continue;
+                    } else if (is_flac) {
+                        // EOF — seek back to start and loop
+                        drflac_seek_to_pcm_frame(flac_dec, 0);
+                        continue;
+                    }
+                    // EOF — reset and loop MP3
                     f_lseek(&stream->file, 0);
                     stream->rd = stream->wr = stream->count = 0;
                     stream->eof = false;
@@ -670,7 +719,8 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
                     mp3_dec_inited = true;
                     continue;  // skip i2s write this iteration
                 }
-                mp3_zero_pcm_tail(pcm_buf, frames, PCM_FRAME_COUNT, (uint8_t)mp3_dec->channels);
+                uint8_t ch = is_wav ? (uint8_t)wav_dec->channels : (is_flac ? (uint8_t)flac_dec->channels : (uint8_t)mp3_dec->channels);
+                mp3_zero_pcm_tail(pcm_buf, frames, PCM_FRAME_COUNT, ch);
                 i2s_dma_write(&i2s_config, (const uint16_t *)pcm_buf);
                 // DMA write blocks ~139ms — that's our update rate during audio phase
                 continue;  // skip the sleep_ms below when audio is running
@@ -679,11 +729,11 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
 
         // Phase 4: sustain — ensure everything is at max
         if (cur_s >= ALARM_PHASE3_END_S) {
-            if (lcd_led_duty_cycle < 230)
+            if (lcd_led_duty_cycle < ALARM_MAX_BRIGHTNESS)
                 adjust_brightness(GPIO_LCD_LED, &lcd_led_duty_cycle, 1, true, false);
-            if (button_led_duty_cycle < 230)
+            if (button_led_duty_cycle < ALARM_MAX_BRIGHTNESS)
                 adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, 1, true, false);
-            if (pwr_led_duty_cycle < 230)
+            if (pwr_led_duty_cycle < ALARM_MAX_BRIGHTNESS)
                 adjust_brightness(GPIO_PWR_LED, &pwr_led_duty_cycle, 1, true, false);
             if (audio_available && current_volume_level < DAC_MAX_VOL_SPK) {
                 current_volume_level = DAC_MAX_VOL_SPK;
@@ -815,6 +865,7 @@ void run_alarm_clock(void) {
             // Save alarm (holds power during SD write)
             alarm_save(&alarm);
 
+#if !ALARM_DEBUG
             // ── Peripheral shutdown (mirrors sleep_and_shutdown_peripherals) ──
             shutdown_lcd(true, true);
             decrease_pwr_brightness(MAX_BRIGHTNESS);
@@ -833,7 +884,7 @@ void run_alarm_clock(void) {
 
             // LVGL state and buffers are intact from before sleep — just resume
             __atomic_store_n(&show_gui, true, __ATOMIC_RELEASE);
-
+#endif
             // ── Sunrise ──────────────────────────────────────────
             alarm_sunrise_run(alarm.hour, alarm.minute);
 

@@ -50,8 +50,11 @@
 #define ALARM_COLOR_SELECT   0x33CC66u
 // Color for unselected fields
 #define ALARM_COLOR_DIM      0x666666u
-// Max brightness level for LEDs during alarm
-#define ALARM_MAX_BRIGHTNESS 230u
+// Max brightness presets for LEDs during alarm
+#define ALARM_BRIGHTNESS_LOW    26u
+#define ALARM_BRIGHTNESS_MEDIUM 116u
+#define ALARM_BRIGHTNESS_HIGH   230u
+#define ALARM_MAX_BRIGHTNESS ALARM_BRIGHTNESS_MEDIUM  // default
 
 // ── Data Structures ──────────────────────────────────────────────
 
@@ -62,15 +65,24 @@ typedef struct {
 } alarm_settings_t;
 
 typedef enum {
+    ALARM_BRIGHTNESS_PRESET_LOW = 0,
+    ALARM_BRIGHTNESS_PRESET_MEDIUM,
+    ALARM_BRIGHTNESS_PRESET_HIGH,
+    ALARM_BRIGHTNESS_PRESET_COUNT
+} alarm_brightness_preset_t;
+
+typedef enum {
     ALARM_FIELD_HOUR = 0,
     ALARM_FIELD_MINUTE,
     ALARM_FIELD_AMPM,
+    ALARM_FIELD_BRIGHTNESS,
     ALARM_FIELD_COUNT
 } alarm_field_t;
 
 // ── Globals ───────────────────────────────────────────────────────
 
 static volatile bool g_alarm_tick = false;
+static alarm_brightness_preset_t g_alarm_brightness_preset = ALARM_BRIGHTNESS_PRESET_MEDIUM;
 
 // ── Settings persistence ─────────────────────────────────────────
 
@@ -200,10 +212,31 @@ static uint8_t to_24h(uint8_t h12, bool pm) {
     else      return (h12 == 12) ? 12 : (uint8_t)(h12 + 12);
 }
 
+// Convert brightness preset to actual value
+static uint8_t brightness_preset_to_value(alarm_brightness_preset_t preset) {
+    switch (preset) {
+        case ALARM_BRIGHTNESS_PRESET_LOW:    return ALARM_BRIGHTNESS_LOW;
+        case ALARM_BRIGHTNESS_PRESET_MEDIUM: return ALARM_BRIGHTNESS_MEDIUM;
+        case ALARM_BRIGHTNESS_PRESET_HIGH:   return ALARM_BRIGHTNESS_HIGH;
+        default:                             return ALARM_BRIGHTNESS_MEDIUM;
+    }
+}
+
+// Get preset name string
+static const char* brightness_preset_name(alarm_brightness_preset_t preset) {
+    switch (preset) {
+        case ALARM_BRIGHTNESS_PRESET_LOW:    return "Low";
+        case ALARM_BRIGHTNESS_PRESET_MEDIUM: return "Medium";
+        case ALARM_BRIGHTNESS_PRESET_HIGH:   return "High";
+        default:                             return "?";
+    }
+}
+
 typedef struct {
     lv_obj_t *hour_lbl;
     lv_obj_t *min_lbl;
     lv_obj_t *ampm_lbl;
+    lv_obj_t *brightness_lbl;
     lv_obj_t *cur_time_lbl;
 } alarm_ui_t;
 
@@ -272,21 +305,23 @@ static alarm_ui_t alarm_create_ui(const alarm_settings_t *s,
         lv_color_hex(field == ALARM_FIELD_AMPM ? ALARM_COLOR_SELECT : ALARM_COLOR_AMBER), 0);
     lv_obj_align(ui.ampm_lbl, LV_ALIGN_CENTER, 32, 0);
 
-    // Hint
-    lv_obj_t *hint = lv_label_create(scr);
-    lv_label_set_text(hint, "L/R: field  U/D: value");
-    lv_obj_set_style_text_color(hint, lv_color_hex(ALARM_COLOR_DIM), 0);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_t *note = lv_label_create(scr);
+    lv_label_set_text(note, "Dawn starts 15 min before");
+    lv_obj_set_style_text_color(note, lv_color_hex(ALARM_COLOR_DIM), 0);
+    lv_obj_align(note, LV_ALIGN_CENTER, 0, 40);
+
+    // Brightness field
+    ui.brightness_lbl = lv_label_create(scr);
+    lv_label_set_text_fmt(ui.brightness_lbl, "Brightness: %s",
+        brightness_preset_name(g_alarm_brightness_preset));
+    lv_obj_set_style_text_color(ui.brightness_lbl,
+        lv_color_hex(field == ALARM_FIELD_BRIGHTNESS ? ALARM_COLOR_SELECT : ALARM_COLOR_AMBER), 0);
+    lv_obj_align(ui.brightness_lbl, LV_ALIGN_CENTER, 0, 22);
 
     lv_obj_t *hint2 = lv_label_create(scr);
     lv_label_set_text(hint2, "START: set alarm & sleep");
     lv_obj_set_style_text_color(hint2, lv_color_hex(ALARM_COLOR_DIM), 0);
     lv_obj_align(hint2, LV_ALIGN_BOTTOM_MID, 0, -8);
-
-    lv_obj_t *note = lv_label_create(scr);
-    lv_label_set_text(note, "Dawn starts 15 min before");
-    lv_obj_set_style_text_color(note, lv_color_hex(ALARM_COLOR_DIM), 0);
-    lv_obj_align(note, LV_ALIGN_CENTER, 0, 22);
 
     lv_tick_inc(1);
     lv_timer_handler();
@@ -310,12 +345,17 @@ static void alarm_update_ui_fields(alarm_ui_t *ui,
         lv_label_set_text(ui->ampm_lbl, is_pm(s->hour) ? "PM" : "AM");
     }
 
+    lv_label_set_text_fmt(ui->brightness_lbl, "Brightness: %s",
+        brightness_preset_name(g_alarm_brightness_preset));
+
     lv_obj_set_style_text_color(ui->hour_lbl,
         lv_color_hex(field == ALARM_FIELD_HOUR   ? ALARM_COLOR_SELECT : ALARM_COLOR_AMBER), 0);
     lv_obj_set_style_text_color(ui->min_lbl,
         lv_color_hex(field == ALARM_FIELD_MINUTE  ? ALARM_COLOR_SELECT : ALARM_COLOR_AMBER), 0);
     lv_obj_set_style_text_color(ui->ampm_lbl,
         lv_color_hex(field == ALARM_FIELD_AMPM    ? ALARM_COLOR_SELECT : ALARM_COLOR_AMBER), 0);
+    lv_obj_set_style_text_color(ui->brightness_lbl,
+        lv_color_hex(field == ALARM_FIELD_BRIGHTNESS ? ALARM_COLOR_SELECT : ALARM_COLOR_AMBER), 0);
 
     if (now && ui->cur_time_lbl) {
         lv_label_set_text_fmt(ui->cur_time_lbl, "Now: %02u:%02u %s",
@@ -528,6 +568,8 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
     sd_card_t *pSD = sd_get_by_num(0);
 
     // ── Main sunrise loop ────────────────────────────────────────
+    uint8_t max_brightness = brightness_preset_to_value(g_alarm_brightness_preset);
+
     while (true) {
         watchdog_update();
 
@@ -548,10 +590,10 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
             rgb_t col = alarm_sunrise_color((uint8_t)t_frac);
             alarm_fill_screen_rgb(col.r, col.g, col.b);
 
-            // Backlight: ramp to ALARM_MAX_BRIGHTNESS over phase 1, then hold
+            // Backlight: ramp to brightness over phase 1, then hold
             uint8_t target_bl = (cur_s >= ALARM_PHASE1_END_S)
-                ? ALARM_MAX_BRIGHTNESS
-                : (uint8_t)(((uint32_t)cur_s * ALARM_MAX_BRIGHTNESS) / ALARM_PHASE1_END_S);
+                ? max_brightness
+                : (uint8_t)(((uint32_t)cur_s * max_brightness) / ALARM_PHASE1_END_S);
             if (lcd_led_duty_cycle < target_bl) {
                 adjust_brightness(GPIO_LCD_LED, &lcd_led_duty_cycle, 1, true, false);
             }
@@ -561,11 +603,11 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
         if (cur_s >= ALARM_PHASE1_END_S) {
             uint8_t target_bl;
             if (cur_s >= ALARM_PHASE2_END_S) {
-                target_bl = ALARM_MAX_BRIGHTNESS;
+                target_bl = max_brightness;
             } else {
                 int phase2_s = cur_s - ALARM_PHASE1_END_S;
                 int phase2_dur = ALARM_PHASE2_END_S - ALARM_PHASE1_END_S;
-                target_bl = (uint8_t)(((uint32_t)phase2_s * ALARM_MAX_BRIGHTNESS) / (uint32_t)phase2_dur);
+                target_bl = (uint8_t)(((uint32_t)phase2_s * max_brightness) / (uint32_t)phase2_dur);
             }
             if (button_led_duty_cycle < target_bl) {
                 adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, 1, true, false);
@@ -729,11 +771,11 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
 
         // Phase 4: sustain — ensure everything is at max
         if (cur_s >= ALARM_PHASE3_END_S) {
-            if (lcd_led_duty_cycle < ALARM_MAX_BRIGHTNESS)
+            if (lcd_led_duty_cycle < max_brightness)
                 adjust_brightness(GPIO_LCD_LED, &lcd_led_duty_cycle, 1, true, false);
-            if (button_led_duty_cycle < ALARM_MAX_BRIGHTNESS)
+            if (button_led_duty_cycle < max_brightness)
                 adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, 1, true, false);
-            if (pwr_led_duty_cycle < ALARM_MAX_BRIGHTNESS)
+            if (pwr_led_duty_cycle < max_brightness)
                 adjust_brightness(GPIO_PWR_LED, &pwr_led_duty_cycle, 1, true, false);
             if (audio_available && current_volume_level < DAC_MAX_VOL_SPK) {
                 current_volume_level = DAC_MAX_VOL_SPK;
@@ -779,6 +821,8 @@ void run_alarm_clock(void) {
     // Current button state (active-low: false = pressed)
     bool btn_left = true, btn_right = true;
     bool btn_up   = true, btn_down  = true, btn_start = true;
+
+    alarm_field_t prev_field = field;
 
     while (true) {
         watchdog_update();
@@ -836,6 +880,13 @@ void run_alarm_clock(void) {
                 case ALARM_FIELD_AMPM:
                     disp_pm = !disp_pm;
                     break;
+                case ALARM_FIELD_BRIGHTNESS: {
+                    int p = (int)g_alarm_brightness_preset + delta;
+                    if (p < 0) p = ALARM_BRIGHTNESS_PRESET_COUNT - 1;
+                    if (p >= ALARM_BRIGHTNESS_PRESET_COUNT) p = 0;
+                    g_alarm_brightness_preset = (alarm_brightness_preset_t)p;
+                    break;
+                }
                 default: break;
             }
             alarm.magic  = ALARM_MAGIC;
@@ -846,6 +897,22 @@ void run_alarm_clock(void) {
 
         if (changed) {
             alarm_update_ui_fields(&ui, &alarm, field, rtc_ok ? &rtc_now : NULL);
+        }
+
+        // Live brightness preview when brightness field is selected
+        if (field == ALARM_FIELD_BRIGHTNESS && (prev_field != ALARM_FIELD_BRIGHTNESS || changed)) {
+            uint8_t preview_brightness = brightness_preset_to_value(g_alarm_brightness_preset);
+            lcd_led_duty_cycle = preview_brightness;
+            button_led_duty_cycle = preview_brightness;
+            adjust_brightness(GPIO_LCD_LED, &lcd_led_duty_cycle, 0, true, false);
+            adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, 0, true, false);
+        }
+        if (field != ALARM_FIELD_BRIGHTNESS && prev_field == ALARM_FIELD_BRIGHTNESS) {
+            // Restore previous target brightness only when leaving the brightness field
+            lcd_led_duty_cycle = lcd_target_brightness;
+            button_led_duty_cycle = button_target_brightness;
+            adjust_brightness(GPIO_LCD_LED, &lcd_led_duty_cycle, 0, true, false);
+            adjust_brightness(GPIO_BUTTON_LED, &button_led_duty_cycle, 0, true, false);
         }
 
         if (!btn_start && prev_start && alarm.hour != 0xFF) {
@@ -898,6 +965,7 @@ void run_alarm_clock(void) {
         prev_up    = btn_up;
         prev_down  = btn_down;
         prev_start = btn_start;
+        prev_field = field;
 
         // Drive LVGL with actual elapsed time — every iteration, regardless of input
         uint64_t now_us = time_us_64();

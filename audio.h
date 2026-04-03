@@ -324,7 +324,7 @@ void setup_dac() {
 
     // Power on the drivers
     dac_i2c_write(1, 0x1f, 0b00010100); // Headphone drivers off, Vout set to 1.65V
-    dac_i2c_write(1, 0x21, 0x46); // Headphone pop reduction - 600ms driver power on time, driver ramp
+    dac_i2c_write(1, 0x21, 0x4E); // Headphone pop reduction - Power on = 1.22s, Step time = 4 ms
     dac_i2c_write(1, 0x22, 0x70); // Speaker pop reduction - 30.5ms power up wait time
     dac_i2c_write(1, 0x1F, 0b11010100); // Headphone drivers powered on
     dac_i2c_write(1, 0x20, 0b11000110); // Class-D Amplifier powered on

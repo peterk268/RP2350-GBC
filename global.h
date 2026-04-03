@@ -27,7 +27,7 @@ enum gb_init_error_e ret;
 uint8_t *ram = NULL;
 bool gb_alloc_ram(void)
 {
-    ram = malloc(32768);   // goes to PSRAM on your system
+    ram = malloc(32768);
     if (!ram) {
         printf("ERROR: Failed to alloc GB 32KB RAM block\n");
         return false;

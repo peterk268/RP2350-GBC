@@ -30,17 +30,18 @@ void gb_cart_ram_write(struct gb_s *gb, const uint_fast32_t addr,
 }
 
 /* MBC7 accelerometer callback — reads X/Y from LSM6DSO for Kirby Tilt etc.
- * ax = gravity axis (always ~1g flat, useless for tilt)
- * ay = left/right tilt  → MBC7 X
- * az = forward/back tilt → MBC7 Y
- * Signs match imu_dash.h axis convention (negated to match ADXL202E orientation). */
+ * When board is flat (screen up):
+ * ax ≈ 0 at rest, changes with forward/back tilt → MBC7 Y
+ * ay ≈ 0 at rest, changes with left/right tilt  → MBC7 X
+ * az ≈ +8192 at rest (full gravity), not a tilt axis (skip)
+ * Note: if vertical tilt is inverted, change *y = ax to *y = -ax. */
 static void mbc7_get_accel(struct gb_s *gb_ctx, int16_t *x, int16_t *y)
 {
 	(void)gb_ctx;
 	int16_t ax, ay, az;
 	imu_read_accel_raw(&ax, &ay, &az);
 	*x = -ay;
-	*y = -az;
+	*y = ax;
 }
 
 /**

@@ -706,6 +706,7 @@ struct gb_s
 		void (*get_accel)(struct gb_s*, int16_t *x, int16_t *y);
 		uint8_t  regs_enabled;    /* 1 after second-stage enable (0x40→0x4000) */
 		uint8_t  latch_step;      /* 0=idle, 1=erased (0x55 seen), 2=latched */
+		uint8_t  eeprom_init;     /* 1 after first latch (lazy EEPROM 0xFF init) */
 		uint16_t accel_x;         /* latched X in MBC7 format (center 0x81D0)  */
 		uint16_t accel_y;         /* latched Y                                  */
 		/* 93C56 EEPROM serial interface state */
@@ -1473,6 +1474,20 @@ PGB_HOT void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 			case 0x1: /* Accelerometer latch capture: write 0xAA */
 				if(val == 0xAA && gb->mbc7.latch_step == 1)
 				{
+					/* Lazy init: on first latch, if EEPROM is all zeros (no save loaded),
+					 * initialize to 0xFF (factory erased state of 93C56). */
+					if(!gb->mbc7.eeprom_init)
+					{
+						uint8_t eeprom_blank = 1;
+						for(unsigned i = 0; i < 256; i++)
+							if(__gb_cart_ram_read_fast(gb, i) != 0)
+								eeprom_blank = 0;
+						if(eeprom_blank)
+							for(unsigned i = 0; i < 256; i++)
+								gb->gb_cart_ram_write(gb, i, 0xFF);
+						gb->mbc7.eeprom_init = 1;
+					}
+
 					/* Sample IMU if callback is registered */
 					if(gb->mbc7.get_accel)
 					{

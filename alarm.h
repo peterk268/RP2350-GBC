@@ -708,7 +708,7 @@ static void alarm_sunrise_run(uint8_t alarm_h, uint8_t alarm_m) {
                 int phase3_dur = ALARM_PHASE3_END_S - ALARM_PHASE2_END_S;
                 if (phase3_s > phase3_dur) phase3_s = phase3_dur;
                 uint8_t vol = (uint8_t)(((uint32_t)phase3_s * DAC_MAX_VOL_SPK) / (uint32_t)phase3_dur);
-                if (vol > current_volume_level + 1 || current_volume_level == 0) {
+                if (vol != current_volume_level) {
                     current_volume_level = vol;
                     set_volume(vol, vol);
                 }

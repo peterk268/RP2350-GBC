@@ -1067,25 +1067,24 @@ static void mp3_build_playlist(void) {
 //   I2S DMA buffer (main.c)     24 KB  — PCM_FRAME_COUNT(6144) × 4 bytes
 //   Subtotal persistent        ~152 KB → ~182 KB heap free between tracks
 //
-// MP3 mode — per-track (freed at track end):
-//   drflac state               ~49 KB  — verified SRAM: 0x20055AC0 (2026-03-28)
-//   flac_seekcache (mp3.h)       6 KB  — 512-entry seek cache
-//   drwav / mp3_stream_t        <1 KB
-//   Subtotal per-track          ~56 KB → ~127 KB heap free during FLAC playback
+// Persistent (never freed) SRAM allocations:
+//   drmp3 state                 64 KB  — persistent static via drmp3_sram_malloc
+//   drflac state                64 KB  — persistent static via drflac_sram_malloc
+//   Subtotal persistent         128 KB — allocated on first playback
+//
+// Per-track (freed at track end):
+//   flac_seekcache              ~6 KB  — 512-entry dynamic seek cache
+//   drwav / mp3_stream_t       <1 KB
+//   Subtotal per-track         ~7 KB
 //
 // ── SRAM SAFETY ─────────────────────────────────────────────────
-// All time-critical decode buffers are persistent statics allocated
-// on first track play and NEVER freed. This ensures they land in SRAM
+// Decoder state (drmp3, drflac) is allocated as persistent statics
+// via custom allocators on first play. This ensures they land in SRAM
 // before the heap fragments, and eliminates the PSRAM spill that
-// previously caused MP3 crackling.
-//
-// drflac (~49 KB per-track) verified landing in SRAM with zero underruns.
-// If heap headroom shrinks in future (new persistent allocs), make it a
-// persistent static too — needs a custom allocator since drflac_open
-// allocates it internally.
+// previously caused MP3 crackling and FLAC UI lag.
 //
 // DO NOT change persistent statics to per-track malloc/free — that
-// reintroduces fragmentation and will push pData back into PSRAM.
+// reintroduces fragmentation and will push decoder state into PSRAM.
 // ===================================================================
 
 // Persistent buffer for drmp3's internal pData.
@@ -1132,6 +1131,49 @@ static const drmp3_allocation_callbacks s_drmp3_alloc = {
     .onMalloc  = drmp3_sram_malloc,
     .onRealloc = drmp3_sram_realloc,
     .onFree    = drmp3_sram_free,
+};
+
+// Persistent buffer for drflac's internal decoder state (~49 KB).
+// This is a persistent static allocation (not per-track) to ensure the
+// decoder lands in SRAM before heap fragmentation, preventing PSRAM spills
+// that cause UI lag during playback.
+static uint8_t *s_drflac_pdata = NULL;
+static size_t   s_drflac_pdata_cap = 0;
+#define DRFLAC_PDATA_INIT_SIZE (64 * 1024)  // 64KB initial allocation
+
+static void *drflac_sram_malloc(size_t sz, void *pUserData) {
+    (void)pUserData;
+    if (!s_drflac_pdata) {
+        size_t alloc_sz = (sz > DRFLAC_PDATA_INIT_SIZE) ? sz : DRFLAC_PDATA_INIT_SIZE;
+        s_drflac_pdata = (uint8_t *)malloc(alloc_sz);
+        s_drflac_pdata_cap = s_drflac_pdata ? alloc_sz : 0;
+    }
+    if (sz <= s_drflac_pdata_cap) return s_drflac_pdata;
+    uint8_t *p = (uint8_t *)realloc(s_drflac_pdata, sz);
+    if (p) { s_drflac_pdata = p; s_drflac_pdata_cap = sz; }
+    return p;
+}
+
+static void *drflac_sram_realloc(void *p, size_t sz, void *pUserData) {
+    (void)pUserData;
+    if (p == NULL || p == s_drflac_pdata) {
+        if (sz <= s_drflac_pdata_cap) return s_drflac_pdata;
+        uint8_t *np = (uint8_t *)realloc(s_drflac_pdata, sz);
+        if (np) { s_drflac_pdata = np; s_drflac_pdata_cap = sz; }
+        return np;
+    }
+    return realloc(p, sz);
+}
+
+static void drflac_sram_free(void *p, void *pUserData) {
+    (void)pUserData; (void)p;
+}
+
+static const drflac_allocation_callbacks s_drflac_alloc = {
+    .pUserData = NULL,
+    .onMalloc  = drflac_sram_malloc,
+    .onRealloc = drflac_sram_realloc,
+    .onFree    = drflac_sram_free,
 };
 
 // ===================================================================
@@ -1564,7 +1606,7 @@ static play_result_t mp3_play_single_track(const char *filepath,
         }
 
         flac = drflac_open_with_metadata(flac_fatfs_read, flac_fatfs_seek, flac_fatfs_tell,
-                                         flac_meta_callback, &stream->file, NULL);
+                                         flac_meta_callback, &stream->file, &s_drflac_alloc);
         if (!flac) {
             printf("E drflac_open failed for '%s'\n", filepath);
             result = PLAY_RESULT_NEXT;

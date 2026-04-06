@@ -1616,6 +1616,13 @@ static play_result_t mp3_play_single_track(const char *filepath,
         track_sample_rate = flac->sampleRate;
         track_channels    = (uint8_t)flac->channels;
 
+        // Log FLAC properties to diagnose decode performance
+        printf("FLAC: %u Hz, %u ch, %u-bit, maxBlockSize=%u frames, bitDepth=%u\n",
+               flac->sampleRate, flac->channels,
+               (flac->bitsPerSample ? flac->bitsPerSample : 16),
+               flac->maxBlockSizeInPCMFrames,
+               (flac->bitsPerSample ? flac->bitsPerSample : 16));
+
         // Fallback: use filename if vorbis TITLE tag was absent
         if (g_mp3_tags && g_mp3_tags->title[0] == '\0') {
             const char *base = basename_from_path(filepath);
@@ -1915,7 +1922,15 @@ static play_result_t mp3_play_single_track(const char *filepath,
 
             // Decode into buf_decoding only when we actually need another chunk.
             if (!fill_ready && !paused) {
+                uint64_t decode_start = time_us_64();
                 uint64_t frames = DECODE_FRAMES(buf_decoding);
+                uint64_t decode_us = time_us_64() - decode_start;
+                // Track max decode time for diagnostics (especially FLAC files with high CPU frames)
+                static uint64_t max_decode_us = 0;
+                if (decode_us > max_decode_us) {
+                    max_decode_us = decode_us;
+                    if (is_flac) printf("  [FLAC max decode: %llu us (budget: 70ms)]\n", decode_us);
+                }
 
                 if (frames > 0) {
                     played_frames += frames;

@@ -1936,11 +1936,12 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 uint64_t decode_start = time_us_64();
                 uint64_t frames = DECODE_FRAMES(buf_decoding);
                 uint64_t decode_us = time_us_64() - decode_start;
-                // Track max decode time for diagnostics (especially FLAC files with high CPU frames)
+                // Track max decode time per format for diagnostics
                 static uint64_t max_decode_us = 0;
                 if (decode_us > max_decode_us) {
                     max_decode_us = decode_us;
-                    if (is_flac) printf("  [FLAC max decode: %llu us (budget: 70ms)]\n", decode_us);
+                    const char *fmt = is_flac ? "FLAC" : is_wav ? "WAV" : "MP3";
+                    printf("  [%s max decode: %llu us (budget: 70ms)]\n", fmt, decode_us);
                 }
 
                 if (frames > 0) {

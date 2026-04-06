@@ -162,6 +162,9 @@ static bool          g_shuffle_needs_rebuild = false;
 static int current_index = 0;
 
 static uint32_t g_byte_offset = 0;
+// Manually selected track to play as a "next" (-1 = none)
+// Declared here early so mp3_save_resume can use it
+static int g_manual_track_override = -1;
 
 static bool g_buttons_locked   = false;   // START+SELECT toggle
 static bool select_was_combo   = false;   // tracks if SELECT was used in a combo
@@ -199,11 +202,12 @@ static bool select_was_combo   = false;   // tracks if SELECT was used in a comb
 // ===================================================================
 typedef struct {
     uint32_t magic;           // for corruption check
-    int      track_index;     // playlist index
+    int      track_index;     // playlist index (the true queue position track)
     uint32_t position_ms;     // timestamp inside track
     bool     shuffle;
     uint8_t  repeat_mode;
     uint32_t byte_offset;     // resume point in file
+    int      manual_override; // -1 if none, otherwise manually selected track to play next
 } mp3_resume_t;
 
 #define RESUME_MAGIC 0x504D3352   // "PM3R"
@@ -217,18 +221,19 @@ static void mp3_save_resume(int track_index, uint32_t position_ms, bool hold_sd_
     FIL wf;
     UINT bw;
 
-    g_resume.magic       = RESUME_MAGIC;
-    g_resume.track_index = track_index;
-    g_resume.position_ms = position_ms;
-    g_resume.shuffle     = g_shuffle_enabled;
-    g_resume.repeat_mode = (uint8_t)g_repeat_mode;
-    g_resume.byte_offset = byte_offset;
+    g_resume.magic           = RESUME_MAGIC;
+    g_resume.track_index     = track_index;
+    g_resume.position_ms     = position_ms;
+    g_resume.shuffle         = g_shuffle_enabled;
+    g_resume.repeat_mode     = (uint8_t)g_repeat_mode;
+    g_resume.byte_offset     = byte_offset;
+    g_resume.manual_override = g_manual_track_override;
 
     if (f_open(&wf, RESUME_FILE, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
         f_write(&wf, &g_resume, sizeof(g_resume), &bw);
         f_close(&wf);
-        printf("Resume saved: track=%d pos=%ums\n",
-               track_index, position_ms);
+        printf("Resume saved: track=%d pos=%ums manual_override=%d\n",
+               track_index, position_ms, g_manual_track_override);
     }
 
     if (!hold_sd_busy)
@@ -236,10 +241,10 @@ static void mp3_save_resume(int track_index, uint32_t position_ms, bool hold_sd_
 }
 
 typedef struct {
-    uint32_t magic;    // "SHU2"
-    int32_t  count;    // number of tracks
-    int32_t  pos;      // last g_shuffle_pos (optional)
-    uint32_t seed;     // PRNG seed for this permutation
+    uint32_t magic;       // "SHU2"
+    int32_t  count;       // number of tracks
+    int32_t  pos;         // last g_true_shuffle_pos (the true queue position)
+    uint32_t seed;        // PRNG seed for this permutation
 } mp3_shuffle_hdr_t;
 
 // New magic so old files are ignored and we rebuild cleanly
@@ -733,6 +738,8 @@ static int   g_playlist_cap = 0;
 static int *g_shuffle_order = NULL;
 // Index into g_shuffle_order for the *current* track when shuffle is ON
 static int  g_shuffle_pos   = 0;
+// The "true" position in the shuffle queue (unaffected by manual selections)
+static int  g_true_shuffle_pos = 0;
 
 static int g_selected_file = 0;
 
@@ -804,12 +811,15 @@ static void build_shuffle_order(int current_track_index) {
 
     // Default to start at index 0
     g_shuffle_pos = 0;
+    g_true_shuffle_pos = 0;
+    g_manual_track_override = -1;
 
     // If current track is valid, move shuffle_pos to where that track landed
     if (current_track_index >= 0 && current_track_index < g_track_count) {
         for (int i = 0; i < g_track_count; i++) {
             if (g_shuffle_order[i] == current_track_index) {
                 g_shuffle_pos = i;
+                g_true_shuffle_pos = i;
                 break;
             }
         }
@@ -828,7 +838,7 @@ static void shuffle_save_state(bool hold_sd_busy) {
     mp3_shuffle_hdr_t hdr;
     hdr.magic = SHUFFLE_MAGIC;
     hdr.count = g_track_count;
-    hdr.pos   = g_shuffle_pos;
+    hdr.pos   = g_true_shuffle_pos;  // Save the true queue position, not current
     hdr.seed  = g_shuffle_seed;
 
     if (f_open(&f, SHUFFLE_FILE, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
@@ -878,8 +888,9 @@ static bool shuffle_load_state(void) {
     g_shuffle_seed = hdr.seed;
     build_shuffle_order_from_seed(g_shuffle_seed);
 
-    // Restore last known pos (resume code will re-adjust for current_index anyway)
-    g_shuffle_pos = hdr.pos;
+    // Restore the true queue position (resume code will handle current_index separately)
+    g_true_shuffle_pos = hdr.pos;
+    g_shuffle_pos = hdr.pos;  // Initialize current position to the true position
 
     return true;
 }
@@ -3028,9 +3039,10 @@ void play_mp3_stream(const char *start_filename) {
         g_byte_offset        = g_resume.byte_offset;
         g_shuffle_enabled    = g_resume.shuffle;
         g_repeat_mode        = (repeat_mode_t)g_resume.repeat_mode;
+        g_manual_track_override = g_resume.manual_override;  // Restore manual override if any
 
-        printf("Resuming track %d at %u ms\n",
-            current_index, resume_position_ms);
+        printf("Resuming track %d at %u ms manual_override=%d\n",
+            current_index, resume_position_ms, g_manual_track_override);
 
         if (g_shuffle_enabled) {
             // Try to restore existing shuffle order from disk
@@ -3038,20 +3050,21 @@ void play_mp3_stream(const char *start_filename) {
                 // Fallback: build fresh order anchored on current_index
                 build_shuffle_order(current_index);
             } else {
-                // Make sure current_index exists in the loaded permutation
-                int found = -1;
-                for (int i = 0; i < g_track_count; i++) {
-                    if (g_shuffle_order[i] == current_index) {
-                        found = i;
-                        break;
+                // Shuffle was loaded; now set current position based on whether there's a manual override
+                if (g_manual_track_override >= 0 && g_manual_track_override < g_track_count) {
+                    // A track was manually selected; use that as current_index
+                    // but keep g_true_shuffle_pos intact for after the override
+                    current_index = g_manual_track_override;
+                    for (int i = 0; i < g_track_count; i++) {
+                        if (g_shuffle_order[i] == current_index) {
+                            g_shuffle_pos = i;
+                            break;
+                        }
                     }
-                }
-
-                if (found >= 0) {
-                    g_shuffle_pos = found;
                 } else {
-                    // Playlist changed; rebuild + save
-                    build_shuffle_order(current_index);
+                    // No manual override; use the true shuffle position
+                    current_index = g_shuffle_order[g_true_shuffle_pos];
+                    g_shuffle_pos = g_true_shuffle_pos;
                 }
             }
         }
@@ -3099,10 +3112,16 @@ void play_mp3_stream(const char *start_filename) {
         } else if (r == PLAY_RESULT_PREV) {
             // Previous track (linear or shuffled)
             if (g_shuffle_enabled && g_shuffle_order && g_track_count > 0) {
-                g_shuffle_pos--;
-                if (g_shuffle_pos < 0)
-                    g_shuffle_pos = g_track_count - 1;
-                current_index = g_shuffle_order[g_shuffle_pos];
+                if (g_manual_track_override >= 0) {
+                    // Override playing — return to the pre-override queue track (don't decrement)
+                    g_manual_track_override = -1;
+                } else {
+                    g_true_shuffle_pos--;
+                    if (g_true_shuffle_pos < 0)
+                        g_true_shuffle_pos = g_track_count - 1;
+                }
+                g_shuffle_pos = g_true_shuffle_pos;
+                current_index = g_shuffle_order[g_true_shuffle_pos];
             } else {
                 current_index--;
                 if (current_index < 0)
@@ -3113,10 +3132,12 @@ void play_mp3_stream(const char *start_filename) {
         } else if (r == PLAY_RESULT_NEXT) {
             // Next track (playlist shuffle or linear)
             if (g_shuffle_enabled && g_shuffle_order && g_track_count > 0) {
-                g_shuffle_pos++;
-                if (g_shuffle_pos >= g_track_count)
-                    g_shuffle_pos = 0;
-                current_index = g_shuffle_order[g_shuffle_pos];
+                g_manual_track_override = -1;  // Clear override (noop if already -1)
+                g_true_shuffle_pos++;
+                if (g_true_shuffle_pos >= g_track_count)
+                    g_true_shuffle_pos = 0;
+                g_shuffle_pos = g_true_shuffle_pos;
+                current_index = g_shuffle_order[g_true_shuffle_pos];
             } else {
                 current_index++;
                 if (current_index >= g_track_count)
@@ -3125,7 +3146,22 @@ void play_mp3_stream(const char *start_filename) {
             if (show_now_playing) g_selected_file = current_index;
 
         } else if (r == PLAY_RESULT_SELECTED) {
-            current_index = g_selected_file;
+            // Manual track selection: set as override, keep true shuffle position
+            if (g_shuffle_enabled && g_shuffle_order && g_track_count > 0) {
+                g_manual_track_override = g_selected_file;
+                current_index = g_selected_file;
+                // Find position in shuffle order for display purposes
+                for (int i = 0; i < g_track_count; i++) {
+                    if (g_shuffle_order[i] == g_selected_file) {
+                        g_shuffle_pos = i;
+                        break;
+                    }
+                }
+                printf("Manual selection: track %d as override (true position stays at %d)\n",
+                       g_manual_track_override, g_true_shuffle_pos);
+            } else {
+                current_index = g_selected_file;
+            }
         }
         if (!show_now_playing) {
             update_mp3_bottom_bar_left(mp3_hint_left_obj, g_playlist[current_index]);

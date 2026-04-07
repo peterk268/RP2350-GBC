@@ -38,8 +38,8 @@ static void mp3_get_3d_text(char *out, size_t sz) {
 }
 
 static void mp3_get_audio_mode_text(char *out, size_t sz) {
-    static const char *names[] = { "HP Only", "Spk Only", "Both" };
-    snprintf(out, sz, "%s", names[(int)audio_mode % 3]);
+    static const char *names[] = { "Auto", "SPK+HP" };
+    snprintf(out, sz, "%s", names[(int)audio_mode % 2]);
 }
 
 static void mp3_get_eq_text(char *out, size_t sz) {
@@ -87,11 +87,11 @@ static void mp3_toggle_3d(void) {
 }
 
 static void mp3_audio_mode_inc(void) {
-    audio_mode = (audio_output_mode_t)((audio_mode + 1) % 3);
+    audio_mode = (audio_output_mode_t)((audio_mode + 1) % 2);
     apply_audio_mode();
 }
 static void mp3_audio_mode_dec(void) {
-    audio_mode = (audio_output_mode_t)((audio_mode == 0) ? 2 : audio_mode - 1);
+    audio_mode = (audio_output_mode_t)((audio_mode == 0) ? 1 : audio_mode - 1);
     apply_audio_mode();
 }
 

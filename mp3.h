@@ -108,15 +108,14 @@ static uint32_t  g_mp3_audio_start         = 0;  // byte offset of first audio f
 static uint64_t  g_time_display_base_frames = 0;
 static int64_t   g_time_display_offset_ms   = 0;
 // ===================================================================
-// Audio output mode (headphones / speaker / both)
+// Audio output mode (auto detect / speaker + headphones)
 // ===================================================================
 typedef enum {
-    AUDIO_HP_ONLY = 0,
-    AUDIO_SPK_ONLY,
-    AUDIO_BOTH
+    AUDIO_AUTO = 0,    // HP if present, otherwise Spk
+    AUDIO_SPK_HP       // Both speaker and headphone
 } audio_output_mode_t;
 
-static audio_output_mode_t audio_mode = AUDIO_HP_ONLY;
+static audio_output_mode_t audio_mode = AUDIO_AUTO;
 
 void hp_on()  { dac_i2c_write(1, 0x1F, 0b11010100); }
 void hp_off() { dac_i2c_write(1, 0x1F, 0x00); }
@@ -126,15 +125,18 @@ void spk_off() { dac_i2c_write(1, 0x20, 0x00); }
 
 void apply_audio_mode(void) {
     switch (audio_mode) {
-        case AUDIO_HP_ONLY:
-            hp_on();
-            spk_off();
+        case AUDIO_AUTO:
+            // Auto-detect: enable HP if present, otherwise enable Spk
+            if (headphones_present) {
+                hp_on();
+                spk_off();
+            } else {
+                spk_on();
+                hp_off();
+            }
             break;
-        case AUDIO_SPK_ONLY:
-            spk_on();
-            hp_off();
-            break;
-        case AUDIO_BOTH:
+        case AUDIO_SPK_HP:
+            // Both speaker and headphones enabled
             hp_on();
             spk_on();
             break;

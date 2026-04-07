@@ -247,10 +247,8 @@ void open_mp3_menu(void) {
     // Full-screen opaque overlay — sits on top of existing MP3 LVGL objects.
     lv_obj_t *overlay = lv_obj_create(lv_scr_act());
     lv_obj_set_size(overlay, DISP_HOR_RES, DISP_VER_RES);
-    lv_obj_align(overlay, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_center(overlay);
     lv_obj_set_style_bg_color(overlay, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_bg_opa(overlay, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(overlay, 0, 0);
     lv_obj_set_scrollbar_mode(overlay, LV_SCROLLBAR_MODE_OFF);
 
     // Screen background

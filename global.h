@@ -207,7 +207,8 @@ void switch_to_48khz_clock(bool enable_48khz, uint32_t sample_freq, bool muted) 
 
     // Mute DAC before disrupting I2S (must precede to suppress loss-of-lock click)
     if (!muted) mute_dac();
-    sleep_ms(15);                   // let I2C mute settle
+    sleep_ms(10);                   // let I2C mute settle
+    // this needs 10ms. source: trust me bro
 
     if (enable_48khz) {
         set_sys_clock_khz(SYS_CLOCK_48KHZ_KHZ, true);   // 300 MHz
@@ -218,14 +219,14 @@ void switch_to_48khz_clock(bool enable_48khz, uint32_t sample_freq, bool muted) 
     sleep_ms(1);
     reconfigure_led_pwm_for_underclock(enabled_48khz);
 
-    sleep_ms(10); // let clock stabilize before reconfiguring I2S
+    sleep_ms(5); // let clock stabilize before reconfiguring I2S
 #if ENABLE_PSRAM
     sfe_psram_update_timing();
 #endif
 
     i2s_set_sample_freq(&i2s_config, sample_freq, false); // update PIO dividers for new sys clock
 
-    sleep_ms(15);                   // let DAC PLL re-lock before unmuting
+    sleep_ms(10);                   // let DAC PLL re-lock before unmuting
     if (!muted) unmute_dac();
 }
 #endif

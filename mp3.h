@@ -238,6 +238,121 @@ static void mp3_save_resume(int track_index, uint32_t position_ms, bool hold_sd_
         start_lcd(false, false);
 }
 
+// ===================================================================
+// MP3 audio settings persistence (gain, 3D, EQ, output mode, speaker gain)
+// ===================================================================
+#define MP3_AUDIO_MAGIC 0x4D503353  // 'MP3S'
+
+typedef struct {
+    uint32_t magic;
+    uint8_t  analog_gain;
+    uint8_t  spk_gain;       // SPK_GAIN_6DB..SPK_GAIN_24DB
+    uint8_t  eq_preset;
+    bool     three_d_enabled;
+    uint8_t  audio_output_mode;
+} mp3_audio_settings_t;
+
+static mp3_audio_settings_t g_mp3_saved_settings = {0};  // Track last saved state
+
+static void mp3_init_saved_settings(void) {
+    g_mp3_saved_settings.magic = MP3_AUDIO_MAGIC;
+    g_mp3_saved_settings.analog_gain = g_analog_gain;
+    g_mp3_saved_settings.spk_gain = (uint8_t)g_spk_gain;
+    g_mp3_saved_settings.eq_preset = (uint8_t)g_eq_preset;
+    g_mp3_saved_settings.three_d_enabled = g_3d_enabled;
+    g_mp3_saved_settings.audio_output_mode = (uint8_t)audio_mode;
+}
+
+void save_mp3_audio_settings(bool hold_sd_busy) {
+    mp3_audio_settings_t s = {
+        .magic             = MP3_AUDIO_MAGIC,
+        .analog_gain       = g_analog_gain,
+        .spk_gain          = (uint8_t)g_spk_gain,
+        .eq_preset         = (uint8_t)g_eq_preset,
+        .three_d_enabled   = g_3d_enabled,
+        .audio_output_mode = (uint8_t)audio_mode
+    };
+
+    // Only save if settings changed
+    if (memcmp(&s, &g_mp3_saved_settings, sizeof(s)) == 0) {
+        return;  // No changes, skip save
+    }
+
+    if (!hold_sd_busy) shutdown_lcd(false, false);
+
+    sd_card_t *pSD = sd_get_by_num(0);
+    FRESULT fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+    if (fr != FR_OK) {
+        if (!hold_sd_busy) start_lcd(false, false);
+        return;
+    }
+
+    ensure_settings_dir();
+    FIL fil;
+    if (f_open(&fil, MP3_SETTINGS_PATH, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK) {
+        UINT bw;
+        f_write(&fil, &s, sizeof(s), &bw);
+        f_close(&fil);
+        printf("I Saved mp3 audio settings (%u bytes)\n", bw);
+        g_mp3_saved_settings = s;  // Update saved state
+    }
+
+    f_unmount(pSD->pcName);
+
+    if (!hold_sd_busy) start_lcd(false, false);
+}
+
+bool load_mp3_audio_settings(bool sd_mounted) {
+    sd_card_t *pSD = sd_get_by_num(0);
+    FRESULT fr = FR_OK;
+
+    if (!sd_mounted) {
+        fr = f_mount(&pSD->fatfs, pSD->pcName, 1);
+        if (fr != FR_OK) return false;
+    }
+
+    FIL fil;
+    fr = f_open(&fil, MP3_SETTINGS_PATH, FA_READ);
+    if (fr != FR_OK) {
+        if (!sd_mounted) f_unmount(pSD->pcName);
+        return false;
+    }
+
+    mp3_audio_settings_t s = {0};
+    UINT br;
+    fr = f_read(&fil, &s, sizeof(s), &br);
+    f_close(&fil);
+
+    if (!sd_mounted) {
+        f_unmount(pSD->pcName);
+    }
+
+    if (fr != FR_OK || br != sizeof(s) || s.magic != MP3_AUDIO_MAGIC) {
+        return false;
+    }
+
+    // Load values into globals (do NOT call apply_eq_preset here — I2S may not be running)
+    g_analog_gain = s.analog_gain;
+    g_spk_gain    = (spk_gain_t)s.spk_gain;
+    g_eq_preset   = (eq_preset_t)s.eq_preset;
+    g_3d_enabled  = s.three_d_enabled;
+    audio_mode    = (audio_output_mode_t)s.audio_output_mode;
+
+    // Apply non-EQ settings immediately
+    set_gain(g_analog_gain);
+    set_spk_driver_gain(g_spk_gain);
+    if (g_3d_enabled) set_3d(0x15, 0x00);
+    else              set_3d(0x00, 0x00);
+    apply_audio_mode();
+
+    // Remember this as the loaded state (for change detection on next save)
+    g_mp3_saved_settings = s;
+
+    printf("I Loaded mp3 audio settings: gain=%d spk=%d eq=%d 3d=%d mode=%d\n",
+           g_analog_gain, g_spk_gain, g_eq_preset, g_3d_enabled, audio_mode);
+    return true;
+}
+
 typedef struct {
     uint32_t magic;       // "SHU2"
     int32_t  count;       // number of tracks
@@ -1377,6 +1492,9 @@ void mp3_save_shutdown(int current_track_index, uint64_t played_frames, drmp3_ui
     pwr_led_duty_cycle = temp_lcd_led;
 #endif
     save_system_settings_if_changed(temp_lcd_led, temp_button_led, low_power ? prev_pwr_led_duty_cycle : pwr_led_duty_cycle, manual_palette_selected, wash_out_level, last_filename_raw, auto_load_state, crt_mode, true);
+
+    // Save MP3 audio settings (gain, speaker gain, EQ, 3D, output mode) to SD
+    save_mp3_audio_settings(true);  // hold_sd_busy=true (power-off sequence)
 }
 // ===================================================================
 // Now-playing progress helpers (must precede mp3_play_single_track)
@@ -2113,18 +2231,25 @@ static play_result_t mp3_play_single_track(const char *filepath,
             } else {
                 // SELECT is held: check for combos
 
-                // 1) START + SELECT → open MP3 menu
+                // 1) START + SELECT → unlock buttons if locked, otherwise open MP3 menu
                 if (btn_start && !(prev_btn_start && prev_btn_select)) {
                     select_was_combo = true;
-                    paused = true;
-                    toggle_speakers_if_paused();
-                    open_mp3_menu();
-                    paused = false;
-                    toggle_speakers_if_paused();  // re-evaluates paused after menu exits
-                    update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj,
-                                                         g_repeat_mode,
-                                                         g_shuffle_enabled,
-                                                         paused);
+                    if (g_buttons_locked) {
+                        // Unlock buttons
+                        g_buttons_locked = false;
+                        g_mp3_inactive   = false;
+                    } else {
+                        // Open menu
+                        paused = true;
+                        toggle_speakers_if_paused();
+                        open_mp3_menu();
+                        paused = false;
+                        toggle_speakers_if_paused();  // re-evaluates paused after menu exits
+                        update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj,
+                                                             g_repeat_mode,
+                                                             g_shuffle_enabled,
+                                                             paused);
+                    }
                 }
 
                 // Only allow brightness combos when NOT locked
@@ -3005,6 +3130,13 @@ void play_mp3_stream(const char *start_filename) {
                 g_resume.track_index, g_resume.position_ms);
         }
         f_close(&rf);
+    }
+
+    // Load saved MP3 audio settings (gain, speaker gain, EQ, 3D, output mode)
+    // EQ is applied later after I2S is set up; all others take effect immediately
+    if (!load_mp3_audio_settings(true)) { // SD already mounted
+        // If load failed, initialize baseline with current defaults
+        mp3_init_saved_settings();
     }
 
     // Build playlist from /music, then root fallback

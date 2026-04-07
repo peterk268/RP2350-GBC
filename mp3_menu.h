@@ -4,7 +4,7 @@
 #pragma once
 
 #define MP3_MENU_ACCENT  0x0094E1   // Blue Cola accent (matches ACCENT_COLOR in mp3.h)
-#define MP3_MENU_COUNT   11
+#define MP3_MENU_COUNT   12
 #define MP3_GAIN_MIN     80
 #define MP3_GAIN_MAX     127
 
@@ -109,6 +109,20 @@ static void mp3_spk_gain_dec(void) {
     if (g_spk_gain > SPK_GAIN_6DB) set_spk_driver_gain((spk_gain_t)(g_spk_gain - 1));
 }
 
+static void mp3_reset_audio_defaults(void) {
+    g_analog_gain = ANALOG_GAIN;
+    g_3d_enabled  = true;
+    audio_mode    = AUDIO_AUTO;
+    g_eq_preset   = EQ_FLAT;
+    g_spk_gain    = SPK_GAIN_6DB;
+
+    set_gain(g_analog_gain);
+    set_spk_driver_gain(g_spk_gain);
+    apply_eq_preset(g_eq_preset);
+    set_3d(0x15, 0x00);
+    apply_audio_mode();
+}
+
 // ================================================================
 // Menu items
 // ================================================================
@@ -162,6 +176,10 @@ static bool mp3_menu_items_init(void) {
     mp3_menu_items[i++] = (ig_menu_item_t){
         "Audio Output", IG_ITEM_VALUE, mp3_get_audio_mode_text,
         mp3_audio_mode_inc, mp3_audio_mode_dec, mp3_audio_mode_inc, IG_ACT_NONE
+    };
+    mp3_menu_items[i++] = (ig_menu_item_t){
+        "Reset Audio  ", IG_ITEM_ACTION, NULL,
+        mp3_reset_audio_defaults, NULL, mp3_reset_audio_defaults, IG_ACT_NONE
     };
     mp3_menu_items[i++] = (ig_menu_item_t){
         "Settings ->  ", IG_ITEM_ACTION, NULL,

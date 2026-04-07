@@ -4,7 +4,7 @@
 #pragma once
 
 #define MP3_MENU_ACCENT  0x0094E1   // Blue Cola accent (matches ACCENT_COLOR in mp3.h)
-#define MP3_MENU_COUNT   9
+#define MP3_MENU_COUNT   11
 #define MP3_GAIN_MIN     80
 #define MP3_GAIN_MAX     127
 
@@ -40,6 +40,16 @@ static void mp3_get_3d_text(char *out, size_t sz) {
 static void mp3_get_audio_mode_text(char *out, size_t sz) {
     static const char *names[] = { "HP Only", "Spk Only", "Both" };
     snprintf(out, sz, "%s", names[(int)audio_mode % 3]);
+}
+
+static void mp3_get_eq_text(char *out, size_t sz) {
+    static const char *names[] = { "Flat", "Bass+", "Treble+", "V-Curve", "Vocal" };
+    snprintf(out, sz, "%s", names[g_eq_preset % EQ_PRESET_COUNT]);
+}
+
+static void mp3_get_spk_gain_text(char *out, size_t sz) {
+    static const char *names[] = { "6dB", "12dB", "18dB", "24dB" };
+    snprintf(out, sz, "%s", names[g_spk_gain % 4]);
 }
 
 // ================================================================
@@ -85,6 +95,20 @@ static void mp3_audio_mode_dec(void) {
     apply_audio_mode();
 }
 
+static void mp3_eq_inc(void) {
+    apply_eq_preset((eq_preset_t)((g_eq_preset + 1) % EQ_PRESET_COUNT));
+}
+static void mp3_eq_dec(void) {
+    apply_eq_preset(g_eq_preset == EQ_FLAT ? (eq_preset_t)(EQ_PRESET_COUNT - 1) : (eq_preset_t)(g_eq_preset - 1));
+}
+
+static void mp3_spk_gain_inc(void) {
+    if (g_spk_gain < SPK_GAIN_24DB) set_spk_driver_gain((spk_gain_t)(g_spk_gain + 1));
+}
+static void mp3_spk_gain_dec(void) {
+    if (g_spk_gain > SPK_GAIN_6DB) set_spk_driver_gain((spk_gain_t)(g_spk_gain - 1));
+}
+
 // ================================================================
 // Menu items
 // ================================================================
@@ -120,12 +144,20 @@ static bool mp3_menu_items_init(void) {
         mp3_toggle_lock, mp3_toggle_lock, mp3_toggle_lock, IG_ACT_NONE
     };
     mp3_menu_items[i++] = (ig_menu_item_t){
-        "Analog Gain   ", IG_ITEM_SLIDER, mp3_get_gain_text,
-        mp3_gain_inc, mp3_gain_dec, mp3_gain_inc, IG_ACT_NONE
+        "EQ Preset       ", IG_ITEM_VALUE, mp3_get_eq_text,
+        mp3_eq_inc, mp3_eq_dec, mp3_eq_inc, IG_ACT_NONE
     };
     mp3_menu_items[i++] = (ig_menu_item_t){
         "3D Effect        ", IG_ITEM_TOGGLE, mp3_get_3d_text,
         mp3_toggle_3d, mp3_toggle_3d, mp3_toggle_3d, IG_ACT_NONE
+    };
+    mp3_menu_items[i++] = (ig_menu_item_t){
+        "Analog Gain   ", IG_ITEM_SLIDER, mp3_get_gain_text,
+        mp3_gain_inc, mp3_gain_dec, mp3_gain_inc, IG_ACT_NONE
+    };
+    mp3_menu_items[i++] = (ig_menu_item_t){
+        "Speaker Gain ", IG_ITEM_VALUE, mp3_get_spk_gain_text,
+        mp3_spk_gain_inc, mp3_spk_gain_dec, mp3_spk_gain_inc, IG_ACT_NONE
     };
     mp3_menu_items[i++] = (ig_menu_item_t){
         "Audio Output", IG_ITEM_VALUE, mp3_get_audio_mode_text,

@@ -39,6 +39,79 @@ void dac_i2c_read(uint8_t page, uint8_t reg, uint8_t *data, size_t length);
 uint8_t g_analog_gain = ANALOG_GAIN;  // runtime-editable analog gain ceiling
 bool    g_3d_enabled  = true;          // mirrors set_3d(0x15,0x00) called in setup_dac
 
+// ========== EQ Presets & Speaker Gain ==========
+typedef enum { EQ_FLAT=0, EQ_BASS_PLUS, EQ_TREBLE_PLUS, EQ_V_CURVE, EQ_VOCAL, EQ_PRESET_COUNT } eq_preset_t;
+typedef enum { SPK_GAIN_6DB=0, SPK_GAIN_12DB, SPK_GAIN_18DB, SPK_GAIN_24DB } spk_gain_t;
+
+eq_preset_t g_eq_preset = EQ_FLAT;
+spk_gain_t  g_spk_gain  = SPK_GAIN_6DB;
+
+#define EQ_CHAN_BYTES     20   // 2 stages × 5 coefficients × 2 bytes
+#define DAC_L_EQ_BASE     0x02   // L channel, BQA starts at Page 8 reg 0x02
+#define DAC_R_EQ_BASE     0x42   // R channel, BQA starts at Page 8 reg 0x42
+#define DAC_EQ_PAGE_B     12     // Buffer B mirror (Page 12)
+
+// [preset][fs_idx 0=44100 1=48000][20 bytes: 2 stages × 10 bytes]
+// Format: Q1.15 fixed-point (value = int16/32767, range [-1.0, +1.0])
+// Per stage: N0H,N0L, N1H,N1L, N2H,N2L, D1H,D1L, D2H,D2L (MSB first)
+// Chip implicit scaling: N1 = b1/2, D1 = -a1/2, D2 = -a2  (chip multiplies back)
+// All-pass stage: N0=0x7FFF, rest=0x0000
+// Boost filters overflow Q1.15 (b0n > 1.0), so all presets use CUT-based designs:
+//   Bass+   = high-shelf CUT -5dB @ 3.5kHz Q=0.707  → treble attenuated, bass sounds louder
+//   Treble+ = low-shelf  CUT -5dB @ 400Hz  Q=0.707  → bass attenuated, treble sounds louder
+//   V-Curve = peaking    CUT -4dB @ 1kHz   Q=2.0    → mid dip, bass+treble stand out
+//   Vocal   = low-shelf  CUT -4dB @ 250Hz  Q=0.707  → cuts mud, improves clarity
+#define AP 0x7F,0xFF, 0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00  // all-pass stage
+static const uint8_t eq_coeffs[EQ_PRESET_COUNT][2][EQ_CHAN_BYTES] = {
+  // EQ_FLAT
+  {{ AP, AP }, { AP, AP }},
+  // EQ_BASS_PLUS: high-shelf CUT -5dB @ 3.5kHz Q=0.707  (stage B = all-pass)
+  {{ { 0x4F,0x62, 0xCF,0xC1, 0x23,0x66, 0x59,0x69, 0xBA,0xD3, AP },
+     { 0x4E,0xE9, 0xCD,0xCA, 0x25,0x6C, 0x5C,0x64, 0xB7,0x56, AP } }},
+  // EQ_TREBLE_PLUS: low-shelf CUT -5dB @ 400Hz Q=0.707  (stage B = all-pass)
+  {{ { 0x7E,0x3F, 0x85,0xDD, 0x76,0x03, 0x7A,0x12, 0x8B,0x5B, AP },
+     { 0x7E,0x5E, 0x85,0x63, 0x76,0xCD, 0x7A,0x8B, 0x8A,0x76, AP } }},
+  // EQ_V_CURVE: peaking CUT -4dB @ 1kHz Q=2.0  (stage B = all-pass)
+  {{ { 0x7E,0x00, 0x86,0xBC, 0x77,0x12, 0x79,0x44, 0x8A,0xF9, AP },
+     { 0x7E,0x29, 0x86,0x18, 0x77,0xC5, 0x79,0xE8, 0x8A,0x1D, AP } }},
+  // EQ_VOCAL: low-shelf CUT -4dB @ 250Hz Q=0.707  (stage B = all-pass)
+  {{ { 0x7F,0x45, 0x83,0x98, 0x79,0xB1, 0x7C,0x69, 0x87,0x0D, AP },
+     { 0x7F,0x55, 0x83,0x50, 0x7A,0x31, 0x7C,0xB2, 0x86,0x81, AP } }},
+};
+#undef AP
+
+static inline int eq_fs_idx(void) { return enabled_48khz ? 1 : 0; }
+
+void apply_eq_preset(eq_preset_t preset) {
+    if (preset >= EQ_PRESET_COUNT) preset = EQ_FLAT;
+    g_eq_preset = preset;
+    const uint8_t *c = eq_coeffs[preset][eq_fs_idx()];
+
+    // Dual-buffer write: Buffer A (Page 8) → swap → Buffer B (Page 12)
+    // Adaptive mode requires I2S active, so this is only safe during playback from mp3.h
+    dac_i2c_write(8, 0x01, 0x04);  // enable adaptive mode (CRAM_CTRL Page 8 reg 0x01 bit 2)
+
+    // Write Buffer A (Page 8): coefficients for L and R channels
+    for (int b = 0; b < EQ_CHAN_BYTES; b++) dac_i2c_write(8, DAC_L_EQ_BASE + b, c[b]);
+    for (int b = 0; b < EQ_CHAN_BYTES; b++) dac_i2c_write(8, DAC_R_EQ_BASE + b, c[b]);
+
+    // Trigger buffer swap (CRAM_CTRL bit 0)
+    dac_i2c_write(8, 0x01, 0x01);
+    sleep_ms(2);  // allow swap to complete
+
+    // Write Buffer B (Page 12): same coefficients for consistency
+    for (int b = 0; b < EQ_CHAN_BYTES; b++) dac_i2c_write(DAC_EQ_PAGE_B, DAC_L_EQ_BASE + b, c[b]);
+    for (int b = 0; b < EQ_CHAN_BYTES; b++) dac_i2c_write(DAC_EQ_PAGE_B, DAC_R_EQ_BASE + b, c[b]);
+}
+
+void set_spk_driver_gain(spk_gain_t gain) {
+    if (gain > SPK_GAIN_24DB) gain = SPK_GAIN_24DB;
+    g_spk_gain = gain;
+    uint8_t v = 0x04 | ((uint8_t)gain << 3);  // bit2=unmute, bits[4:3]=gain
+    dac_i2c_write(1, 0x2A, v);
+    dac_i2c_write(1, 0x2B, v);
+}
+
 void detect_headphones() {
     uint8_t data;
     dac_i2c_read(0, 0x43, &data, 1);
@@ -62,8 +135,7 @@ void unmute_drivers() {
     dac_i2c_write(1, 0x28, 0x06); // HP_L Driver unmuted.. no 3d effect because it sounds bad
     dac_i2c_write(1, 0x29, 0x06); // HP_R Driver unmuted
     // bits 3-4 control gain. 00 = 6dB, 01 = 12dB, 10 = 18dB, 11 = 24dB
-    dac_i2c_write(1, 0x2A, 0b00000100); // SP_L Driver unmuted with 6dB
-    dac_i2c_write(1, 0x2B, 0b00000100); // SP_R Driver unmuted with 6dB
+    set_spk_driver_gain(g_spk_gain); // SP_L and SP_R with configurable gain
 }
 
 void power_on_drivers() {
@@ -308,7 +380,6 @@ void setup_dac() {
     dac_i2c_write(0, 0x1b, 0b00000000); // Interface Control: I2S, 16-bit
 
     dac_i2c_write(0, 0x3c, 0x0b); // DAC Processing Block Selection 25
-    dac_i2c_write(8, 0x01, 0x04); // DAC coefficient 
 
     dac_i2c_write(0, 0x74, 0x00); // VOL/MICDETECT SAR ADC
     dac_i2c_write(0, 0x43, 0x80); // Headset detection enabled
@@ -337,6 +408,8 @@ void setup_dac() {
 
     set_gain(ANALOG_GAIN); // max analog gain - volume ceiling controlled via DAC digital volume
     unmute_dac(); // Unmute DAC
+
+    // apply_eq_preset(g_eq_preset);  // skip init, only call from mp3.h
 }
 
 

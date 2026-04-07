@@ -18,6 +18,10 @@ void set_volume(uint8_t l_volume, uint8_t r_volume);
 void dac_i2c_write(uint8_t page, uint8_t reg, uint8_t data);
 void dac_i2c_read(uint8_t page, uint8_t reg, uint8_t *data, size_t length);
 
+// Audio output mode enum and extern (defined here, instantiated in mp3.h)
+typedef enum { AUDIO_AUTO = 0, AUDIO_SPK_HP } audio_output_mode_t;
+extern audio_output_mode_t audio_mode;
+
 #define ADC_MIN_CLIP   4     // below this → treat as 0
 #define ADC_MAX_CLIP   4050   // above this → treat as full scale
 #define DAC_MAX_VOL_SPK 92  // 127 is max, 92 is unity 0dB
@@ -206,13 +210,15 @@ void read_volume() {
         is_muted = false;
     }
 
-    // if it ain't broke don't fix it... that's why I'm not tryna touch my mute and headphone logic
-    // gains would also be very minimal.
-    if (headphones_present && !prev_headphones_present) {
-        dac_i2c_write(1, 0x20, 0x00); // Class-D Amplifier powered off
-    } else if (!headphones_present && prev_headphones_present && !is_muted) {
-        // we don't want to turn on the amp if we're muted.. we'll let the unmute logic handle that
-        dac_i2c_write(1, 0x20, 0b11000110); // Class-D Amplifier powered on
+    // Auto-detect mode: turn off speaker when HP plugged in, turn on when unplugged
+    // SPK+HP mode: respect user's choice to keep both on
+    if (audio_mode == AUDIO_AUTO) {
+        if (headphones_present && !prev_headphones_present) {
+            dac_i2c_write(1, 0x20, 0x00); // Class-D Amplifier powered off
+        } else if (!headphones_present && prev_headphones_present && !is_muted) {
+            // we don't want to turn on the amp if we're muted.. we'll let the unmute logic handle that
+            dac_i2c_write(1, 0x20, 0b11000110); // Class-D Amplifier powered on
+        }
     }
     // Update the previous state for next check
     prev_headphones_present = headphones_present;

@@ -110,12 +110,8 @@ static int64_t   g_time_display_offset_ms   = 0;
 // ===================================================================
 // Audio output mode (auto detect / speaker + headphones)
 // ===================================================================
-typedef enum {
-    AUDIO_AUTO = 0,    // HP if present, otherwise Spk
-    AUDIO_SPK_HP       // Both speaker and headphone
-} audio_output_mode_t;
-
-static audio_output_mode_t audio_mode = AUDIO_AUTO;
+// audio_output_mode_t enum defined in audio.h (included before mp3.h in main.c)
+audio_output_mode_t audio_mode = AUDIO_AUTO;
 
 void hp_on()  { dac_i2c_write(1, 0x1F, 0b11010100); }
 void hp_off() { dac_i2c_write(1, 0x1F, 0x00); }

@@ -120,20 +120,19 @@ void spk_on()  { dac_i2c_write(1, 0x20, 0b11000110); }
 void spk_off() { dac_i2c_write(1, 0x20, 0x00); }
 
 void apply_audio_mode(void) {
+    // headphone amps should always be on due to their low quescient power and long start up time, 
+    // so we don't touch them here and just let setup_dac() turn them on from the main.
     switch (audio_mode) {
         case AUDIO_AUTO:
             // Auto-detect: enable HP if present, otherwise enable Spk
             if (headphones_present) {
-                hp_on();
                 spk_off();
             } else {
                 spk_on();
-                hp_off();
             }
             break;
         case AUDIO_SPK_HP:
             // Both speaker and headphones enabled
-            hp_on();
             spk_on();
             break;
     }
@@ -2595,11 +2594,6 @@ static play_result_t mp3_play_single_track(const char *filepath,
                 g_shuffle_needs_rebuild = true;   // handled in playlist-level loop
                 printf("Shuffle: %s\n", g_shuffle_enabled ? "ON" : "OFF");
                 update_mp3_bottom_bar_shuffle_repeat(mp3_hint_right_obj, g_repeat_mode, g_shuffle_enabled, paused);
-                // FUTURE GUI:
-                // if (audio_mode == AUDIO_HP_ONLY)      audio_mode = AUDIO_SPK_ONLY;
-                // else if (audio_mode == AUDIO_SPK_ONLY) audio_mode = AUDIO_BOTH;
-                // else                                   audio_mode = AUDIO_HP_ONLY;
-                // apply_audio_mode();
             }
 
             // -----------------------------------------------------------------

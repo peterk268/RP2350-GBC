@@ -48,6 +48,8 @@
 // just dims the same frame repeatedly and looks worse than hard BFI.
 #define ENABLE_CRT_PHOSPHOR 0
 
+#define ENABLE_EQ 0
+
 #define SKIP_FRAMES 0
 // Its not stable unfortunately.. processor ain't fast enough.. yet. I might overclock more
 #define ENABLE_120FPS_FASTFORWARD 0
@@ -148,6 +150,7 @@ void hardfault_handler_c(uint32_t *sp) {
 #define SYSTEM_FILE_PATH   SETTINGS_DIR "/system.bin"
 #define ROM_FILE_PATH      SETTINGS_DIR "/rom.bin"
 #define ALARM_FILE_PATH    SETTINGS_DIR "/alarm.bin"
+#define MP3_SETTINGS_PATH  SETTINGS_DIR "/mp3.bin"
 #define FILENAME_MAX_LEN   256
 #define PATH_MAX_LEN 512
 

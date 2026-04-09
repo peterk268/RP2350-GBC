@@ -50,10 +50,12 @@ typedef enum { SPK_GAIN_6DB=0, SPK_GAIN_12DB, SPK_GAIN_18DB, SPK_GAIN_24DB } spk
 eq_preset_t g_eq_preset = EQ_FLAT;
 spk_gain_t  g_spk_gain  = SPK_GAIN_6DB;
 
-#define EQ_CHAN_BYTES     20   // 2 stages × 5 coefficients × 2 bytes
 #define DAC_L_EQ_BASE     0x02   // L channel, BQA starts at Page 8 reg 0x02
 #define DAC_R_EQ_BASE     0x42   // R channel, BQA starts at Page 8 reg 0x42
-#define DAC_EQ_PAGE_B     12     // Buffer B mirror (Page 12)
+// PRB 13 uses 2 biquads (BQA+BQB). 3D regs are at 0x40-0x41 on Page 8 — don't overwrite them.
+
+#if ENABLE_EQ
+#define EQ_CHAN_BYTES     20   // 2 stages × 5 coefficients × 2 bytes (BQA+BQB for EQ presets)
 
 // [preset][fs_idx 0=44100 1=48000][20 bytes: 2 stages × 10 bytes]
 // Format: Q1.15 fixed-point (value = int16/32767, range [-1.0, +1.0])
@@ -61,26 +63,26 @@ spk_gain_t  g_spk_gain  = SPK_GAIN_6DB;
 // Chip implicit scaling: N1 = b1/2, D1 = -a1/2, D2 = -a2  (chip multiplies back)
 // All-pass stage: N0=0x7FFF, rest=0x0000
 // Boost filters overflow Q1.15 (b0n > 1.0), so all presets use CUT-based designs:
-//   Bass+   = high-shelf CUT -5dB @ 3.5kHz Q=0.707  → treble attenuated, bass sounds louder
-//   Treble+ = low-shelf  CUT -5dB @ 400Hz  Q=0.707  → bass attenuated, treble sounds louder
-//   V-Curve = peaking    CUT -4dB @ 1kHz   Q=2.0    → mid dip, bass+treble stand out
-//   Vocal   = low-shelf  CUT -4dB @ 250Hz  Q=0.707  → cuts mud, improves clarity
+//   Bass+   = high-shelf CUT -10dB @ 2kHz   Q=0.707  → strong treble cut, bass stands out
+//   Treble+ = low-shelf  CUT -10dB @ 800Hz  Q=0.707  → strong bass cut, treble stands out
+//   V-Curve = peaking CUT -8dB @ 800Hz Q=1 + peaking CUT -8dB @ 3kHz Q=1  → wide mid scoop
+//   Vocal   = low-shelf CUT -8dB @ 300Hz + high-shelf CUT -6dB @ 5kHz  → vocal range prominent
 #define AP 0x7F,0xFF, 0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00  // all-pass stage
 static const uint8_t eq_coeffs[EQ_PRESET_COUNT][2][EQ_CHAN_BYTES] = {
   // EQ_FLAT
   {{ AP, AP }, { AP, AP }},
-  // EQ_BASS_PLUS: high-shelf CUT -5dB @ 3.5kHz Q=0.707  (stage B = all-pass)
-  {{ { 0x4F,0x62, 0xCF,0xC1, 0x23,0x66, 0x59,0x69, 0xBA,0xD3, AP },
-     { 0x4E,0xE9, 0xCD,0xCA, 0x25,0x6C, 0x5C,0x64, 0xB7,0x56, AP } }},
-  // EQ_TREBLE_PLUS: low-shelf CUT -5dB @ 400Hz Q=0.707  (stage B = all-pass)
-  {{ { 0x7E,0x3F, 0x85,0xDD, 0x76,0x03, 0x7A,0x12, 0x8B,0x5B, AP },
-     { 0x7E,0x5E, 0x85,0x63, 0x76,0xCD, 0x7A,0x8B, 0x8A,0x76, AP } }},
-  // EQ_V_CURVE: peaking CUT -4dB @ 1kHz Q=2.0  (stage B = all-pass)
-  {{ { 0x7E,0x00, 0x86,0xBC, 0x77,0x12, 0x79,0x44, 0x8A,0xF9, AP },
-     { 0x7E,0x29, 0x86,0x18, 0x77,0xC5, 0x79,0xE8, 0x8A,0x1D, AP } }},
-  // EQ_VOCAL: low-shelf CUT -4dB @ 250Hz Q=0.707  (stage B = all-pass)
-  {{ { 0x7F,0x45, 0x83,0x98, 0x79,0xB1, 0x7C,0x69, 0x87,0x0D, AP },
-     { 0x7F,0x55, 0x83,0x50, 0x7A,0x31, 0x7C,0xB2, 0x86,0x81, AP } }},
+  // EQ_BASS_PLUS: high-shelf CUT -10dB @ 2kHz Q=0.707  (BQB = all-pass)
+  { { 0x2D,0x77, 0xDE,0x7E, 0x1A,0xA5, 0x6C,0xB8, 0xA1,0x79, AP },
+    { 0x2D,0x0C, 0xDD,0xDE, 0x1B,0x8F, 0x6E,0x47, 0x9F,0x1A, AP } },
+  // EQ_TREBLE_PLUS: low-shelf CUT -10dB @ 800Hz Q=0.707  (BQB = all-pass)
+  { { 0x7A,0x21, 0x8D,0x3F, 0x6C,0x38, 0x72,0x4C, 0x98,0xBE, AP },
+    { 0x7A,0x98, 0x8C,0x36, 0x6D,0xB4, 0x73,0x67, 0x96,0xED, AP } },
+  // EQ_V_CURVE: BQA = peaking CUT -8dB @ 800Hz Q=1.0, BQB = peaking CUT -8dB @ 3kHz Q=1.0
+  { { 0x79,0xA1, 0x8B,0x58, 0x71,0x34, 0x74,0xA8, 0x95,0x2A, 0x6C,0xF3, 0xA8,0x52, 0x53,0xC0, 0x57,0xAE, 0xBF,0x4D },
+    { 0x7A,0x1B, 0x8A,0x70, 0x72,0x4F, 0x75,0x90, 0x93,0x95, 0x6E,0x13, 0xA5,0x43, 0x56,0x5C, 0x5A,0xBD, 0xBB,0x92 } },
+  // EQ_VOCAL: BQA = low-shelf CUT -8dB @ 300Hz, BQB = high-shelf CUT -6dB @ 5kHz
+  { { 0x7E,0x37, 0x84,0xD1, 0x78,0x4C, 0x7B,0x22, 0x89,0x61, 0x4B,0xD2, 0xDE,0x81, 0x17,0xBC, 0x4A,0xEF, 0xC9,0x91 },
+    { 0x7E,0x5C, 0x84,0x6D, 0x78,0xE8, 0x7B,0x87, 0x88,0xA5, 0x4A,0xDB, 0xDB,0xD8, 0x19,0x92, 0x4F,0x22, 0xC5,0x9E } },
 };
 #undef AP
 
@@ -91,22 +93,13 @@ void apply_eq_preset(eq_preset_t preset) {
     g_eq_preset = preset;
     const uint8_t *c = eq_coeffs[preset][eq_fs_idx()];
 
-    // Dual-buffer write: Buffer A (Page 8) → swap → Buffer B (Page 12)
-    // Adaptive mode requires I2S active, so this is only safe during playback from mp3.h
-    dac_i2c_write(8, 0x01, 0x04);  // enable adaptive mode (CRAM_CTRL Page 8 reg 0x01 bit 2)
-
-    // Write Buffer A (Page 8): coefficients for L and R channels
-    for (int b = 0; b < EQ_CHAN_BYTES; b++) dac_i2c_write(8, DAC_L_EQ_BASE + b, c[b]);
-    for (int b = 0; b < EQ_CHAN_BYTES; b++) dac_i2c_write(8, DAC_R_EQ_BASE + b, c[b]);
-
-    // Trigger buffer swap (CRAM_CTRL bit 0)
-    dac_i2c_write(8, 0x01, 0x01);
-    sleep_ms(2);  // allow swap to complete
-
-    // Write Buffer B (Page 12): same coefficients for consistency
-    for (int b = 0; b < EQ_CHAN_BYTES; b++) dac_i2c_write(DAC_EQ_PAGE_B, DAC_L_EQ_BASE + b, c[b]);
-    for (int b = 0; b < EQ_CHAN_BYTES; b++) dac_i2c_write(DAC_EQ_PAGE_B, DAC_R_EQ_BASE + b, c[b]);
+    // PRB 11 has 1 biquad (BQA) — write only first 10 bytes per channel
+    for (int b = 0; b < 10; b++) dac_i2c_write(8, DAC_L_EQ_BASE + b, c[b]);
+    for (int b = 0; b < 10; b++) dac_i2c_write(8, DAC_R_EQ_BASE + b, c[b]);
 }
+#else
+static inline void apply_eq_preset(eq_preset_t preset) { g_eq_preset = preset; }
+#endif
 
 void set_spk_driver_gain(spk_gain_t gain) {
     if (gain > SPK_GAIN_24DB) gain = SPK_GAIN_24DB;
@@ -385,12 +378,21 @@ void setup_dac() {
 
     dac_i2c_write(0, 0x1b, 0b00000000); // Interface Control: I2S, 16-bit
 
-    dac_i2c_write(0, 0x3c, 0x0b); // DAC Processing Block Selection 25
+    dac_i2c_write(0, 0x3c, 0x0b); // DAC Processing Block Selection: PRB 11 (1 biquad + IIR, interp filter B)
 
     dac_i2c_write(0, 0x74, 0x00); // VOL/MICDETECT SAR ADC
     dac_i2c_write(0, 0x43, 0x80); // Headset detection enabled
 
     set_3d(0x15, 0x00); // Enable 3D sound with slight depth
+
+#if ENABLE_EQ
+    // Initialize BQA with all-pass before DAC powers on (PRB 11 uses 1 biquad).
+    static const uint8_t flat_bqa[10] = {
+        0x7F,0xFF, 0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
+    };
+    for (int b = 0; b < 10; b++) dac_i2c_write(8, DAC_L_EQ_BASE + b, flat_bqa[b]);
+    for (int b = 0; b < 10; b++) dac_i2c_write(8, DAC_R_EQ_BASE + b, flat_bqa[b]);
+#endif
 
     // --- Power up phase ---
     // Power on DAC and mute
@@ -407,7 +409,7 @@ void setup_dac() {
     dac_i2c_write(1, 0x20, 0b11000110); // Class-D Amplifier powered on
 
     // Wait for drivers to stabilize and ramp up
-    sleep_ms(100); 
+    sleep_ms(100);
 
     // Unmute drivers and dacs after power up ramp
     unmute_drivers();
@@ -435,27 +437,19 @@ void check_dac() {
     printf("\nDAC Status Register: 0x%02X (binary: 0b\n", data);
 }
 
-bool dac_advanced_block = true; // true = 25, false = 7
+bool dac_advanced_block = true; // true = PRB 11 (1 biquad + IIR), false = PRB 1 (no processing)
 static inline void dac_select_processing_block(uint8_t block)
 {
-    // Optional: stop audible artifacts
     bool was_muted = is_muted;
     if (!was_muted) mute_dac();
-
-    // Optional: small settle so mute takes effect
     sleep_us(500);
-
-    // Select processing block
     dac_i2c_write(0, 0x3C, block);
-
-    // Give the DSP time to latch (a few hundred us is usually enough)
     sleep_us(500);
-
     if (!was_muted) unmute_dac();
 }
 
 static inline void alternate_eq(void)
 {
     dac_advanced_block = !dac_advanced_block;
-    dac_select_processing_block(dac_advanced_block ? 0x0B : 0x07);
+    dac_select_processing_block(dac_advanced_block ? 0x0B : 0x01);
 }

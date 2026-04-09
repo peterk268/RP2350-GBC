@@ -4,7 +4,11 @@
 #pragma once
 
 #define MP3_MENU_ACCENT  0x0094E1   // Blue Cola accent (matches ACCENT_COLOR in mp3.h)
+#if ENABLE_EQ
 #define MP3_MENU_COUNT   12
+#else
+#define MP3_MENU_COUNT   11
+#endif
 #define MP3_GAIN_MIN     80
 #define MP3_GAIN_MAX     127
 
@@ -42,10 +46,12 @@ static void mp3_get_audio_mode_text(char *out, size_t sz) {
     snprintf(out, sz, "%s", names[(int)audio_mode % 2]);
 }
 
+#if ENABLE_EQ
 static void mp3_get_eq_text(char *out, size_t sz) {
     static const char *names[] = { "Flat", "Bass+", "Treble+", "V-Curve", "Vocal" };
     snprintf(out, sz, "%s", names[g_eq_preset % EQ_PRESET_COUNT]);
 }
+#endif
 
 static void mp3_get_spk_gain_text(char *out, size_t sz) {
     static const char *names[] = { "6dB", "12dB", "18dB", "24dB" };
@@ -95,12 +101,14 @@ static void mp3_audio_mode_dec(void) {
     apply_audio_mode();
 }
 
+#if ENABLE_EQ
 static void mp3_eq_inc(void) {
     apply_eq_preset((eq_preset_t)((g_eq_preset + 1) % EQ_PRESET_COUNT));
 }
 static void mp3_eq_dec(void) {
     apply_eq_preset(g_eq_preset == EQ_FLAT ? (eq_preset_t)(EQ_PRESET_COUNT - 1) : (eq_preset_t)(g_eq_preset - 1));
 }
+#endif
 
 static void mp3_spk_gain_inc(void) {
     if (g_spk_gain < SPK_GAIN_24DB) set_spk_driver_gain((spk_gain_t)(g_spk_gain + 1));
@@ -118,7 +126,9 @@ static void mp3_reset_audio_defaults(void) {
 
     set_gain(g_analog_gain);
     set_spk_driver_gain(g_spk_gain);
+#if ENABLE_EQ
     apply_eq_preset(g_eq_preset);
+#endif
     set_3d(0x15, 0x00);
     apply_audio_mode();
 }
@@ -157,10 +167,12 @@ static bool mp3_menu_items_init(void) {
         "Button Lock   ", IG_ITEM_TOGGLE, mp3_get_lock_text,
         mp3_toggle_lock, mp3_toggle_lock, mp3_toggle_lock, IG_ACT_NONE
     };
+#if ENABLE_EQ
     mp3_menu_items[i++] = (ig_menu_item_t){
         "EQ Preset       ", IG_ITEM_VALUE, mp3_get_eq_text,
         mp3_eq_inc, mp3_eq_dec, mp3_eq_inc, IG_ACT_NONE
     };
+#endif
     mp3_menu_items[i++] = (ig_menu_item_t){
         "3D Effect        ", IG_ITEM_TOGGLE, mp3_get_3d_text,
         mp3_toggle_3d, mp3_toggle_3d, mp3_toggle_3d, IG_ACT_NONE

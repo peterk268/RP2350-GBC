@@ -48,7 +48,17 @@
 // just dims the same frame repeatedly and looks worse than hard BFI.
 #define ENABLE_CRT_PHOSPHOR 0
 
-#define ENABLE_EQ 0
+// Set to 1 for vanilla audio: PRB 11, 256×Fs MCLK, no DSP features.
+// Set to 0 for full DSP: PRB 25, 384×Fs MCLK, DRC, EQ, 3D.
+#define VANILLA_AUDIO 0
+
+#if VANILLA_AUDIO
+#define ENABLE_EQ  0
+#define ENABLE_DRC 0
+#else
+#define ENABLE_EQ  1
+#define ENABLE_DRC 1
+#endif
 
 #define SKIP_FRAMES 0
 // Its not stable unfortunately.. processor ain't fast enough.. yet. I might overclock more

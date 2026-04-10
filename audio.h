@@ -4,7 +4,11 @@
 // MCLK use is cleaner and more robust, need additional pin tho but that's fine.
 // Without MCLK, headphone detect doesn't work for some reason.
 #define USE_MCLK 1
-#define DAC_MCLK_FS_RATIO 256 // target MCLK = 256 * Fs
+#if ENABLE_DRC
+#define DAC_MCLK_FS_RATIO 384 // 384×Fs MCLK: MDAC=3, DOSR=128 → 384 DSP cycles/sample (RC=12 for PRB 25)
+#else
+#define DAC_MCLK_FS_RATIO 256 // 256×Fs MCLK: MDAC=2, DOSR=128 → 256 DSP cycles/sample
+#endif
 #define DAC_BCLK_FS_RATIO 32  // valid values: 32 or 64
 
 uint16_t current_volume_level = 0;
@@ -114,6 +118,27 @@ void detect_headphones() {
     dac_i2c_read(0, 0x43, &data, 1);
     headphones_present = (data & 0x60) != 0;
 }
+
+#if ENABLE_DRC
+// DRC Control Registers (Page 0):
+//   0x44 = DRC Ctrl 1: D6=enable, D5-D2=threshold (-3dB steps), D1-D0=hysteresis
+//   0x45 = DRC Ctrl 2: D7-D4=attack rate, D3-D0=decay rate
+//   0x46 = DRC Ctrl 3: D7-D5=max gain, noise gate bits
+// Speaker limiter: -12dB threshold, 1dB hysteresis, fast attack, moderate decay
+#define DRC_CTRL1_ON   0x4D   // enable | threshold -12dBFS (0011) | hysteresis 1dB (01)
+#define DRC_CTRL1_OFF  0x0D   // disable | same settings preserved
+#define DRC_CTRL2      0x82   // attack ~2ms (1000) | decay ~200ms (0010)
+#define DRC_CTRL3      0x00   // max gain 0dB, noise gate disabled
+
+void setup_drc(void) {
+    dac_i2c_write(0, 0x44, DRC_CTRL1_ON);
+    dac_i2c_write(0, 0x45, DRC_CTRL2);
+    dac_i2c_write(0, 0x46, DRC_CTRL3);
+}
+void enable_drc(void)  { dac_i2c_write(0, 0x44, DRC_CTRL1_ON); }
+void disable_drc(void) { dac_i2c_write(0, 0x44, DRC_CTRL1_OFF); }
+#endif
+
 void mute_dac() {
     dac_i2c_write(0, 0x40, 0x0C); // Mute DAC
 }
@@ -208,9 +233,15 @@ void read_volume() {
     if (audio_mode == AUDIO_AUTO) {
         if (headphones_present && !prev_headphones_present) {
             dac_i2c_write(1, 0x20, 0x00); // Class-D Amplifier powered off
+#if ENABLE_DRC
+            disable_drc(); // HP doesn't need compression — preserve full dynamic range
+#endif
         } else if (!headphones_present && prev_headphones_present && !is_muted) {
             // we don't want to turn on the amp if we're muted.. we'll let the unmute logic handle that
             dac_i2c_write(1, 0x20, 0b11000110); // Class-D Amplifier powered on
+#if ENABLE_DRC
+            enable_drc(); // Re-enable limiter for speakers
+#endif
         }
     }
     // Update the previous state for next check
@@ -367,6 +398,9 @@ void setup_dac() {
 #if (DAC_MCLK_FS_RATIO == 256)
     dac_i2c_write(0, 0x0b, 0x81); // NDAC = 1 (powered)
     dac_i2c_write(0, 0x0c, 0x82); // MDAC = 2 (powered)
+#elif (DAC_MCLK_FS_RATIO == 384)
+    dac_i2c_write(0, 0x0b, 0x81); // NDAC = 1 (powered)
+    dac_i2c_write(0, 0x0c, 0x83); // MDAC = 3 (powered)
 #else
 #error "Unsupported DAC_MCLK_FS_RATIO. Add matching NDAC/MDAC/DOSR settings."
 #endif
@@ -378,15 +412,31 @@ void setup_dac() {
 
     dac_i2c_write(0, 0x1b, 0b00000000); // Interface Control: I2S, 16-bit
 
-    dac_i2c_write(0, 0x3c, 0x0b); // DAC Processing Block Selection: PRB 11 (1 biquad + IIR, interp filter B)
+#if ENABLE_DRC
+    dac_i2c_write(0, 0x3c, 0x19); // PRB 25: Filter A, Stereo, 5 biquads, IIR, DRC, 3D, Beep
+#else
+    dac_i2c_write(0, 0x3c, 0x0b); // PRB 11: Filter B, Stereo, 6 biquads, IIR
+#endif
 
     dac_i2c_write(0, 0x74, 0x00); // VOL/MICDETECT SAR ADC
     dac_i2c_write(0, 0x43, 0x80); // Headset detection enabled
 
     set_3d(0x15, 0x00); // Enable 3D sound with slight depth
 
-#if ENABLE_EQ
-    // Initialize BQA with all-pass before DAC powers on (PRB 11 uses 1 biquad).
+#if ENABLE_DRC
+    // PRB 25: init BQA-BQE (5 biquads × 10 bytes = 50 bytes) as all-pass before DAC powers on.
+    // L: regs 2-51, R: regs 66-115. Well clear of 3D regs at 0x40-0x41.
+    static const uint8_t flat_5bq[50] = {
+        0x7F,0xFF, 0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,  // BQA
+        0x7F,0xFF, 0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,  // BQB
+        0x7F,0xFF, 0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,  // BQC
+        0x7F,0xFF, 0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,  // BQD
+        0x7F,0xFF, 0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,  // BQE
+    };
+    for (int b = 0; b < 50; b++) dac_i2c_write(8, DAC_L_EQ_BASE + b, flat_5bq[b]);
+    for (int b = 0; b < 50; b++) dac_i2c_write(8, DAC_R_EQ_BASE + b, flat_5bq[b]);
+#elif ENABLE_EQ
+    // PRB 11: init BQA only (10 bytes) as all-pass.
     static const uint8_t flat_bqa[10] = {
         0x7F,0xFF, 0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
     };
@@ -415,9 +465,12 @@ void setup_dac() {
     unmute_drivers();
 
     set_gain(ANALOG_GAIN); // max analog gain - volume ceiling controlled via DAC digital volume
-    unmute_dac(); // Unmute DAC
 
-    // apply_eq_preset(g_eq_preset);  // skip init, only call from mp3.h
+#if ENABLE_DRC
+    setup_drc(); // Configure DRC limiter for speakers before unmuting
+#endif
+
+    unmute_dac(); // Unmute DAC
 }
 
 
@@ -437,7 +490,7 @@ void check_dac() {
     printf("\nDAC Status Register: 0x%02X (binary: 0b\n", data);
 }
 
-bool dac_advanced_block = true; // true = PRB 11 (1 biquad + IIR), false = PRB 1 (no processing)
+bool dac_advanced_block = true;
 static inline void dac_select_processing_block(uint8_t block)
 {
     bool was_muted = is_muted;
@@ -451,5 +504,9 @@ static inline void dac_select_processing_block(uint8_t block)
 static inline void alternate_eq(void)
 {
     dac_advanced_block = !dac_advanced_block;
-    dac_select_processing_block(dac_advanced_block ? 0x0B : 0x01);
+#if ENABLE_DRC
+    dac_select_processing_block(dac_advanced_block ? 0x19 : 0x01); // PRB 25 ↔ PRB 1
+#else
+    dac_select_processing_block(dac_advanced_block ? 0x0B : 0x01); // PRB 11 ↔ PRB 1
+#endif
 }

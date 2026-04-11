@@ -236,12 +236,14 @@ void read_volume() {
 #if ENABLE_DRC
             disable_drc(); // HP doesn't need compression — preserve full dynamic range
 #endif
+            set_3d(0x00, 0x00); // Disable 3D — spatial widening distorts headphone stereo image
         } else if (!headphones_present && prev_headphones_present && !is_muted) {
             // we don't want to turn on the amp if we're muted.. we'll let the unmute logic handle that
             dac_i2c_write(1, 0x20, 0b11000110); // Class-D Amplifier powered on
 #if ENABLE_DRC
             enable_drc(); // Re-enable limiter for speakers
 #endif
+            if (g_3d_enabled) set_3d(0x15, 0x00); // Restore 3D for speakers
         }
     }
     // Update the previous state for next check
@@ -421,7 +423,7 @@ void setup_dac() {
     dac_i2c_write(0, 0x74, 0x00); // VOL/MICDETECT SAR ADC
     dac_i2c_write(0, 0x43, 0x80); // Headset detection enabled
 
-    set_3d(0x15, 0x00); // Enable 3D sound with slight depth
+    set_3d(0x15, 0x00); // 3D on by default; disabled below if headphones detected
 
 #if ENABLE_DRC
     // PRB 25: init BQA-BQE (5 biquads × 10 bytes = 50 bytes) as all-pass before DAC powers on.
@@ -467,8 +469,17 @@ void setup_dac() {
     set_gain(ANALOG_GAIN); // max analog gain - volume ceiling controlled via DAC digital volume
 
 #if ENABLE_DRC
-    setup_drc(); // Configure DRC limiter for speakers before unmuting
+    setup_drc();
 #endif
+
+    // Disable speaker-only DSP if headphones are already in at boot
+    detect_headphones();
+    if (headphones_present) {
+        set_3d(0x00, 0x00);
+#if ENABLE_DRC
+        disable_drc();
+#endif
+    }
 
     unmute_dac(); // Unmute DAC
 }

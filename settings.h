@@ -78,6 +78,11 @@
 // 1: show battery rate as percent per hour in settings screen, 0: show signed current in mA.
 #define SHOW_BAT_RATE_AS_PERCENT_PER_HOUR 1
 
+// Keep drflac decoder state in a persistent SRAM buffer (never freed).
+// 0 = use normal malloc/free (freed each track, saves ~64KB SRAM between tracks)
+// 1 = persistent SRAM pinning (allocated once, never freed)
+#define DRFLAC_PERSISTENT_SRAM 0
+
 #define ENABLE_PSRAM 1
 #define ROM_FLASH 0
 #define DEBUG_PSRAM 0

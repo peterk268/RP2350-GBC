@@ -1193,7 +1193,9 @@ static void mp3_build_playlist(void) {
 // Persistent (never freed) SRAM allocations:
 //   drmp3 state                 64 KB  — persistent static via drmp3_sram_malloc
 //   drflac state                64 KB  — persistent static via drflac_sram_malloc
-//   Subtotal persistent         128 KB — allocated on first playback
+//                                        (only when DRFLAC_PERSISTENT_SRAM=1;
+//                                         when 0, drflac uses normal malloc/free per track)
+//   Subtotal persistent      64–128 KB — allocated on first playback
 //
 // Per-track (freed at track end):
 //   flac_seekcache              ~6 KB  — 512-entry dynamic seek cache
@@ -1201,13 +1203,14 @@ static void mp3_build_playlist(void) {
 //   Subtotal per-track         ~7 KB
 //
 // ── SRAM SAFETY ─────────────────────────────────────────────────
-// Decoder state (drmp3, drflac) is allocated as persistent statics
-// via custom allocators on first play. This ensures they land in SRAM
-// before the heap fragments, and eliminates the PSRAM spill that
-// previously caused MP3 crackling and FLAC UI lag.
+// drmp3 decoder state is allocated as a persistent static via custom
+// allocators on first play. This ensures it lands in SRAM before the
+// heap fragments, and eliminates the PSRAM spill that previously
+// caused MP3 crackling.
 //
-// DO NOT change persistent statics to per-track malloc/free — that
-// reintroduces fragmentation and will push decoder state into PSRAM.
+// drflac state is controlled by DRFLAC_PERSISTENT_SRAM (settings.h):
+//   1 = persistent SRAM pinning (same approach as drmp3)
+//   0 = normal malloc/free per track (frees ~64KB between tracks)
 // ===================================================================
 
 // Persistent buffer for drmp3's internal pData.
@@ -1256,6 +1259,7 @@ static const drmp3_allocation_callbacks s_drmp3_alloc = {
     .onFree    = drmp3_sram_free,
 };
 
+#if DRFLAC_PERSISTENT_SRAM
 // Persistent buffer for drflac's internal decoder state (~49 KB).
 // This is a persistent static allocation (not per-track) to ensure the
 // decoder lands in SRAM before heap fragmentation, preventing PSRAM spills
@@ -1298,6 +1302,7 @@ static const drflac_allocation_callbacks s_drflac_alloc = {
     .onRealloc = drflac_sram_realloc,
     .onFree    = drflac_sram_free,
 };
+#endif // DRFLAC_PERSISTENT_SRAM
 
 // ===================================================================
 // Seek helper: approximate seek by jumping compressed bytes
@@ -1732,7 +1737,13 @@ static play_result_t mp3_play_single_track(const char *filepath,
         }
 
         flac = drflac_open_with_metadata(flac_fatfs_read, flac_fatfs_seek, flac_fatfs_tell,
-                                         flac_meta_callback, &stream->file, &s_drflac_alloc);
+                                         flac_meta_callback, &stream->file,
+#if DRFLAC_PERSISTENT_SRAM
+                                         &s_drflac_alloc
+#else
+                                         NULL  // use default malloc/realloc/free
+#endif
+                                         );
         if (!flac) {
             printf("E drflac_open failed for '%s'\n", filepath);
             result = PLAY_RESULT_NEXT;
@@ -2746,6 +2757,9 @@ END_PLAYBACK:
 
     // pcmA/B are persistent (s_pcmA/B) — don't free them.
     // drmp3 pData is persistent (s_drmp3_pdata) — don't free it.
+    // drflac state is freed by drflac_close() via its allocator callbacks:
+    //   DRFLAC_PERSISTENT_SRAM=1 → onFree is a no-op (buffer persists in SRAM)
+    //   DRFLAC_PERSISTENT_SRAM=0 → default free() releases ~64KB per track
 
 CLEANUP_MP3:
     if (wav) {
